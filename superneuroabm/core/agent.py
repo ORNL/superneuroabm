@@ -8,7 +8,7 @@ from multiprocessing import shared_memory
 import numpy as np
 from numba import cuda
 
-from sagesim.util import (
+from superneuroabm.core.util import (
     compress_tensor,
     convert_to_equal_side_tensor,
 )
@@ -40,7 +40,10 @@ class Breed:
         return self._step_funcs
 
     def register_property(
-        self, name: str, default: Union[int, float, List]=np.nan, max_dims: Optional[List[int]] = None
+        self,
+        name: str,
+        default: Union[int, float, List] = np.nan,
+        max_dims: Optional[List[int]] = None,
     ) -> None:
         self._properties[name] = default
         self._prop2pos[name] = self._num_properties
@@ -246,7 +249,9 @@ class AgentFactory:
         property_names = list(self._property_name_2_agent_data_tensor.keys())
         for i, property_name in enumerate(property_names):
             if use_cuda:
-                dt = equal_side_agent_data_tensors[i].copy_to_host()
+                dt = equal_side_agent_data_tensors[i]
+                if property_name == "output_spikes":
+                    dt = dt.copy_to_host()
             else:
                 dt = equal_side_agent_data_tensors[i]
                 # Free shared memory

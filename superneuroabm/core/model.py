@@ -12,7 +12,7 @@ from numba import cuda
 from numba.cuda.random import create_xoroshiro128p_states
 from tqdm import tqdm
 
-from sagesim.agent import AgentFactory, Breed
+from superneuroabm.core.agent import AgentFactory, Breed
 
 
 class Model:
