@@ -5,7 +5,6 @@ A GPU-based multi-agent simulation framework for neuromorphic computing
 # Dependencies
 
 - Cuda toolkit or drivers
-- sagesim (Currently ORNL internal code)
 
 # Unit Tests
 
