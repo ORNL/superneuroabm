@@ -5,7 +5,7 @@ setup(
     version="0.0.1",
     author="Chathika Gunaratne, Prasanna Date, Shruti Kulkarni",
     author_email="gunaratnecs@ornl.gov",
-    packages=["superneuroabm"],
+    packages=["superneuroabm", "superneuroabm.core"],
     include_package_data=True,
     url="https://code.ornl.gov/superneuro/superneuroabm",
     license="GPL",
