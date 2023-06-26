@@ -15,4 +15,4 @@ To run unit tests, `cd` to root dir and run:
 
 Arxiv Preprint available at: 
 
-[Gunaratne, C., Kulkarni, S., Patton, R., Coletti, M., & Potok, T. (2023). SuperNeuro: A Fast and Scalable Simulator for Neuromorphic Computing. arXiv preprint arXiv:2305.02510.](https://arxiv.org/abs/2109.12894)
+[Date. P., Gunaratne, C., Kulkarni, S., Patton, R., Coletti, M., & Potok, T. (2023). SuperNeuro: A Fast and Scalable Simulator for Neuromorphic Computing. arXiv preprint arXiv:2305.02510.](https://arxiv.org/abs/2109.12894)
