@@ -2,8 +2,8 @@ from setuptools import setup, find_packages
 
 setup(
     name="SuperNeuroABM",
-    version="0.0.1",
-    author="Chathika Gunaratne, Prasanna Date, Shruti Kulkarni",
+    version="0.1.0",
+    author="Chathika Gunaratne, Prasanna Date, Shruti Kulkarni, Xi Zhang",
     author_email="gunaratnecs@ornl.gov",
     packages=["superneuroabm", "superneuroabm.core"],
     include_package_data=True,
