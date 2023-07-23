@@ -193,5 +193,5 @@ def synapse_with_stdp_step_func(
             w_new = w_old + sigma * delta_w * (w_max - w_old)
         else: 
             w_new = w_old + sigma * delta_w * (w_old - w_max)
-        # set new weight
+        # set new weight of synapse. Weight is at index 1
         output_synapsess[my_idx][synapse_idx][1] = w_new
