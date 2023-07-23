@@ -91,12 +91,12 @@ def synapse_step_func(
     t_current = int(global_data_vector[0])
     # Update outgoing synapses if any
     for synapse_idx in range(len(output_synapsess[my_idx])):
-        my_synapse_info = output_synapsess[my_idx][synapse_idx]
-        out_neuron_id = my_synapse_info[0]
+        out_synapse_info = output_synapsess[my_idx][synapse_idx]
+        out_neuron_id = out_synapse_info[0]
         if math.isnan(out_neuron_id):
             break
-        weight = my_synapse_info[1]
-        synapse_register = my_synapse_info[2:]
+        weight = out_synapse_info[1]
+        synapse_register = out_synapse_info[2:]
         # Check if delayed Vm was over threshold, if so spike
         syn_delay_reg_len = 0
         for val in synapse_register:
@@ -134,13 +134,14 @@ def synapse_with_stdp_step_func(
 ):
     t_current = int(global_data_vector[0])
     # Update outgoing synapses if any
-    for synapse_idx in range(len(output_synapsess[my_idx])):
-        my_synapse_info = output_synapsess[my_idx][synapse_idx]
-        out_neuron_id = my_synapse_info[0]
+    out_synapses_info = output_synapsess[my_idx]
+    for synapse_idx in range(len(out_synapses_info)):
+        out_synapse_info = out_synapses_info[synapse_idx]
+        out_neuron_id = out_synapse_info[0]
         if math.isnan(out_neuron_id):
             break
-        weight = my_synapse_info[1]
-        synapse_register = my_synapse_info[2:]
+        weight = out_synapse_info[1]
+        synapse_register = out_synapse_info[2:]
         # Check if delayed Vm was over threshold, if so spike
         # We'll perform a rotation of the synapse_register to 
         # emulate FIFO behavior of the spikes. 
@@ -176,8 +177,8 @@ def synapse_with_stdp_step_func(
         tau_pos = 8
         tau_neg = 5
 
-        presynaptic_spikes = output_spikess[out_neuron_id]
-        postsynaptic_spikes = output_spikess[out_neuron_id]
+        presynaptic_spikes = output_spikess[my_idx]
+        postsynaptic_spikes = output_spikess[int(out_neuron_id)]
         delta_w = 0
         for delta_t in range(stdp_timesteps):
             pre_to_post_correlation = presynaptic_spikes[-2 - delta_t] * postsynaptic_spikes[-1]
@@ -193,5 +194,4 @@ def synapse_with_stdp_step_func(
         else: 
             w_new = w_old + sigma * delta_w * (w_old - w_max)
         # set new weight
-        my_synapse_info[1] = w_new
-        output_synapsess[my_idx] = my_synapse_info
+        output_synapsess[my_idx][synapse_idx][1] = w_new
