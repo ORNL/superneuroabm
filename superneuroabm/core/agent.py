@@ -250,6 +250,8 @@ class AgentFactory:
         for i, property_name in enumerate(property_names):
             if use_cuda:
                 dt = equal_side_agent_data_tensors[i]
+                if property_name == "output_synapses":
+                    dt = dt.copy_to_host()
                 if property_name == "output_spikes":
                     dt = dt.copy_to_host()
             else:

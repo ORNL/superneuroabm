@@ -171,6 +171,8 @@ def synapse_with_stdp_step_func(
             internal_state[int(out_neuron_id)] += weight
 
         # Perform STDP weight change
+        if t_current < 2: 
+            return 
         stdp_timesteps = 3
         A_pos = 0.6
         A_neg = 0.3
@@ -181,11 +183,10 @@ def synapse_with_stdp_step_func(
         postsynaptic_spikes = output_spikess[int(out_neuron_id)]
         delta_w = 0
         for delta_t in range(stdp_timesteps):
-            pre_to_post_correlation = presynaptic_spikes[-2 - delta_t] * postsynaptic_spikes[-1]
+            pre_to_post_correlation = presynaptic_spikes[t_current - 1 - delta_t] * postsynaptic_spikes[t_current]
             delta_w += A_pos * math.exp(delta_t / tau_pos) * pre_to_post_correlation
-            post_to_pre_correlation = postsynaptic_spikes[-1] * presynaptic_spikes[-2 - delta_t]
+            post_to_pre_correlation = postsynaptic_spikes[t_current] * presynaptic_spikes[t_current - 1 - delta_t]
             delta_w -= A_neg * math.exp(delta_t / tau_neg) * post_to_pre_correlation
-
         w_old = weight
         sigma = 0.8 # weight change rate
         w_max = 1000
