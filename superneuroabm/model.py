@@ -30,7 +30,7 @@ class NeuromorphicModel(Model):
             "threshold": 1,
             "reset_state": 0,
             "leak": 0,
-            "refactory_period": 0,
+            "refractory_period": 0,
             "output_synapses": [],
             "t_elapse": 0,
             "internal_state": 0,
@@ -42,7 +42,7 @@ class NeuromorphicModel(Model):
             "threshold": [],
             "reset_state": [],
             "leak": [],
-            "refactory_period": [],
+            "refractory_period": [],
             "output_synapses": None,
             "t_elapse": [],
             "internal_state": [],
@@ -104,7 +104,7 @@ class NeuromorphicModel(Model):
         threshold: float = 1,
         reset_state: float = 0,
         leak: float = 0,
-        refactory_period: int = 0,
+        refractory_period: int = 0,
         axonal_delay: int = 1,
     ) -> int:
         """
@@ -119,7 +119,7 @@ class NeuromorphicModel(Model):
             threshold=threshold,
             reset_state=reset_state,
             leak=leak,
-            refactory_period=refactory_period,
+            refractory_period=refractory_period,
         )
         self.set_agent_property_value(
             neuron_id, "neuron_delay_reg", delay_reg, [axonal_delay]
