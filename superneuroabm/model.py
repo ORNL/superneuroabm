@@ -9,6 +9,7 @@ from superneuroabm.core.agent import Breed
 from superneuroabm.neuron import (
     synapse_step_func,
     neuron_step_func,
+    synapse_with_stdp_step_func
 )
 
 
@@ -59,7 +60,7 @@ class NeuromorphicModel(Model):
             step_func=neuron_step_func, priority=0
         )
         self._neuron_breed.register_step_func(
-            step_func=synapse_step_func, priority=1
+            step_func=synapse_with_stdp_step_func, priority=1
         )
 
         self.register_breed(self._neuron_breed)
@@ -200,3 +201,10 @@ class NeuromorphicModel(Model):
         for k in range(len(self._agents)):
             summary.append(f"Agent: {k} Type:{type(self.get_agent(k))}")
         return "\n".join(summary)
+
+    def register_step_funcs() -> None:
+        """
+        Allows the user to register their own step functions.
+        
+
+        """
