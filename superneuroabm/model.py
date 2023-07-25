@@ -43,7 +43,7 @@ class NeuromorphicModel(Model):
             "reset_state": [],
             "leak": [],
             "refractory_period": [],
-            "output_synapses": None,
+            "output_synapses": [],
             "t_elapse": [],
             "internal_state": [],
             "neuron_delay_reg": None,
@@ -195,11 +195,21 @@ class NeuromorphicModel(Model):
 
         :return: str information of netowkr struture
         """
-        # Function to print
-        # TODO: Have a better way to represent the network structure(?)
         summary = []
-        for k in range(len(self._agents)):
-            summary.append(f"Agent: {k} Type:{type(self.get_agent(k))}")
+        summary.append("Neuron information:")
+        for neuron_id in range(self._agent_factory.num_agents):
+            spikes = self.get_agent_property_value(neuron_id, "output_spikes")
+            summary.append(f"Neuron: {neuron_id} Spike Train: {str(spikes)}")
+
+        summary.append("\n\n\nSynapse information:")
+        for presynaptic_neuron_id in range(self._agent_factory.num_agents):
+            synapses = self.get_agent_property_value(presynaptic_neuron_id, "output_synapses")
+            for synapse in synapses:
+                postsynaptic_neuron_id = synapse[0]
+                weight = synapse[1]
+                summary.append((f"Neuron {presynaptic_neuron_id} -> {postsynaptic_neuron_id}"
+                               f": weight: {weight}"))
+
         return "\n".join(summary)
 
     def register_step_funcs() -> None:
