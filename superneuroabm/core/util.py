@@ -43,7 +43,7 @@ def convert_to_equal_side_tensor(
     return answer
 
 
-def compress_tensor(arr: Iterable, outer: bool = True):
+def compress_tensor(arr: Iterable, level: int = 0):
     if not hasattr(arr, "__iter__") and not hasattr(
         arr, "__cuda_array_interface__"
     ):
@@ -54,10 +54,13 @@ def compress_tensor(arr: Iterable, outer: bool = True):
     else:
         new_arr = []
         for item in arr:
-            new_item = compress_tensor(item, False)
-            if new_item != None:
+            new_item = compress_tensor(item, level+1)
+            if ((not isinstance(new_item, Iterable) and new_item != None) or 
+                (isinstance(new_item, Iterable) and len(new_item)) or 
+                level <= 0):
                 new_arr.append(new_item)
+        print(level, new_arr)
         if len(new_arr):
             return new_arr
         else:
-            return [] if outer else None
+            return [] if level else None
