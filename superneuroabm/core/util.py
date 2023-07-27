@@ -54,10 +54,12 @@ def compress_tensor(arr: Iterable, level: int = 0):
     else:
         new_arr = []
         for item in arr:
-            new_item = compress_tensor(item, level+1)
-            if ((not isinstance(new_item, Iterable) and new_item != None) or 
-                (isinstance(new_item, Iterable) and len(new_item)) or 
-                level <= 0):
+            new_item = compress_tensor(item, level + 1)
+            if (
+                (not isinstance(new_item, Iterable) and new_item != None)
+                or (isinstance(new_item, Iterable) and len(new_item))
+                or level <= 0
+            ):
                 new_arr.append(new_item)
         if len(new_arr):
             return new_arr
