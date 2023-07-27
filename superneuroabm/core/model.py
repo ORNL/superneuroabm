@@ -43,12 +43,26 @@ class Model:
         agent_id = self._agent_factory.create_agent(breed, **kwargs)
         return agent_id
 
-    def get_agent_info(self, breed: Breed, id: int) -> List[Any]:
+    def get_synapse_weight(
+        self, presynaptic_neuron_id: int, post_synaptic_neuron_id: int
+    ) -> float:
         """
-        Query agent from population by its breed and id
+        Return synaptic weight. This function is useful if STDP is
+        turned on as weights will be updated during simulation.
 
+        :param presynaptic_neuron_id: int
+        :param presynaptic_neuron_id: int
+        :returns: float, final weight of synapse
         """
-        raise NotImplemented()
+        out_synapses = self.get_agent_property_value(
+            presynaptic_neuron_id, "output_synapses"
+        )
+        weight = math.nan
+        for out_synapse in out_synapses:
+            if out_synapse[0] == post_synaptic_neuron_id:
+                weight = out_synapse[1]
+                break
+        return weight
 
     def get_agent_property_value(self, id: int, property_name: str) -> Any:
         return self._agent_factory.get_agent_property_value(
