@@ -35,7 +35,7 @@ class STDPTest(unittest.TestCase):
         input_0 = self._model.create_neuron(
             breed="NeuronSTDPForward", threshold=0.0
         )
-        input_1 = self._model.create_neuron(threshold=0.0)
+        input_1 = self._model.create_neuron(breed="NeuronSTDPForward", threshold=0.0)
         output_2 = self._model.create_neuron(threshold=2.0)
 
         # Create synapses
