@@ -143,8 +143,8 @@ def synapse_with_stdp_step_func(
         weight = out_synapse_info[1]
         synapse_register = out_synapse_info[2:]
         # Check if delayed Vm was over threshold, if so spike
-        # We'll perform a rotation of the synapse_register to 
-        # emulate FIFO behavior of the spikes. 
+        # We'll perform a rotation of the synapse_register to
+        # emulate FIFO behavior of the spikes.
         # For this find the delay register head and tail
         syn_delay_reg_len = 0
         for val in synapse_register:
@@ -163,7 +163,7 @@ def synapse_with_stdp_step_func(
             or syn_delay_reg_head + 1 >= len(synapse_register)
             else syn_delay_reg_head + 1
         )
-        # The earliest spike still in the register is at 
+        # The earliest spike still in the register is at
         # syn_delay_reg_tail and affects the out_neuron during
         # this tick.
         Vm = synapse_register[syn_delay_reg_tail]
@@ -171,8 +171,8 @@ def synapse_with_stdp_step_func(
             internal_state[int(out_neuron_id)] += weight
 
         # Perform STDP weight change
-        if t_current < 2: 
-            return 
+        if t_current < 2:
+            return
         stdp_timesteps = 3
         A_pos = 0.6
         A_neg = 0.3
@@ -183,16 +183,26 @@ def synapse_with_stdp_step_func(
         postsynaptic_spikes = output_spikess[int(out_neuron_id)]
         delta_w = 0
         for delta_t in range(stdp_timesteps):
-            pre_to_post_correlation = presynaptic_spikes[t_current - 1 - delta_t] * postsynaptic_spikes[t_current]
-            delta_w += A_pos * math.exp(delta_t / tau_pos) * pre_to_post_correlation
-            post_to_pre_correlation = postsynaptic_spikes[t_current] * presynaptic_spikes[t_current - 1 - delta_t]
-            delta_w -= A_neg * math.exp(delta_t / tau_neg) * post_to_pre_correlation
+            pre_to_post_correlation = (
+                presynaptic_spikes[t_current - 1 - delta_t]
+                * postsynaptic_spikes[t_current]
+            )
+            delta_w += (
+                A_pos * math.exp(delta_t / tau_pos) * pre_to_post_correlation
+            )
+            post_to_pre_correlation = (
+                postsynaptic_spikes[t_current]
+                * presynaptic_spikes[t_current - 1 - delta_t]
+            )
+            delta_w -= (
+                A_neg * math.exp(delta_t / tau_neg) * post_to_pre_correlation
+            )
         w_old = weight
-        sigma = 0.8 # weight change rate
+        sigma = 0.8  # weight change rate
         w_max = 1000
         if delta_w > 0:
             w_new = w_old + sigma * delta_w * (w_max - w_old)
-        else: 
+        else:
             w_new = w_old + sigma * delta_w * (w_old - w_max)
         # set new weight of synapse. Weight is at index 1
         output_synapsess[my_idx][synapse_idx][1] = w_new

@@ -1,6 +1,7 @@
 """
 Model class for building an SNN
 """
+from typing import Dict, Callable, List
 
 import numpy as np
 
@@ -9,21 +10,33 @@ from superneuroabm.core.agent import Breed
 from superneuroabm.neuron import (
     synapse_step_func,
     neuron_step_func,
-    synapse_with_stdp_step_func
+    synapse_with_stdp_step_func,
 )
 
 
 class NeuromorphicModel(Model):
-    def __init__(self, use_cuda: bool = False) -> None:
+    def __init__(
+        self,
+        use_cuda: bool = False,
+        neuron_breed_info: Dict[str, List[Callable]] = {
+            "Neuron": [neuron_step_func, synapse_step_func]
+        },
+    ) -> None:
         """
         Creates an SNN Model and provides methods to create, simulate,
         and monitor neurons and synapses.
 
-        :param use_cuda: True if the system supports CUDA GPU acceleration
+        :param use_cuda: True if the system supports CUDA GPU
+            acceleration.
+        :param neuron_breed_info: Dict of breed name to List of
+            Callable step functions. If specifed, will override
+            the default neuron breed and neuron and synapse step
+            functions, allowing for multi-breed simulations.
+            Step functions will be executed on the respective
+            breed every simulation step in the order specifed in the
+            list.
         """
         super().__init__(name="NeuromorphicModel", use_cuda=use_cuda)
-        # dictionary for datacollectors for each neuron to be tracked
-        """self._neuron_spike_collectors = {}"""
 
         axonal_delay = 1
         neuron_properties = {
@@ -51,29 +64,25 @@ class NeuromorphicModel(Model):
             "output_spikes": None,
         }
 
-        self._neuron_breed = Breed("Neuron")
-        for prop_name, default_val in neuron_properties.items():
-            self._neuron_breed.register_property(
-                prop_name, default_val, max_dims[prop_name]
-            )
-        self._neuron_breed.register_step_func(
-            step_func=neuron_step_func, priority=0
-        )
-        self._neuron_breed.register_step_func(
-            step_func=synapse_with_stdp_step_func, priority=1
-        )
+        self._neuron_breeds: Dict[str, Breed] = {}
+        for breed_name, step_funcs in neuron_breed_info.items():
+            neuron_breed = Breed(breed_name)
+            for prop_name, default_val in neuron_properties.items():
+                neuron_breed.register_property(
+                    prop_name, default_val, max_dims[prop_name]
+                )
+            for step_func_order, step_func in enumerate(step_funcs):
+                neuron_breed.register_step_func(
+                    step_func=step_func, priority=step_func_order
+                )
+            self.register_breed(neuron_breed)
+            self._neuron_breeds[breed_name] = neuron_breed
 
-        self.register_breed(self._neuron_breed)
-        self.register_breed(self._neuron_breed)
-        # self._output_synapsess = []
         self._output_synapsess_max_dim = [0, 2]
 
     def setup(self, output_buffer_len: int = 1000) -> None:
-        def get_neurons(breed: int, **kwargs):
-            return breed == 1
-
-        neuron_ids = self.get_agents_with(query=get_neurons)
-        for neuron_id in neuron_ids:
+        neuron_ids = self._agent_factory.num_agents
+        for neuron_id in range(neuron_ids):
             output_buffer = [0 for _ in range(output_buffer_len)]
             super().set_agent_property_value(
                 id=neuron_id,
@@ -81,12 +90,6 @@ class NeuromorphicModel(Model):
                 value=output_buffer,
                 dims=[output_buffer_len],
             )
-            """super().set_agent_property_value(
-                id=neuron_id,
-                property_name="output_synapses",
-                value=self._output_synapsess[neuron_id],
-                dims=
-            )"""
         super().setup()
 
     def simulate(
@@ -101,6 +104,7 @@ class NeuromorphicModel(Model):
 
     def create_neuron(
         self,
+        breed: str = "Neuron",
         threshold: float = 1,
         reset_state: float = 0,
         leak: float = 0,
@@ -115,7 +119,7 @@ class NeuromorphicModel(Model):
         """
         delay_reg = [0 for _ in range(axonal_delay)]
         neuron_id = super().create_agent_of_breed(
-            breed=self._neuron_breed,
+            breed=self._neuron_breeds[breed],
             threshold=threshold,
             reset_state=reset_state,
             leak=leak,
@@ -203,18 +207,17 @@ class NeuromorphicModel(Model):
 
         summary.append("\n\n\nSynapse information:")
         for presynaptic_neuron_id in range(self._agent_factory.num_agents):
-            synapses = self.get_agent_property_value(presynaptic_neuron_id, "output_synapses")
+            synapses = self.get_agent_property_value(
+                presynaptic_neuron_id, "output_synapses"
+            )
             for synapse in synapses:
                 postsynaptic_neuron_id = synapse[0]
                 weight = synapse[1]
-                summary.append((f"Neuron {presynaptic_neuron_id} -> {postsynaptic_neuron_id}"
-                               f": weight: {weight}"))
+                summary.append(
+                    (
+                        f"Neuron {presynaptic_neuron_id} -> {postsynaptic_neuron_id}"
+                        f": weight: {weight}"
+                    )
+                )
 
         return "\n".join(summary)
-
-    def register_step_funcs() -> None:
-        """
-        Allows the user to register their own step functions.
-        
-
-        """
