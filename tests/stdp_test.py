@@ -74,10 +74,8 @@ class STDPTest(unittest.TestCase):
         self._model.simulate(ticks=10)
         print(self._model.summary())
         assert (
-            round(self._model.get_synapse_weight(0, 2)) == 498,
-            "STDP weight update failed",
-        )
+            round(self._model.get_synapse_weight(0, 2)) == 499
+        ), "STDP weight update failed"
         assert (
-            self._model.get_synapse_weight(1, 2) == 1,
-            "STDP weight update failed",
-        )
+            self._model.get_synapse_weight(1, 2) == 1
+        ), "STDP weight update failed"
