@@ -109,7 +109,7 @@ def synapse_step_func(
         syn_delay_reg_tail = (
             0
             if syn_delay_reg_len == 1
-            or syn_delay_reg_head + 1 >= len(synapse_register)
+            or syn_delay_reg_head + 1 >= syn_delay_reg_len
             else syn_delay_reg_head + 1
         )
         Vm = synapse_register[syn_delay_reg_tail]
