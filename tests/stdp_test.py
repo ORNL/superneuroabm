@@ -40,8 +40,13 @@ class STDPTest(unittest.TestCase):
 
         # Create synapses
         self._model.create_synapse(
-            pre_neuron_id=input_0, post_neuron_id=output_2, weight=1.0
+            pre_neuron_id=input_0,
+            post_neuron_id=output_2,
+            weight=1.0,
+            synapse_learning_params=[3, 0.6, 0.3, 8, 5, 0.8, 1000],
+            # stdp_timesteps, A_pos, A_neg, tau_pos, tau_neg, sigma, w_max
         )
+
         self._model.create_synapse(
             pre_neuron_id=input_1, post_neuron_id=output_2, weight=1.0
         )
