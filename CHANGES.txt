@@ -1,0 +1,2 @@
+v0.1.0: Initial release
+v0.2.0: Spike Time Dependent Plasticity included. Heterogenous neuron API. Bug fixes to synaptic step functions.
