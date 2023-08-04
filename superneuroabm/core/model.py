@@ -114,12 +114,12 @@ class Model:
         self._agent_data_tensors = (
             self._agent_factory.generate_agent_data_tensors(self._use_cuda)
         )
+        # Generate global data tensor
+        self._global_data_vector = [0]  # index 0 reserved for step
 
     def simulate(
         self, ticks: int, update_data_ticks: int = 1, num_cpu_proc: int = 4
     ) -> None:
-        # Generate global data tensor
-        self._global_data_vector = [0]  # index 0 reserved for step
         if not self._use_cuda:
             with Pool(num_cpu_proc) as pool:
                 with Manager() as manager:
@@ -155,7 +155,7 @@ class Model:
                         unit_divisor=1000,
                         dynamic_ncols=True,
                     ):
-                        shared_global_data_vector[0] = tick
+                        shared_global_data_vector[0] += 1
                         for jobs_in_priority in jobs:
                             _ = list(map(smap, jobs_in_priority))
         else:
@@ -169,16 +169,16 @@ class Model:
                 self._breed_idx_2_step_func_by_priority,
                 ticks,
             )
-            ################
-            shared_global_data_vector = [0]
             device_global_data_vector = cuda.to_device(
-                shared_global_data_vector
+                self._global_data_vector
             )
             exec(step_funcs_code_obj)
 
         self._agent_factory.update_agents_properties(
             self._agent_data_tensors, self._use_cuda
-        )
+        )  # internals of this will automatically move data back from GPU
+        # But globals will have to be moved explicitly
+        self._global_data_vector = device_global_data_vector.copy_to_host()
 
     @property
     def name(self) -> str:
@@ -227,8 +227,11 @@ def generate_gpu_func(
         g = cuda.cg.this_grid()
         breed_id = a0[agent_id]
         for tick in range({ticks}):
-            device_global_data_vector[0] = tick
             {sim_loop}
+            if thread_id == 0:
+                device_global_data_vector[0] += 1
+            g.sync()
+
     \nstepfunc = cuda.jit(stepfunc)
     \nstepfunc[blockspergrid, Model.THREADSPERBLOCK](
         device_global_data_vector,
