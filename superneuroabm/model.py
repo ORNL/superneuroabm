@@ -79,10 +79,21 @@ class NeuromorphicModel(Model):
             self._neuron_breeds[breed_name] = neuron_breed
 
         self._output_synapsess_max_dim = [0, 2]
+        self._original_output_synapse_weights = {}
 
-    def setup(self, output_buffer_len: int = 1000) -> None:
+    def setup(
+        self, output_buffer_len: int = 1000, retain_weights=False
+    ) -> None:
+        """
+        Resets the simulation and initializes agents.
+
+        :param retain_weights: False by default. If True, updated weights are
+            not reset upon setup.
+        """
+
         neuron_ids = self._agent_factory.num_agents
         for neuron_id in range(neuron_ids):
+            # Clear output buffer
             output_buffer = [0 for _ in range(output_buffer_len)]
             super().set_agent_property_value(
                 id=neuron_id,
@@ -90,6 +101,53 @@ class NeuromorphicModel(Model):
                 value=output_buffer,
                 dims=[output_buffer_len],
             )
+            # Clear internal states
+            reset_state = super().get_agent_property_value(
+                id=neuron_id, property_name="reset_state"
+            )
+            super().set_agent_property_value(
+                id=neuron_id,
+                property_name="internal_state",
+                value=reset_state,
+                dims=[],
+            )
+            # Clear neuron delay registers
+            axonal_delay = len(
+                super().get_agent_property_value(
+                    id=neuron_id, property_name="neuron_delay_reg"
+                )
+            )
+            neuron_delay_reg = [0 for _ in range(axonal_delay)]
+            self.set_agent_property_value(
+                neuron_id, "neuron_delay_reg", neuron_delay_reg, [axonal_delay]
+            )
+            # Clear synaptic delay registers
+            output_synapses = self.get_agent_property_value(
+                neuron_id, "output_synapses"
+            )
+            max_synapse_info_len = 2
+            # Iterate through synapse info lists for this neuron
+            for i in range(len(output_synapses)):
+                # Clear weight (2nd element) if necessary
+                if not retain_weights:
+                    output_synapses[i][
+                        1
+                    ] = self._original_output_synapse_weights[neuron_id][i]
+                # Clear the rest of the list, which is the delay register
+                j = 2
+                while j < len(output_synapses[i]):
+                    output_synapses[i][j] = 0
+                    j += 1
+                max_synapse_info_len = max(
+                    len(output_synapses[i]), max_synapse_info_len
+                )
+            self.set_agent_property_value(
+                neuron_id,
+                "output_synapses",
+                output_synapses,
+                [len(output_synapses), max_synapse_info_len],
+            )
+
         super().setup()
 
     def simulate(
@@ -128,6 +186,9 @@ class NeuromorphicModel(Model):
         self.set_agent_property_value(
             neuron_id, "neuron_delay_reg", delay_reg, [axonal_delay]
         )
+        self.set_agent_property_value(
+            neuron_id, "internal_state", reset_state, []
+        )
         # synapse_infos = []
         # self._output_synapsess.append(synapse_infos)
         return neuron_id
@@ -157,15 +218,10 @@ class NeuromorphicModel(Model):
             output_synapses,
             [len(output_synapses), len(synapse_info)],
         )
-
-        max_synapses = max(
-            self._output_synapsess_max_dim[0],
-            len(output_synapses),
-        )
-        max_delay_reg_len = max(
-            self._output_synapsess_max_dim[0], len(synapse_info)
-        )
-        self._output_synapsess_max_dim = [max_synapses, max_delay_reg_len]
+        self._original_output_synapse_weights[
+            pre_neuron_id
+        ] = self._original_output_synapse_weights.get(pre_neuron_id, [])
+        self._original_output_synapse_weights[pre_neuron_id].append(weight)
 
     def spike(self, neuron_id: int, tick: int, value: float) -> None:
         """
