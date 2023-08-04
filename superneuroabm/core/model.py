@@ -173,12 +173,12 @@ class Model:
                 self._global_data_vector
             )
             exec(step_funcs_code_obj)
+            # Globals will have to be moved explicitly
+            self._global_data_vector = device_global_data_vector.copy_to_host()
 
         self._agent_factory.update_agents_properties(
             self._agent_data_tensors, self._use_cuda
         )  # internals of this will automatically move data back from GPU
-        # But globals will have to be moved explicitly
-        self._global_data_vector = device_global_data_vector.copy_to_host()
 
     @property
     def name(self) -> str:
