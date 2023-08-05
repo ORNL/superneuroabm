@@ -1,8 +1,7 @@
 """
 Model class for building an SNN
 """
-from typing import Dict, Callable, List, Optional
-import pickle
+from typing import Dict, Callable, List
 
 import numpy as np
 
@@ -11,7 +10,6 @@ from superneuroabm.core.agent import Breed
 from superneuroabm.neuron import (
     synapse_step_func,
     neuron_step_func,
-    synapse_with_stdp_step_func,
 )
 
 

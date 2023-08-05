@@ -8,10 +8,8 @@ import heapq
 from multiprocessing import Pool, Manager
 import inspect
 import pickle
-from copy import deepcopy
 
 from numba import cuda
-from numba.cuda.random import create_xoroshiro128p_states
 from tqdm import tqdm
 
 from superneuroabm.core.agent import AgentFactory, Breed
