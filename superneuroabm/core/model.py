@@ -157,9 +157,9 @@ class Model:
                         unit_divisor=1000,
                         dynamic_ncols=True,
                     ):
-                        shared_global_data_vector[0] += 1
                         for jobs_in_priority in jobs:
                             _ = list(map(smap, jobs_in_priority))
+                        shared_global_data_vector[0] += 1
                     self._global_data_vector = list(shared_global_data_vector)
         else:
             blockspergrid = int(
