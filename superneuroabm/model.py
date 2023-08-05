@@ -1,7 +1,7 @@
 """
 Model class for building an SNN
 """
-from typing import Dict, Callable, List
+from typing import Dict, Callable, List, Optional
 
 import numpy as np
 
@@ -82,6 +82,7 @@ class NeuromorphicModel(Model):
 
         self._output_synapsess_max_dim = [0, 2]
         self._original_output_synapse_weights = {}
+        self._synapse_index_map = {}
 
     def setup(
         self, output_buffer_len: int = 1000, retain_weights=False
@@ -214,12 +215,28 @@ class NeuromorphicModel(Model):
             enabled step function. Must be specified in order of use
             in step function.
         """
-        delay_reg = [0 for _ in range(synaptic_delay)]
-        synapse_info = [post_neuron_id, weight]
-        synapse_info.extend(delay_reg)
         output_synapses = self.get_agent_property_value(
             pre_neuron_id, "output_synapses"
         )
+        if pre_neuron_id in self._synapse_index_map:
+            output_synapse_index_map = self._synapse_index_map[pre_neuron_id]
+            if post_neuron_id in output_synapse_index_map:
+                raise ValueError(
+                    f"Synapse {pre_neuron_id} -> {post_neuron_id}already exists"
+                )
+            else:
+                output_synapse_index_map[post_neuron_id] = len(output_synapses)
+        else:
+            output_synapse_index_map = {post_neuron_id: 0}
+        self._synapse_index_map[pre_neuron_id] = output_synapse_index_map
+
+        # Update or enter new synapse params
+        output_synapses = self.get_agent_property_value(
+            pre_neuron_id, "output_synapses"
+        )
+        delay_reg = [0 for _ in range(synaptic_delay)]
+        synapse_info = [post_neuron_id, weight]
+        synapse_info.extend(delay_reg)
         output_synapses.append(synapse_info)
         self.set_agent_property_value(
             pre_neuron_id,
@@ -227,16 +244,68 @@ class NeuromorphicModel(Model):
             output_synapses,
             [len(output_synapses), len(synapse_info)],
         )
+
+        # store original weights
         self._original_output_synapse_weights[
             pre_neuron_id
         ] = self._original_output_synapse_weights.get(pre_neuron_id, [])
         self._original_output_synapse_weights[pre_neuron_id].append(weight)
 
+        # Update or enter learning params
         if synapse_learning_params:
             synapses_learning_params = self.get_agent_property_value(
                 pre_neuron_id, "output_synapses_learning_params"
             )
             synapses_learning_params.append(synapse_learning_params)
+            self.set_agent_property_value(
+                id=pre_neuron_id,
+                property_name="output_synapses_learning_params",
+                value=synapses_learning_params,
+                dims=[
+                    len(synapses_learning_params),
+                    len(synapse_learning_params),
+                ],
+            )
+
+    def update_synapse(
+        self,
+        pre_neuron_id: int,
+        post_neuron_id: int,
+        weight: int = None,
+        synapse_learning_params: List[float] = None,
+    ):
+        if pre_neuron_id in self._synapse_index_map:
+            output_synapse_index_map = self._synapse_index_map[pre_neuron_id]
+            if post_neuron_id in output_synapse_index_map:
+                synapse_idx = output_synapse_index_map[post_neuron_id]
+            else:
+                raise ValueError(
+                    f"Synapse {pre_neuron_id} -> {post_neuron_id} does not exist"
+                )
+        else:
+            raise ValueError(
+                f"Synapse {pre_neuron_id} -> {post_neuron_id} does not exist"
+            )
+
+        # Update new synapse params
+        if weight != None:
+            output_synapses = self.get_agent_property_value(
+                pre_neuron_id, "output_synapses"
+            )
+            output_synapses[synapse_idx][1] = weight
+            self.set_agent_property_value(
+                pre_neuron_id,
+                "output_synapses",
+                output_synapses,
+                # [len(output_synapses), len(synapse_info)],
+            )
+
+        # Update or enter learning params
+        if synapse_learning_params:
+            synapses_learning_params = self.get_agent_property_value(
+                pre_neuron_id, "output_synapses_learning_params"
+            )
+            synapses_learning_params[synapse_idx] = synapse_learning_params
             self.set_agent_property_value(
                 id=pre_neuron_id,
                 property_name="output_synapses_learning_params",
