@@ -1,7 +1,7 @@
 """
 Model class for building an SNN
 """
-from typing import Dict, Callable, List, Optional
+from typing import Dict, Callable, List
 
 import numpy as np
 
@@ -10,14 +10,12 @@ from superneuroabm.core.agent import Breed
 from superneuroabm.neuron import (
     synapse_step_func,
     neuron_step_func,
-    synapse_with_stdp_step_func,
 )
 
 
 class NeuromorphicModel(Model):
     def __init__(
         self,
-        use_cuda: bool = False,
         neuron_breed_info: Dict[str, List[Callable]] = {
             "Neuron": [neuron_step_func, synapse_step_func]
         },
@@ -36,7 +34,7 @@ class NeuromorphicModel(Model):
             breed every simulation step in the order specifed in the
             list.
         """
-        super().__init__(name="NeuromorphicModel", use_cuda=use_cuda)
+        super().__init__()
 
         axonal_delay = 1
         neuron_properties = {
@@ -85,7 +83,10 @@ class NeuromorphicModel(Model):
         self._synapse_index_map = {}
 
     def setup(
-        self, output_buffer_len: int = 1000, retain_weights=False
+        self,
+        use_cuda: bool = False,
+        output_buffer_len: int = 1000,
+        retain_weights=False,
     ) -> None:
         """
         Resets the simulation and initializes agents.
@@ -96,6 +97,14 @@ class NeuromorphicModel(Model):
 
         neuron_ids = self._agent_factory.num_agents
         for neuron_id in range(neuron_ids):
+            # Clear input spikes
+            new_input_spikes = []
+            super().set_agent_property_value(
+                id=neuron_id,
+                property_name="input_spikes",
+                value=new_input_spikes,
+                dims=[0, 2],
+            )
             # Clear output buffer
             output_buffer = [0 for _ in range(output_buffer_len)]
             super().set_agent_property_value(
@@ -151,7 +160,7 @@ class NeuromorphicModel(Model):
                 [len(output_synapses), max_synapse_info_len],
             )
 
-        super().setup()
+        super().setup(use_cuda=use_cuda)
 
     def simulate(
         self, ticks: int, update_data_ticks: int = 1, num_cpu_proc: int = 4
@@ -370,3 +379,9 @@ class NeuromorphicModel(Model):
                 )
 
         return "\n".join(summary)
+
+    def save(self, fpath: str):
+        super().save(self, fpath)
+
+    def load(self, fpath: str):
+        self = super().load(fpath)

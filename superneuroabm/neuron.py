@@ -188,7 +188,7 @@ def synapse_with_stdp_step_func(
         presynaptic_spikes = output_spikess[my_idx]
         postsynaptic_spikes = output_spikess[int(out_neuron_id)]
         delta_w = 0
-        for delta_t in range(stdp_timesteps):
+        for delta_t in range(int(stdp_timesteps)):
             pre_to_post_correlation = (
                 presynaptic_spikes[t_current - 1 - delta_t]
                 * postsynaptic_spikes[t_current]

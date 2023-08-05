@@ -24,9 +24,7 @@ class LearningTest(unittest.TestCase):
                 synapse_with_stdp_step_func,
             ],
         }
-        self._model = NeuromorphicModel(
-            use_cuda=True, neuron_breed_info=neuron_breed_info
-        )
+        self._model = NeuromorphicModel(neuron_breed_info=neuron_breed_info)
 
     def test_stdp(self):
         """Tests STDP"""
@@ -50,7 +48,8 @@ class LearningTest(unittest.TestCase):
         self._model.create_synapse(
             pre_neuron_id=input_1, post_neuron_id=output_2, weight=1.0
         )
-
+        # Setup and simulate
+        self._model.setup(output_buffer_len=10, use_cuda=True)
         spikes = {
             1: [
                 (input_0, 0),
@@ -74,8 +73,6 @@ class LearningTest(unittest.TestCase):
             for neuron, value in spikes[time]:
                 self._model.spike(neuron_id=neuron, tick=time, value=value)
 
-        # Setup and simulate
-        self._model.setup(output_buffer_len=10)
         self._model.simulate(ticks=10)
         print(self._model.summary())
         assert (
@@ -118,7 +115,8 @@ class LearningTest(unittest.TestCase):
             synapse_learning_params=[0, 0.6, 0.3, 8, 5, 0.8, 1000],
             # stdp_timesteps, A_pos, A_neg, tau_pos, tau_neg, sigma, w_max
         )
-
+        # Setup and simulate
+        self._model.setup(output_buffer_len=10, use_cuda=True)
         spikes = {
             1: [
                 (input_0, 0),
@@ -144,8 +142,6 @@ class LearningTest(unittest.TestCase):
             for neuron, value in spikes[time]:
                 self._model.spike(neuron_id=neuron, tick=time, value=value)
 
-        # Setup and simulate
-        self._model.setup(output_buffer_len=10)
         self._model.simulate(ticks=10)
         print(self._model.summary())
         assert (
@@ -177,7 +173,8 @@ class LearningTest(unittest.TestCase):
             synapse_learning_params=[3, 0.6, 0.3, 8, 5, 0.8, 1000],
             # stdp_timesteps, A_pos, A_neg, tau_pos, tau_neg, sigma, w_max
         )
-
+        # Setup and simulate
+        self._model.setup(output_buffer_len=30, use_cuda=True)
         spikes = {
             7: [
                 (input_0, 1),
@@ -193,8 +190,6 @@ class LearningTest(unittest.TestCase):
             for neuron, value in spikes[time]:
                 self._model.spike(neuron_id=neuron, tick=time, value=value)
 
-        # Setup and simulate
-        self._model.setup(output_buffer_len=30)
         self._model.simulate(ticks=10)
         print(self._model.summary())
         assert (
@@ -262,7 +257,8 @@ class LearningTest(unittest.TestCase):
             synapse_learning_params=[3, 0.6, 0.3, 8, 5, 0.8, 1000],
             # stdp_timesteps, A_pos, A_neg, tau_pos, tau_neg, sigma, w_max
         )
-
+        # Setup and simulate
+        self._model.setup(output_buffer_len=20, use_cuda=True)
         spikes = {
             7: [
                 (input, 1),
@@ -275,8 +271,6 @@ class LearningTest(unittest.TestCase):
             for neuron, value in spikes[time]:
                 self._model.spike(neuron_id=neuron, tick=time, value=value)
 
-        # Setup and simulate
-        self._model.setup(output_buffer_len=20)
         self._model.simulate(ticks=20)
         print(self._model.summary())
         assert (
@@ -288,7 +282,14 @@ class LearningTest(unittest.TestCase):
 
         # Now setup and turn off STDP
         # Create synapses
-        self._model.setup(output_buffer_len=10, retain_weights=True)
+        self._model.setup(
+            output_buffer_len=10, use_cuda=False, retain_weights=True
+        )
+
+        for time in spikes:
+            for neuron, value in spikes[time]:
+                self._model.spike(neuron_id=neuron, tick=time, value=value)
+
         self._model.update_synapse(
             input,
             output_1,

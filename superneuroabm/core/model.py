@@ -7,9 +7,9 @@ import math
 import heapq
 from multiprocessing import Pool, Manager
 import inspect
+import pickle
 
 from numba import cuda
-from numba.cuda.random import create_xoroshiro128p_states
 from tqdm import tqdm
 
 from superneuroabm.core.agent import AgentFactory, Breed
@@ -18,19 +18,8 @@ from superneuroabm.core.agent import AgentFactory, Breed
 class Model:
     THREADSPERBLOCK = 32
 
-    def __init__(self, name: str = "Untitled", use_cuda: bool = True) -> None:
-        self._name = name
+    def __init__(self) -> None:
         self._agent_factory = AgentFactory()
-        self._use_cuda = use_cuda
-        if self._use_cuda:
-            if not cuda.is_available():
-                raise EnvironmentError(
-                    "CUDA requested but no cuda installation detected."
-                )
-            else:
-                pass
-                # device = cuda.get_current_device()
-                # device.reset()
 
     def register_breed(self, breed: Breed) -> None:
         if self._agent_factory.num_agents > 0:
@@ -83,7 +72,20 @@ class Model:
     def get_agents_with(self, query: Callable) -> Set[List[Any]]:
         return self._agent_factory.get_agents_with(query=query)
 
-    def setup(self) -> None:
+    def setup(self, use_cuda: bool = True) -> None:
+        """
+        Must be called before first simulate call.
+        Initializes model and resets ticks. Readies step functions
+        and for breeds.
+
+        :param use_cuda: runs model in GPU mode.
+        """
+        self._use_cuda = use_cuda
+        if self._use_cuda:
+            if not cuda.is_available():
+                raise EnvironmentError(
+                    "CUDA requested but no cuda installation detected."
+                )
         # Create record of agent step functions by breed and priority
         self._breed_idx_2_step_func_by_priority: List[Dict[int, Callable]] = []
         heap_priority_breedidx_func = []
@@ -120,7 +122,6 @@ class Model:
         self._agent_data_tensors = (
             self._agent_factory.generate_agent_data_tensors(self._use_cuda)
         )
-        print(self._agent_data_tensors[-2].copy_to_host())
         if not self._use_cuda:
             with Pool(num_cpu_proc) as pool:
                 with Manager() as manager:
@@ -156,9 +157,10 @@ class Model:
                         unit_divisor=1000,
                         dynamic_ncols=True,
                     ):
-                        shared_global_data_vector[0] += 1
                         for jobs_in_priority in jobs:
                             _ = list(map(smap, jobs_in_priority))
+                        shared_global_data_vector[0] += 1
+                    self._global_data_vector = list(shared_global_data_vector)
         else:
             blockspergrid = int(
                 math.ceil(
@@ -181,9 +183,28 @@ class Model:
             self._agent_data_tensors, self._use_cuda
         )  # internals of this will automatically move data back from GPU
 
-    @property
-    def name(self) -> str:
-        return self._name
+    def save(self, app: "Model", fpath: str) -> None:
+        """
+        Saves model. Must be overridden if additional data
+        pertaining to application must be saved.
+
+        :param fpath: file path to save pickle file at
+        :param app_data: additional application data to be saved.
+        """
+        if "_agent_data_tensors" in app.__dict__:
+            del app.__dict__["_agent_data_tensors"]
+        with open(fpath, "wb") as fout:
+            pickle.dump(app, fout)
+
+    def load(self, fpath: str) -> "Model":
+        """
+        Loads model from pickle file.
+
+        :param fpath: file path to pickle file.
+        """
+        with open(fpath, "rb") as fin:
+            app = pickle.load(fin)
+        return app
 
 
 def smap(func_args):

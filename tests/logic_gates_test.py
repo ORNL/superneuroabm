@@ -13,7 +13,8 @@ class LogicGatesTest(unittest.TestCase):
     def __init__(self, methodName: str = ...) -> None:
         super().__init__(methodName)
         # Create NeuromorphicModel
-        self._model = NeuromorphicModel(use_cuda=False)
+        self._model = NeuromorphicModel()
+        self._use_cuda = False
 
     def test_two_neurons(self):
         """Tests working of two neurons"""
@@ -26,6 +27,9 @@ class LogicGatesTest(unittest.TestCase):
         self._model.create_synapse(
             pre_neuron_id=neuron_0, post_neuron_id=neuron_1
         )
+
+        # Setup and simulate
+        self._model.setup(output_buffer_len=10, use_cuda=self._use_cuda)
 
         # Add spikes
         spikes = [(1, 1), (2, 1)]
@@ -40,8 +44,6 @@ class LogicGatesTest(unittest.TestCase):
                 neuron_id=neuron_1, tick=spike[0], value=spike[1]
             )
 
-        # Setup and simulate
-        self._model.setup(output_buffer_len=10)
         self._model.simulate(ticks=10)
 
         expected_times = [1, 2]
@@ -71,6 +73,9 @@ class LogicGatesTest(unittest.TestCase):
             pre_neuron_id=input_1, post_neuron_id=output_2, weight=1.0
         )
 
+        # Setup and simulate
+        self._model.setup(output_buffer_len=10, use_cuda=self._use_cuda)
+
         # test_cases in format time -> ([(Neuron, value), (Neuron, value)]
         test_cases = {
             1: [
@@ -96,8 +101,6 @@ class LogicGatesTest(unittest.TestCase):
             for neuron, value in test_cases[time]:
                 self._model.spike(neuron_id=neuron, tick=time, value=value)
 
-        # Setup and simulate
-        self._model.setup(output_buffer_len=10)
         self._model.simulate(ticks=10)
 
         print(self._model.get_spikes(neuron_id=output_2))
@@ -120,6 +123,9 @@ class LogicGatesTest(unittest.TestCase):
         self._model.create_synapse(
             pre_neuron_id=input_1, post_neuron_id=output_2, weight=1.0
         )
+
+        # Setup and simulate
+        self._model.setup(output_buffer_len=10, use_cuda=self._use_cuda)
 
         # test_cases in format time -> ([(Neuron, value), (Neuron, value)]
         test_cases = {
@@ -146,8 +152,6 @@ class LogicGatesTest(unittest.TestCase):
             for neuron, value in test_cases[time]:
                 self._model.spike(neuron_id=neuron, tick=time, value=value)
 
-        # Setup and simulate
-        self._model.setup(output_buffer_len=10)
         self._model.simulate(ticks=10)
         print(self._model.get_spikes(neuron_id=output_2))
         assert (
@@ -160,7 +164,8 @@ class LogicGatesTest(unittest.TestCase):
 class LogicGatesTestGPU(LogicGatesTest):
     def __init__(self, methodName: str = ...) -> None:
         super().__init__(methodName)
-        self._model = NeuromorphicModel(use_cuda=True)
+        self._model = NeuromorphicModel()
+        self._use_cuda = True
 
 
 if __name__ == "__main__":
