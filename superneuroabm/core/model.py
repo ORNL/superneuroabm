@@ -110,16 +110,17 @@ class Model:
                 )
                 last_priority = priority
 
-        # Generate agent data tensor
-        self._agent_data_tensors = (
-            self._agent_factory.generate_agent_data_tensors(self._use_cuda)
-        )
         # Generate global data tensor
         self._global_data_vector = [0]  # index 0 reserved for step
 
     def simulate(
         self, ticks: int, update_data_ticks: int = 1, num_cpu_proc: int = 4
     ) -> None:
+        # Generate agent data tensor
+        self._agent_data_tensors = (
+            self._agent_factory.generate_agent_data_tensors(self._use_cuda)
+        )
+        print(self._agent_data_tensors[-2].copy_to_host())
         if not self._use_cuda:
             with Pool(num_cpu_proc) as pool:
                 with Manager() as manager:

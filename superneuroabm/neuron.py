@@ -17,6 +17,7 @@ def neuron_step_func(
     internal_state,
     neuron_delay_regs,
     input_spikess,
+    output_synapses_learning_paramss,
     output_spikess,
     my_idx,
 ):
@@ -85,6 +86,7 @@ def synapse_step_func(
     internal_state,
     neuron_delay_regs,
     input_spikess,
+    output_synapses_learning_paramss,
     output_spikess,
     my_idx,
 ):
@@ -129,6 +131,7 @@ def synapse_with_stdp_step_func(
     internal_state,
     neuron_delay_regs,
     input_spikess,
+    output_synapses_learning_paramss,
     output_spikess,
     my_idx,
 ):
@@ -173,11 +176,14 @@ def synapse_with_stdp_step_func(
         # Perform STDP weight change
         if t_current < 2:
             return
-        stdp_timesteps = 3
-        A_pos = 0.6
-        A_neg = 0.3
-        tau_pos = 8
-        tau_neg = 5
+        output_synapse_learning_params = output_synapses_learning_paramss[
+            my_idx
+        ][synapse_idx]
+        stdp_timesteps = output_synapse_learning_params[0]
+        A_pos = output_synapse_learning_params[1]  # 0.6
+        A_neg = output_synapse_learning_params[2]  # 0.3
+        tau_pos = output_synapse_learning_params[3]  # 8
+        tau_neg = output_synapse_learning_params[4]  # 5
 
         presynaptic_spikes = output_spikess[my_idx]
         postsynaptic_spikes = output_spikess[int(out_neuron_id)]
