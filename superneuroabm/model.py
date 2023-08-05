@@ -297,7 +297,7 @@ class NeuromorphicModel(Model):
                 pre_neuron_id,
                 "output_synapses",
                 output_synapses,
-                # [len(output_synapses), len(synapse_info)],
+                [len(output_synapses), len(output_synapses[synapse_idx])],
             )
 
         # Update or enter learning params
