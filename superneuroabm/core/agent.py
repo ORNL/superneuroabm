@@ -172,7 +172,7 @@ class AgentFactory:
         self._property_name_2_agent_data_tensor[property_name][
             agent_id
         ] = value
-        if dims:
+        if dims != None:
             if self._property_name_2_max_dims[property_name]:
                 if len(dims) != len(
                     self._property_name_2_max_dims[property_name]
