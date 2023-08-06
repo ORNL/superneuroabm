@@ -261,20 +261,21 @@ class NeuromorphicModel(Model):
         self._original_output_synapse_weights[pre_neuron_id].append(weight)
 
         # Update or enter learning params
-        if synapse_learning_params:
-            synapses_learning_params = self.get_agent_property_value(
-                pre_neuron_id, "output_synapses_learning_params"
-            )
-            synapses_learning_params.append(synapse_learning_params)
-            self.set_agent_property_value(
-                id=pre_neuron_id,
-                property_name="output_synapses_learning_params",
-                value=synapses_learning_params,
-                dims=[
-                    len(synapses_learning_params),
-                    len(synapse_learning_params),
-                ],
-            )
+        synapses_learning_params = self.get_agent_property_value(
+            pre_neuron_id, "output_synapses_learning_params"
+        )
+        if synapse_learning_params == None:
+            synapse_learning_params = []
+        synapses_learning_params.append(synapse_learning_params)
+        self.set_agent_property_value(
+            id=pre_neuron_id,
+            property_name="output_synapses_learning_params",
+            value=synapses_learning_params,
+            dims=[
+                len(synapses_learning_params),
+                len(synapse_learning_params),
+            ],
+        )
 
     def update_synapse(
         self,
