@@ -3,7 +3,6 @@ from typing import Any, Callable, List, Dict, Optional, Union
 from collections import OrderedDict
 from copy import copy
 import warnings
-from multiprocessing import shared_memory
 
 import numpy as np
 from numba import cuda
@@ -230,7 +229,7 @@ class AgentFactory:
             adt = convert_to_equal_side_tensor(adt, max_dims)
             if use_cuda:
                 adt = cuda.to_device(adt)
-            else:
+            '''else:
                 # TODO fix shared memory usage
                 if False:
                     d_size = np.dtype(dtype).itemsize * np.prod(adt.shape)
@@ -243,6 +242,7 @@ class AgentFactory:
                         shape=adt.shape, dtype=dtype, buffer=shm.buf
                     )
                     dst[:] = adt[:]
+            '''
             converted_agent_data_tensors.append(adt)
         return converted_agent_data_tensors
 
