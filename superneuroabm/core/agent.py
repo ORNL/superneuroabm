@@ -256,13 +256,14 @@ class AgentFactory:
             else:
                 dt = equal_side_agent_data_tensors[i]
                 # TODO Free shared memory
-                if False:
+                '''if False:
                     if dt.size != 0:
                         shm = shared_memory.SharedMemory(
                             name=f"npshared{property_name}"
                         )
                         shm.close()
                         shm.unlink()
+                '''
             self._property_name_2_agent_data_tensor[
                 property_names[i]
             ] = compress_tensor(dt)
