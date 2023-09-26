@@ -32,7 +32,11 @@ def neuron_step_func(
     for spike in input_spikess[my_idx]:
         if spike[0] == t_current:
             internal_state[my_idx] += spike[1]
-    internal_state[my_idx] -= leaks[my_idx]
+    internal_state[my_idx] = (
+        internal_state[my_idx] - leaks[my_idx]
+        if internal_state[my_idx] - leaks[my_idx] > reset_states[my_idx]
+        else reset_states[my_idx]
+    )
 
     # Apply axonal delay to the output of the spike:
     # Shift the register each time step

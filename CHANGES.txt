@@ -1,2 +1,3 @@
 v0.1.0: Initial release
 v0.2.0: Spike Time Dependent Plasticity included. Heterogenous neuron API. Bug fixes to synaptic step functions.
+v0.3.0: Model can be saved and loaded. Simulation can be continued with multiple calls to model.NeurmorphicModel.simulate. model.NeuromorphicModel.setup provides the option to reset the simulation temporally, while preserving weights. API functions renamed: model.NeuromorhpicModel.get_spikes -> model.NeuromorphicModel.get_spike_times and model.NeuromorphicModel.spike -> model.NeuromorphicModel.add_spike. Bug fixes to synaptic delay, compress_tensor and shared memory use in CPU mode. Customizable learning parameters.
