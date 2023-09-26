@@ -2,6 +2,7 @@ import time
 from typing import Iterable, List, Any, Tuple, Optional
 
 import numpy as np
+from numba import cuda
 
 
 def convert_to_equal_side_tensor(
@@ -54,6 +55,8 @@ def compress_tensor(arr: Iterable, level: int = 0):
     else:
         new_arr = []
         for item in arr:
+            if type(item) == cuda.cudadrv.devicearray.DeviceNDArray:
+                item = item.copy_to_host()
             new_item = compress_tensor(item, level + 1)
             if (
                 (not isinstance(new_item, Iterable) and new_item != None)
