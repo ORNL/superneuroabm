@@ -71,7 +71,7 @@ class LearningTest(unittest.TestCase):
         expected_times = [8]
         for time in spikes:
             for neuron, value in spikes[time]:
-                self._model.spike(neuron_id=neuron, tick=time, value=value)
+                self._model.add_spike(neuron_id=neuron, tick=time, value=value)
 
         self._model.simulate(ticks=10)
         print(self._model.summary())
@@ -140,7 +140,7 @@ class LearningTest(unittest.TestCase):
         }
         for time in spikes:
             for neuron, value in spikes[time]:
-                self._model.spike(neuron_id=neuron, tick=time, value=value)
+                self._model.add_spike(neuron_id=neuron, tick=time, value=value)
 
         self._model.simulate(ticks=10)
         print(self._model.summary())
@@ -188,7 +188,7 @@ class LearningTest(unittest.TestCase):
         }
         for time in spikes:
             for neuron, value in spikes[time]:
-                self._model.spike(neuron_id=neuron, tick=time, value=value)
+                self._model.add_spike(neuron_id=neuron, tick=time, value=value)
 
         self._model.simulate(ticks=10)
         print(self._model.summary())
@@ -269,7 +269,7 @@ class LearningTest(unittest.TestCase):
         }
         for time in spikes:
             for neuron, value in spikes[time]:
-                self._model.spike(neuron_id=neuron, tick=time, value=value)
+                self._model.add_spike(neuron_id=neuron, tick=time, value=value)
 
         self._model.simulate(ticks=20)
         print(self._model.summary())
@@ -288,7 +288,7 @@ class LearningTest(unittest.TestCase):
 
         for time in spikes:
             for neuron, value in spikes[time]:
-                self._model.spike(neuron_id=neuron, tick=time, value=value)
+                self._model.add_spike(neuron_id=neuron, tick=time, value=value)
 
         self._model.update_synapse(
             input,

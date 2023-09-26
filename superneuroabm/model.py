@@ -326,7 +326,7 @@ class NeuromorphicModel(Model):
                 ],
             )
 
-    def spike(self, neuron_id: int, tick: int, value: float) -> None:
+    def add_spike(self, neuron_id: int, tick: int, value: float) -> None:
         """
         Schedules an external input spike to this Neuron.
 
@@ -342,7 +342,7 @@ class NeuromorphicModel(Model):
             neuron_id, "input_spikes", spikes, [len(spikes), 2]
         )
 
-    def get_spikes(self, neuron_id: int) -> np.array:
+    def get_spike_times(self, neuron_id: int) -> np.array:
         spike_train = super().get_agent_property_value(
             id=neuron_id,
             property_name="output_spikes",

@@ -50,7 +50,7 @@ class ScaleTest(unittest.TestCase):
         # input_id = np.random.randint(0, n_neurons - 1)
         spike_neuron = randint(a=0, b=n_neurons - 1)
         print("Input applied to neuron:", spike_neuron)
-        model.spike(spike_neuron, 1, 400)
+        model.add_spike(spike_neuron, 1, 400)
 
         t_create_end = time.time()
         print(
@@ -68,7 +68,7 @@ class ScaleTest(unittest.TestCase):
         t_mon_start = time.time()
         # Get spike times
         for neuron_id in range(n_neurons):
-            spike_times = model.get_spikes(neuron_id=neuron_id)
+            spike_times = model.get_spike_times(neuron_id=neuron_id)
         t_mon_end = time.time()
         print(
             f"Time to get spikes for all neurons: {t_mon_end - t_mon_start} seconds"

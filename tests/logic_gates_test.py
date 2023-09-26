@@ -34,28 +34,28 @@ class LogicGatesTest(unittest.TestCase):
         # Add spikes
         spikes = [(1, 1), (2, 1)]
         for spike in spikes:
-            self._model.spike(
+            self._model.add_spike(
                 neuron_id=neuron_0, tick=spike[0], value=spike[1]
             )
 
         spikes = [(9, 1), (5, 1), (4, 1)]
         for spike in spikes:
-            self._model.spike(
+            self._model.add_spike(
                 neuron_id=neuron_1, tick=spike[0], value=spike[1]
             )
 
         self._model.simulate(ticks=10)
 
         expected_times = [1, 2]
-        print(self._model.get_spikes(neuron_id=neuron_0))
-        print(self._model.get_spikes(neuron_id=neuron_1))
+        print(self._model.get_spike_times(neuron_id=neuron_0))
+        print(self._model.get_spike_times(neuron_id=neuron_1))
         assert (
-            self._model.get_spikes(neuron_id=neuron_0) == expected_times
-        ), f"Spike times are {self._model.get_spikes(neuron_id=neuron_0)} but should be {expected_times}"
+            self._model.get_spike_times(neuron_id=neuron_0) == expected_times
+        ), f"Spike times are {self._model.get_spike_times(neuron_id=neuron_0)} but should be {expected_times}"
         expected_times = [2, 3, 4, 5, 9]
         assert (
-            self._model.get_spikes(neuron_id=neuron_1) == expected_times
-        ), f"Spike times are {self._model.get_spikes(neuron_id=neuron_1)} but should be {expected_times}"
+            self._model.get_spike_times(neuron_id=neuron_1) == expected_times
+        ), f"Spike times are {self._model.get_spike_times(neuron_id=neuron_1)} but should be {expected_times}"
 
     def test_or_gate(self):
         """Builds a neuromorphic circuit for OR gate and simulates it"""
@@ -99,14 +99,14 @@ class LogicGatesTest(unittest.TestCase):
         expected_times = [4, 6, 8]
         for time in test_cases:
             for neuron, value in test_cases[time]:
-                self._model.spike(neuron_id=neuron, tick=time, value=value)
+                self._model.add_spike(neuron_id=neuron, tick=time, value=value)
 
         self._model.simulate(ticks=10)
 
-        print(self._model.get_spikes(neuron_id=output_2))
+        print(self._model.get_spike_times(neuron_id=output_2))
         assert (
-            self._model.get_spikes(neuron_id=output_2) == expected_times
-        ), f"Spike times are {self._model.get_spikes(neuron_id=output_2)} but should be {expected_times}"
+            self._model.get_spike_times(neuron_id=output_2) == expected_times
+        ), f"Spike times are {self._model.get_spike_times(neuron_id=output_2)} but should be {expected_times}"
 
     def test_and_gate(self):
         """Builds a neuromorphic circuit for AND gate and simulates it"""
@@ -150,13 +150,13 @@ class LogicGatesTest(unittest.TestCase):
         expected_times = [8]
         for time in test_cases:
             for neuron, value in test_cases[time]:
-                self._model.spike(neuron_id=neuron, tick=time, value=value)
+                self._model.add_spike(neuron_id=neuron, tick=time, value=value)
 
         self._model.simulate(ticks=10)
-        print(self._model.get_spikes(neuron_id=output_2))
+        print(self._model.get_spike_times(neuron_id=output_2))
         assert (
-            self._model.get_spikes(neuron_id=output_2) == expected_times
-        ), f"Spike times are {self._model.get_spikes(neuron_id=output_2)} but should be {expected_times}"
+            self._model.get_spike_times(neuron_id=output_2) == expected_times
+        ), f"Spike times are {self._model.get_spike_times(neuron_id=output_2)} but should be {expected_times}"
 
         print(self._model.summary())
 

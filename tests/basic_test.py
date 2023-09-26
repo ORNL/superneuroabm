@@ -35,12 +35,12 @@ class BasicTest(unittest.TestCase):
         spikes = {1: [(input, 1)], 6: [(input, 100)]}
         for time in spikes:
             for neuron, value in spikes[time]:
-                model.spike(neuron_id=neuron, tick=time, value=value)
+                model.add_spike(neuron_id=neuron, tick=time, value=value)
 
         model.simulate(ticks=6)
         print(model.summary())
         assert model._global_data_vector[0] == 6, "Ticks are off"
-        assert model.get_spikes(output) == [
+        assert model.get_spike_times(output) == [
             2
         ], "Simulation did not continue properly"
 
@@ -49,7 +49,7 @@ class BasicTest(unittest.TestCase):
         assert (
             model._global_data_vector[0] == 10
         ), "Ticks didn't continue correctly on second simulate call"
-        assert model.get_spikes(output) == [
+        assert model.get_spike_times(output) == [
             2,
             7,
         ], "Simulation did not continue properly"
@@ -71,12 +71,12 @@ class BasicTest(unittest.TestCase):
         spikes = {1: [(input, 1)], 6: [(input, 100)]}
         for time in spikes:
             for neuron, value in spikes[time]:
-                model.spike(neuron_id=neuron, tick=time, value=value)
+                model.add_spike(neuron_id=neuron, tick=time, value=value)
 
         model.simulate(ticks=6)
         print(model.summary())
         assert model._global_data_vector[0] == 6, "Ticks are off"
-        assert model.get_spikes(output) == [
+        assert model.get_spike_times(output) == [
             2
         ], "Simulation did not execute properly"
 
@@ -84,14 +84,14 @@ class BasicTest(unittest.TestCase):
         spikes = {1: [(input, 1)], 6: [(input, 100)]}
         for time in spikes:
             for neuron, value in spikes[time]:
-                model.spike(neuron_id=neuron, tick=time, value=value)
+                model.add_spike(neuron_id=neuron, tick=time, value=value)
         model.simulate(ticks=4)
         print(model.summary())
         assert (
             model._global_data_vector[0] == 4
         ), "Ticks didn't continue correctly on second simulate call"
 
-        assert model.get_spikes(output) == [
+        assert model.get_spike_times(output) == [
             2,
         ], "Simulation did not reset properly"
 
@@ -145,7 +145,7 @@ class BasicTest(unittest.TestCase):
         }
         for time in spikes:
             for neuron, value in spikes[time]:
-                model.spike(neuron_id=neuron, tick=time, value=value)
+                model.add_spike(neuron_id=neuron, tick=time, value=value)
 
         model.simulate(ticks=10)
         print(model.summary())
@@ -188,7 +188,7 @@ class BasicTest(unittest.TestCase):
         }
         for time in spikes:
             for neuron, value in spikes[time]:
-                model.spike(neuron_id=neuron, tick=time, value=value)
+                model.add_spike(neuron_id=neuron, tick=time, value=value)
 
         # Setup and simulate
         model.simulate(ticks=10)
@@ -217,10 +217,10 @@ class BasicTest(unittest.TestCase):
         }
         for time in spikes:
             for neuron, value in spikes[time]:
-                model.spike(neuron_id=neuron, tick=time, value=value)
+                model.add_spike(neuron_id=neuron, tick=time, value=value)
 
         model.simulate(ticks=10)
         print(model.summary())
-        assert model.get_spikes(output_2) == [
+        assert model.get_spike_times(output_2) == [
             4
         ], "Trained and loaded model did not spike correctly"
