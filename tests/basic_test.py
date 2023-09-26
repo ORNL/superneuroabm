@@ -260,3 +260,31 @@ class BasicTest(unittest.TestCase):
         assert model.get_agent_property_value(
             output2, "internal_state"
         ) == model.get_agent_property_value(output2, "reset_state")
+
+    def test_refactory_period(self):
+        """Tests if refactory periods greater than 1 work"""
+
+        model = NeuromorphicModel()
+        # Create neurons
+        input = model.create_neuron(threshold=0.0)
+        output1 = model.create_neuron(threshold=0.0)
+        output2 = model.create_neuron(threshold=0.0, refractory_period=5)
+
+        # Create synapses
+        model.create_synapse(
+            pre_neuron_id=input, post_neuron_id=output1, weight=10.0
+        )
+        model.create_synapse(
+            pre_neuron_id=input, post_neuron_id=output2, weight=10.0
+        )
+        # Setup and simulate
+        model.setup(output_buffer_len=10, use_cuda=True)
+        spikes = {1: [(input, 1)], 3: [(input, 1)]}
+        for time in spikes:
+            for neuron, value in spikes[time]:
+                model.add_spike(neuron_id=neuron, tick=time, value=value)
+
+        model.simulate(ticks=10)
+
+        assert model.get_spike_times(output1) == [2, 4]
+        assert model.get_spike_times(output2) == [2]
