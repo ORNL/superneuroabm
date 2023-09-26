@@ -224,3 +224,39 @@ class BasicTest(unittest.TestCase):
         assert model.get_spike_times(output_2) == [
             4
         ], "Trained and loaded model did not spike correctly"
+
+    def test_leak_to_reset(self):
+        """Tests if leak does not cause neuron internal state to drop beyond reset state"""
+
+        model = NeuromorphicModel()
+        # Create neurons
+        input = model.create_neuron(threshold=0.0)
+        output1_reset_state = -1
+        output1 = model.create_neuron(
+            threshold=0.0, leak=1, reset_state=output1_reset_state
+        )
+        output2 = model.create_neuron(threshold=0.0, leak=1)
+
+        # Create synapses
+        model.create_synapse(
+            pre_neuron_id=input, post_neuron_id=output1, weight=10.0
+        )
+        model.create_synapse(
+            pre_neuron_id=input, post_neuron_id=output2, weight=10.0
+        )
+        # Setup and simulate
+        model.setup(output_buffer_len=10, use_cuda=True)
+        spikes = {1: [(input, 1)]}
+        for time in spikes:
+            for neuron, value in spikes[time]:
+                model.add_spike(neuron_id=neuron, tick=time, value=value)
+
+        model.simulate(ticks=10)
+
+        assert (
+            model.get_agent_property_value(output1, "internal_state")
+            == output1_reset_state
+        )
+        assert model.get_agent_property_value(
+            output2, "internal_state"
+        ) == model.get_agent_property_value(output2, "reset_state")
