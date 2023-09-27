@@ -3,7 +3,6 @@ from typing import Any, Callable, List, Dict, Optional, Union
 from collections import OrderedDict
 from copy import copy
 import warnings
-from multiprocessing import shared_memory
 
 import numpy as np
 from numba import cuda
@@ -172,7 +171,7 @@ class AgentFactory:
         self._property_name_2_agent_data_tensor[property_name][
             agent_id
         ] = value
-        if dims:
+        if dims != None:
             if self._property_name_2_max_dims[property_name]:
                 if len(dims) != len(
                     self._property_name_2_max_dims[property_name]
@@ -230,16 +229,20 @@ class AgentFactory:
             adt = convert_to_equal_side_tensor(adt, max_dims)
             if use_cuda:
                 adt = cuda.to_device(adt)
-            else:
-                # use shared memory if not cuda
-                d_size = np.dtype(dtype).itemsize * np.prod(adt.shape)
-                shm = shared_memory.SharedMemory(
-                    create=True,
-                    size=d_size,
-                    name=f"npshared{property_name}",
-                )
-                dst = np.ndarray(shape=adt.shape, dtype=dtype, buffer=shm.buf)
-                dst[:] = adt[:]
+            '''else:
+                # TODO fix shared memory usage
+                if False:
+                    d_size = np.dtype(dtype).itemsize * np.prod(adt.shape)
+                    shm = shared_memory.SharedMemory(
+                        create=True,
+                        size=d_size,
+                        name=f"npshared{property_name}",
+                    )
+                    dst = np.ndarray(
+                        shape=adt.shape, dtype=dtype, buffer=shm.buf
+                    )
+                    dst[:] = adt[:]
+            '''
             converted_agent_data_tensors.append(adt)
         return converted_agent_data_tensors
 
@@ -252,12 +255,15 @@ class AgentFactory:
                 dt = equal_side_agent_data_tensors[i]
             else:
                 dt = equal_side_agent_data_tensors[i]
-                # Free shared memory
-                shm = shared_memory.SharedMemory(
-                    name=f"npshared{property_name}"
-                )
-                shm.close()
-                shm.unlink()
+                # TODO Free shared memory
+                '''if False:
+                    if dt.size != 0:
+                        shm = shared_memory.SharedMemory(
+                            name=f"npshared{property_name}"
+                        )
+                        shm.close()
+                        shm.unlink()
+                '''
             self._property_name_2_agent_data_tensor[
                 property_names[i]
             ] = compress_tensor(dt)

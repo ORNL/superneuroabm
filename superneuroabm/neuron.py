@@ -17,6 +17,7 @@ def neuron_step_func(
     internal_state,
     neuron_delay_regs,
     input_spikess,
+    output_synapses_learning_paramss,
     output_spikess,
     my_idx,
 ):
@@ -31,7 +32,11 @@ def neuron_step_func(
     for spike in input_spikess[my_idx]:
         if spike[0] == t_current:
             internal_state[my_idx] += spike[1]
-    internal_state[my_idx] -= leaks[my_idx]
+    internal_state[my_idx] = (
+        internal_state[my_idx] - leaks[my_idx]
+        if internal_state[my_idx] - leaks[my_idx] > reset_states[my_idx]
+        else reset_states[my_idx]
+    )
 
     # Apply axonal delay to the output of the spike:
     # Shift the register each time step
@@ -85,6 +90,7 @@ def synapse_step_func(
     internal_state,
     neuron_delay_regs,
     input_spikess,
+    output_synapses_learning_paramss,
     output_spikess,
     my_idx,
 ):
@@ -95,6 +101,10 @@ def synapse_step_func(
         out_neuron_id = out_synapse_info[0]
         if math.isnan(out_neuron_id):
             break
+        out_neuron_id = int(out_neuron_id)
+        # If out_neuron still in refractory period, return
+        if t_elapses[out_neuron_id] > 0:
+            continue
         weight = out_synapse_info[1]
         synapse_register = out_synapse_info[2:]
         # Check if delayed Vm was over threshold, if so spike
@@ -114,7 +124,7 @@ def synapse_step_func(
         )
         Vm = synapse_register[syn_delay_reg_tail]
         if not math.isnan(Vm) and Vm != 0:
-            internal_state[int(out_neuron_id)] += weight
+            internal_state[out_neuron_id] += weight
 
 
 def synapse_with_stdp_step_func(
@@ -129,6 +139,7 @@ def synapse_with_stdp_step_func(
     internal_state,
     neuron_delay_regs,
     input_spikess,
+    output_synapses_learning_paramss,
     output_spikess,
     my_idx,
 ):
@@ -140,6 +151,7 @@ def synapse_with_stdp_step_func(
         out_neuron_id = out_synapse_info[0]
         if math.isnan(out_neuron_id):
             break
+        out_neuron_id = int(out_neuron_id)
         weight = out_synapse_info[1]
         synapse_register = out_synapse_info[2:]
         # Check if delayed Vm was over threshold, if so spike
@@ -173,16 +185,19 @@ def synapse_with_stdp_step_func(
         # Perform STDP weight change
         if t_current < 2:
             return
-        stdp_timesteps = 3
-        A_pos = 0.6
-        A_neg = 0.3
-        tau_pos = 8
-        tau_neg = 5
+        output_synapse_learning_params = output_synapses_learning_paramss[
+            my_idx
+        ][synapse_idx]
+        stdp_timesteps = output_synapse_learning_params[0]
+        A_pos = output_synapse_learning_params[1]  # 0.6
+        A_neg = output_synapse_learning_params[2]  # 0.3
+        tau_pos = output_synapse_learning_params[3]  # 8
+        tau_neg = output_synapse_learning_params[4]  # 5
 
         presynaptic_spikes = output_spikess[my_idx]
         postsynaptic_spikes = output_spikess[int(out_neuron_id)]
         delta_w = 0
-        for delta_t in range(stdp_timesteps):
+        for delta_t in range(int(stdp_timesteps)):
             pre_to_post_correlation = (
                 presynaptic_spikes[t_current - 1 - delta_t]
                 * postsynaptic_spikes[t_current]
