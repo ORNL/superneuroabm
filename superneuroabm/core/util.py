@@ -25,7 +25,7 @@ def convert_to_equal_side_tensor(
         print("no dims specified... running find max depth")
         find_max_depth(tensor)
         max_dims = tuple(list(dim2maxlen.values()))
-    answer = np.full(shape=max_dims, fill_value=np.nan)
+    answer = np.full(shape=max_dims, fill_value=np.nan, dtype=np.float32)
 
     def fill_arr(arr, coord):
         if len(coord) == len(max_dims):

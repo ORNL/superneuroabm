@@ -98,9 +98,10 @@ def synapse_step_func(
     # Update outgoing synapses if any
     for synapse_idx in range(len(output_synapsess[my_idx])):
         out_synapse_info = output_synapsess[my_idx][synapse_idx]
-        out_neuron_id = int(out_synapse_info[0])
+        out_neuron_id = out_synapse_info[0]
         if math.isnan(out_neuron_id):
             break
+        out_neuron_id = int(out_neuron_id)
         # If out_neuron still in refractory period, return
         if t_elapses[out_neuron_id] > 0:
             continue
@@ -150,6 +151,7 @@ def synapse_with_stdp_step_func(
         out_neuron_id = out_synapse_info[0]
         if math.isnan(out_neuron_id):
             break
+        out_neuron_id = int(out_neuron_id)
         weight = out_synapse_info[1]
         synapse_register = out_synapse_info[2:]
         # Check if delayed Vm was over threshold, if so spike
