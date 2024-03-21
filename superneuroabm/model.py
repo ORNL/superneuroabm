@@ -49,7 +49,8 @@ class NeuromorphicModel(Model):
             "input_spikes": [],
             "output_synapses_learning_params": [],
             "output_spikes": [],
-            "output_property_history": [],
+            "output_neuron_property_history": [],
+            "output_synapse_property_history": [],
         }
         max_dims = {
             "threshold": [],
@@ -63,7 +64,8 @@ class NeuromorphicModel(Model):
             "input_spikes": None,
             "output_synapses_learning_params": None,
             "output_spikes": None,
-            "output_property_history": None,
+            "output_neuron_property_history": None,
+            "output_synapse_property_history": None,
         }
 
         self._neuron_breeds: Dict[str, Breed] = {}
@@ -89,7 +91,8 @@ class NeuromorphicModel(Model):
         use_cuda: bool = False,
         output_buffer_len: int = 1000,
         retain_weights=False,
-        number_of_tracked_properties=0,
+        number_of_tracked_neuron_properties=0,
+        number_of_tracked_synapse_properties=0,
     ) -> None:
         """
         Resets the simulation and initializes agents.
@@ -116,15 +119,7 @@ class NeuromorphicModel(Model):
                 value=output_buffer,
                 dims=[output_buffer_len],
             )
-            if number_of_tracked_properties:
-                # Set output history buffer
-                output_property_history_buffer = [[np.nan for _ in range(number_of_tracked_properties)] for _ in range(output_buffer_len)]
-                super().set_agent_property_value(
-                    id=neuron_id,
-                    property_name="output_property_history",
-                    value=output_property_history_buffer,
-                    dims=[output_buffer_len, number_of_tracked_properties],
-                )
+            
             # Clear internal states
             reset_state = super().get_agent_property_value(
                 id=neuron_id, property_name="reset_state"
@@ -171,6 +166,30 @@ class NeuromorphicModel(Model):
                 output_synapses,
                 [len(output_synapses), max_synapse_info_len],
             )
+
+            if number_of_tracked_neuron_properties:
+                # Set output history buffer
+                output_neuron_property_history_buffer = [[np.nan for _ in range(number_of_tracked_neuron_properties)] for _ in range(output_buffer_len)]
+                super().set_agent_property_value(
+                    id=neuron_id,
+                    property_name="output_neuron_property_history",
+                    value=output_neuron_property_history_buffer,
+                    dims=[output_buffer_len, number_of_tracked_neuron_properties],
+                )
+            if number_of_tracked_synapse_properties:
+                # Set output history buffer
+                output_synapse_property_history_buffer = [
+                    [
+                        [np.nan for _ in range(number_of_tracked_synapse_properties)]
+                        for _ in len(output_synapses)
+                    ] 
+                    for _ in range(output_buffer_len)]
+                super().set_agent_property_value(
+                    id=neuron_id,
+                    property_name="output_synapse_property_history",
+                    value=output_synapse_property_history_buffer,
+                    dims=[output_buffer_len, number_of_tracked_synapse_properties],
+                )
 
         super().setup(use_cuda=use_cuda)
 
