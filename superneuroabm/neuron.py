@@ -19,6 +19,8 @@ def neuron_step_func(
     input_spikess,
     output_synapses_learning_paramss,
     output_spikess,
+    output_neuron_property_history,
+    output_synapse_property_history,
     my_idx,
 ):
     t_current = int(global_data_vector[0])
@@ -92,6 +94,8 @@ def synapse_step_func(
     input_spikess,
     output_synapses_learning_paramss,
     output_spikess,
+    output_neuron_property_history,
+    output_synapse_property_history,
     my_idx,
 ):
     t_current = int(global_data_vector[0])
@@ -141,6 +145,8 @@ def synapse_with_stdp_step_func(
     input_spikess,
     output_synapses_learning_paramss,
     output_spikess,
+    output_neuron_property_history,
+    output_synapse_property_history,
     my_idx,
 ):
     t_current = int(global_data_vector[0])
@@ -221,3 +227,4 @@ def synapse_with_stdp_step_func(
             w_new = w_old + sigma * delta_w * (w_old - w_max)
         # set new weight of synapse. Weight is at index 1
         output_synapsess[my_idx][synapse_idx][1] = w_new
+        output_synapse_property_history[my_idx][t_current][synapse_idx] = w_new
