@@ -193,6 +193,8 @@ def synapse_with_stdp_step_func(
         A_neg = output_synapse_learning_params[2]  # 0.3
         tau_pos = output_synapse_learning_params[3]  # 8
         tau_neg = output_synapse_learning_params[4]  # 5
+        sigma = output_synapse_learning_params[5] # 0.8 # weight change rate
+        w_max = output_synapse_learning_params[6] # 1000 
 
         presynaptic_spikes = output_spikess[my_idx]
         postsynaptic_spikes = output_spikess[int(out_neuron_id)]
@@ -213,8 +215,6 @@ def synapse_with_stdp_step_func(
                 A_neg * math.exp(delta_t / tau_neg) * post_to_pre_correlation
             )
         w_old = weight
-        sigma = 0.8  # weight change rate
-        w_max = 1000
         if delta_w > 0:
             w_new = w_old + sigma * delta_w * (w_max - w_old)
         else:
