@@ -13,5 +13,5 @@ setup(
     long_description="""A GPU-based multi-agent simulation framework for neuromorphic computing.""",
     long_description_content_type="text/markdown",
     project_urls={"Source": "https://github.com/ORNL/superneuroabm"},
-    install_requires=["numba==0.55.1", "numpy==1.21.6", "tqdm==4.64.1"], 
+    install_requires=["numba==0.55.1", "numpy==1.21.6", "tqdm==4.64.1","sphinx"], 
 )
