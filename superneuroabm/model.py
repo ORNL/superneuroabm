@@ -1,12 +1,14 @@
 """
 Model class for building an SNN
 """
+
 from typing import Dict, Callable, List
 
 import numpy as np
 
-from superneuroabm.core.model import Model
-from superneuroabm.core.agent import Breed
+from sagesim.model import Model
+from sagesim.agent import Breed
+from sagesim.space import NetworkSpace
 from superneuroabm.neuron import (
     synapse_step_func,
     neuron_step_func,
@@ -34,7 +36,8 @@ class NeuromorphicModel(Model):
             breed every simulation step in the order specifed in the
             list.
         """
-        super().__init__()
+        space = NetworkSpace()
+        super().__init__(space=space)
 
         axonal_delay = 1
         neuron_properties = {
@@ -84,7 +87,7 @@ class NeuromorphicModel(Model):
 
     def setup(
         self,
-        use_cuda: bool = False,
+        use_gpu: bool = False,
         output_buffer_len: int = 1000,
         retain_weights=False,
     ) -> None:
@@ -142,9 +145,9 @@ class NeuromorphicModel(Model):
             for i in range(len(output_synapses)):
                 # Clear weight (2nd element) if necessary
                 if not retain_weights:
-                    output_synapses[i][
-                        1
-                    ] = self._original_output_synapse_weights[neuron_id][i]
+                    output_synapses[i][1] = self._original_output_synapse_weights[
+                        neuron_id
+                    ][i]
                 # Clear the rest of the list, which is the delay register
                 j = 2
                 while j < len(output_synapses[i]):
@@ -160,17 +163,15 @@ class NeuromorphicModel(Model):
                 [len(output_synapses), max_synapse_info_len],
             )
 
-        super().setup(use_cuda=use_cuda)
+        super().setup(use_gpu=use_gpu)
 
-    def simulate(
-        self, ticks: int, update_data_ticks: int = 1, num_cpu_proc: int = 4
-    ) -> None:
+    def simulate(self, ticks: int, update_data_ticks: int = 1) -> None:
         """
         Override of superneuroabm.core.model mainly to register an
         AgentDataCollector to monitor marked output Neurons.
 
         """
-        super().simulate(ticks, update_data_ticks, num_cpu_proc)
+        super().simulate(ticks, update_data_ticks)
 
     def create_neuron(
         self,
@@ -195,12 +196,11 @@ class NeuromorphicModel(Model):
             leak=leak,
             refractory_period=refractory_period,
         )
+        self.get_space().add_agent(neuron_id)
         self.set_agent_property_value(
             neuron_id, "neuron_delay_reg", delay_reg, [axonal_delay]
         )
-        self.set_agent_property_value(
-            neuron_id, "internal_state", reset_state, []
-        )
+        self.set_agent_property_value(neuron_id, "internal_state", reset_state, [])
         # synapse_infos = []
         # self._output_synapsess.append(synapse_infos)
         return neuron_id
@@ -238,6 +238,7 @@ class NeuromorphicModel(Model):
         else:
             output_synapse_index_map = {post_neuron_id: 0}
         self._synapse_index_map[pre_neuron_id] = output_synapse_index_map
+        self.get_space().connect_agents(pre_neuron_id, post_neuron_id)
 
         # Update or enter new synapse params
         output_synapses = self.get_agent_property_value(
@@ -255,9 +256,9 @@ class NeuromorphicModel(Model):
         )
 
         # store original weights
-        self._original_output_synapse_weights[
-            pre_neuron_id
-        ] = self._original_output_synapse_weights.get(pre_neuron_id, [])
+        self._original_output_synapse_weights[pre_neuron_id] = (
+            self._original_output_synapse_weights.get(pre_neuron_id, [])
+        )
         self._original_output_synapse_weights[pre_neuron_id].append(weight)
 
         # Update or enter learning params
@@ -347,9 +348,7 @@ class NeuromorphicModel(Model):
             id=neuron_id,
             property_name="output_spikes",
         )
-        spike_times = [
-            i for i in range(len(spike_train)) if spike_train[i] > 0
-        ]
+        spike_times = [i for i in range(len(spike_train)) if spike_train[i] > 0]
         return spike_times
 
     def summary(self) -> str:
