@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -A csc536
-#SBATCH -J sagesim_sir
+#SBATCH -J superneuroabm_logic_gates
 #SBATCH -o logs/sagesim_sir_%j.o
 #SBATCH -e logs/sagesim_sir_%j.e
 #SBATCH -t 00:10:00
@@ -25,12 +25,13 @@ module load craype-accel-amd-gfx90a
 source activate /lustre/orion/csc536/proj-shared/.conda/pkgs/sagesimenv/
 
 # Point to source
-export SRC_DIR=/lustre/orion/proj-shared/csc536/SAGESim/examples/sir/
-MODULE_DIR=/lustre/orion/proj-shared/csc536/SAGESim/
-export PYTHONPATH=${MODULE_DIR}:$PYTHONPATH
+export SRC_DIR=/lustre/orion/proj-shared/csc536/superneuroabm/examples/frontier_logic_gates/
+SAGESIM_DIR=/lustre/orion/proj-shared/csc536/SAGESim/
+SUPERNEUROABM_DIR=/lustre/orion/proj-shared/csc536/superneuroabm/
+export PYTHONPATH=${SAGESIM_DIR}:${SUPERNEUROABM_DIR}:$PYTHONPATH
 
 # Make run dir if not exists per job id
-RUN_DIR=/lustre/orion/proj-shared/csc536/SAGESim/examples/sir/runs
+RUN_DIR=/lustre/orion/proj-shared/csc536/superneuroabm/examples/frontier_logic_gates/runs/
 if [ ! -d "$RUN_DIR" ]
 then
         mkdir -p $RUN_DIR
@@ -40,7 +41,7 @@ cd $RUN_DIR
 
 # Run script
 echo Running Python Script
-time srun -N4 -n30 -c7 --gpus-per-task=1 --gpu-bind=closest python3 -u ${SRC_DIR}/run.py
+time srun -N4 -n30 -c7 --gpus-per-task=1 --gpu-bind=closest python3 -u ${SRC_DIR}/logic_gates.py
 
 echo Run Finished
 date
