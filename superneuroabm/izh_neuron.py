@@ -5,27 +5,21 @@ Izhikevich Neuron and weighted synapse step functions for spiking neural network
 import math
 
 
-def izh_neuron_step_func(
+def izh_soma_step_func(             # NOTE: update the name to soma_step_func from neuron_step_func
     global_data_vector,
     breeds,
-    #thresholds,
-    neuron_params,  #k, vth, C, a, b, 
-    # reset_states,
-    #leaks,
-    #refractory_periods,
-    output_synapsess,
-    #t_elapses,
-    internal_state,  #v
-    u,
-    #neuron_delay_regs,
-    input_spikess,
+    neuron_params,  #k, vth, C, a, b,
+    output_synapsess, #shape: num_agents x max(synpses of an agent) x max(delay of syn)+2
+    internal_state,  #v, u
+    synaptic_delay_regs_tensor,
+    input_spikes_tensor,
     output_synapses_learning_paramss,
     output_spikess,
     my_idx,
 ):
     # Get the current time step value:
     t_current = int(global_data_vector[0])
-    
+
     # update t_elapse from refractory period time
     #t_elapses[my_idx] = 0 if t_elapses[my_idx] == 0 else t_elapses[my_idx] - 1
     # If still in refractory period, return
@@ -33,15 +27,17 @@ def izh_neuron_step_func(
     #    return
     # Otherwise update Vm, etc
     # Update Vm with the input spikes if any:
-    for spike in input_spikess[my_idx]:
-        if spike[0] == t_current:
-            internal_state[my_idx] += spike[1]
+    # for spike in input_spikess[my_idx]:
+    for i in range(len(input_spikess[my_idx])):
+        if input_spikess[my_idx][i][0] == t_current:
+            internal_state[my_idx] += input_spikess[my_idx][i][1]
     #internal_state[my_idx] = (
     #    internal_state[my_idx] - leaks[my_idx]
     #    if internal_state[my_idx] - leaks[my_idx] > reset_states[my_idx]
     #    else reset_states[my_idx]
     #)
     ###################TODO:
+    # NOTE: neuron_params would need to as long as the max number of params in any spiking neuron model
     k = neuron_params[my_idx][0]
     vthr = neuron_params[my_idx][1]
     C = neuron_params[my_idx][2]
@@ -50,6 +46,7 @@ def izh_neuron_step_func(
     vpeak = neuron_params[my_idx][5]
     vrest = neuron_params[my_idx][6]
     d = neuron_params[my_idx][7]
+    vreset = neuron_params[my_idx][8]
 
     # From https://www.izhikevich.org/publications/spikes.htm
     # v' = 0.04v^2 + 5v + 140 -u + I
@@ -57,13 +54,23 @@ def izh_neuron_step_func(
     # if v=30mV: v = c, u = u + d, spike
     
     # dv = (k*(internal_state[my_idx]-vrest)*(internal_state[my_idx]-vthr)-u[my_idx]+I) / C
-    dv = (k*(internal_state[my_idx]-vrest)*(internal_state[my_idx]-vthr)-u[my_idx]) / C
-    internal_state[my_idx] = internal_state[my_idx] + t_current*dv
-    u[my_idx] += t_current*(a*(b*(internal_state[my_idx]-vrest)-u))
-    s = 1*(internal_state[my_idx]>=vpeak)
-    u[my_idx] = u[my_idx] + d*s #If spiked, update recovery variable
-    internal_state[my_idx] = internal_state[my_idx]*(1-s) + vreset*s #If spiked, reset membrane potential
+    # internal_state: [0] - v, [1] - u
+    # NOTE: size of internal_state would need to be set as the maximum possible state varaibles of any spiking neuron
+
+    v = internal_state[my_idx][0]
+    u = internal_state[my_idx][1]
+
+    dv = (k*(v-vrest)*(v-vthr)-u) / C
+    v = v + t_current*dv
+
+    u += t_current*(a*(b*(v-vrest)-u))
+    s = 1*(v>=vpeak)        # output spike
+    u = u + d*s #If spiked, update recovery variable
+    v = v*(1-s) + vreset*s #If spiked, reset membrane potential
     #self.v_ = self.v
+
+    internal_state[my_idx][0] = v
+    internal_state[my_idx][1] = u
 
     # Apply axonal delay to the output of the spike:
     # Shift the register each time step
@@ -77,8 +84,9 @@ def izh_neuron_step_func(
         0
         if len(neuron_delay_regs[my_idx]) == 1
         or head + 1 >= len(neuron_delay_regs[my_idx])
-        else head + 1
+        else head + 1/
     )  # index of oldest entry on delay_reg
+
     for synapse_idx, synapse_info in enumerate(output_synapsess[my_idx]):
         out_neuron_id = synapse_info[0]
         weight = synapse_info[1]
@@ -97,7 +105,7 @@ def izh_neuron_step_func(
         # )
         output_synapsess[my_idx][synapse_idx][2+syn_delay_reg_head] = s
 
-    # # If spike reset and refactor
+        # # If spike reset and refactor
     # if neuron_delay_regs[my_idx][oldest_idx]:
     #     # reset Vm
     #     internal_state[my_idx] = reset_states[my_idx]
