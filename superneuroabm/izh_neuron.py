@@ -8,7 +8,7 @@ import math
 def izh_soma_step_func(             # NOTE: update the name to soma_step_func from neuron_step_func
     global_data_vector,
     breeds,
-    neuron_params,  #k, vth, C, a, b,
+    neuron_params,  #k, vth, C, a, b, 
     output_synapsess, #shape: num_agents x max(synpses of an agent) x max(delay of syn)+2
     internal_state,  #v, u
     synaptic_delay_regs_tensor,
