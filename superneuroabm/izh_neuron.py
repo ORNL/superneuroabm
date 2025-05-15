@@ -4,41 +4,41 @@ Izhikevich Neuron and weighted synapse step functions for spiking neural network
 """
 import math
 
-def step_func(
-    agent_ids, agent_index, globals, breeds, locations, states, preventative_measures
-):
+# def step_func(
+#     agent_ids, agent_index, globals, breeds, locations, states, preventative_measures
+# ):
 
-    neighbor_ids = locations[agent_index]  # network location is defined by neighbors
-    rand = random()  # 0.1#step_func_helper_get_random_float(rng_states, id)
+#     neighbor_ids = locations[agent_index]  # network location is defined by neighbors
+#     rand = random()  # 0.1#step_func_helper_get_random_float(rng_states, id)
 
-    p_infection = globals[1]
+#     p_infection = globals[1]
 
-    agent_preventative_measures = preventative_measures[agent_index]
+#     agent_preventative_measures = preventative_measures[agent_index]
 
-    for i in range(len(neighbor_ids)):
+#     for i in range(len(neighbor_ids)):
 
-        neighbor_index = -1
-        i = 0
-        while i < len(agent_ids) and agent_ids[i] != neighbor_ids[0]:
-            i += 1
-        if i < len(agent_ids):
-            neighbor_index = i
-            neighbor_state = int(states[neighbor_index])
-            neighbor_preventative_measures = preventative_measures[neighbor_index]
-            abs_safety_of_interaction = 0.0
-            for n in range(len(agent_preventative_measures)):
-                for m in range(len(neighbor_preventative_measures)):
-                    abs_safety_of_interaction += (
-                        agent_preventative_measures[n]
-                        * neighbor_preventative_measures[m]
-                    )
-            normalized_safety_of_interaction = abs_safety_of_interaction / (
-                len(agent_preventative_measures) ** 2
-            )
-            if neighbor_state == 2 and rand < p_infection * (
-                1 - normalized_safety_of_interaction
-            ):
-                states[agent_index] = 2
+#         neighbor_index = -1
+#         i = 0
+#         while i < len(agent_ids) and agent_ids[i] != neighbor_ids[0]:
+#             i += 1
+#         if i < len(agent_ids):
+#             neighbor_index = i
+#             neighbor_state = int(states[neighbor_index])
+#             neighbor_preventative_measures = preventative_measures[neighbor_index]
+#             abs_safety_of_interaction = 0.0
+#             for n in range(len(agent_preventative_measures)):
+#                 for m in range(len(neighbor_preventative_measures)):
+#                     abs_safety_of_interaction += (
+#                         agent_preventative_measures[n]
+#                         * neighbor_preventative_measures[m]
+#                     )
+#             normalized_safety_of_interaction = abs_safety_of_interaction / (
+#                 len(agent_preventative_measures) ** 2
+#             )
+#             if neighbor_state == 2 and rand < p_infection * (
+#                 1 - normalized_safety_of_interaction
+#             ):
+#                 states[agent_index] = 2
 
 # output_synapsess, #shape: num_agents x max(synpses of an agent) x max(delay of syn)+2
  
@@ -63,6 +63,9 @@ def izh_soma_step_func(             # NOTE: update the name to soma_step_func fr
 
     # Get the current time step value:
     t_current = int(globals[0])
+
+    dt = globals[1]  # time step size
+
 
     # update t_elapse from refractory period time
     #t_elapses[my_idx] = 0 if t_elapses[my_idx] == 0 else t_elapses[my_idx] - 1
@@ -108,12 +111,12 @@ def izh_soma_step_func(             # NOTE: update the name to soma_step_func fr
     v = internal_state[agent_index][0]
     u = internal_state[agent_index][1]
 
-    I_bias = globals[1]  # bias current
+    I_bias = globals[2]  # bias current
 
     dv = (k*(v-vrest)*(v-vthr)-u + I_synapse + I_bias) / C
-    v = v + t_current*dv
+    v = v + dt*dv
 
-    u += t_current*(a*(b*(v-vrest)-u))
+    u += dt*(a*(b*(v-vrest)-u))
     s = 1*(v>=vpeak)        # output spike
     u = u + d*s #If spiked, update recovery variable
     v = v*(1-s) + vreset*s #If spiked, reset membrane potential
@@ -125,53 +128,70 @@ def izh_soma_step_func(             # NOTE: update the name to soma_step_func fr
     output_spikes_tensor[agent_index][t_current] = s
 
 
-def synapse_step_func(
-    global_data_vector,
-    breeds,
-    thresholds,
-    reset_states,
-    leaks,
-    refractory_periods,
-    output_synapsess,
-    t_elapses,
-    internal_state,
-    neuron_delay_regs,
-    input_spikess,
-    output_synapses_learning_paramss,
-    output_spikess,
-    my_idx,
+def synapse_single_exp_step_func(
+    agent_ids, agent_index, globals, breeds, locations,
+    synapse_params,  # scale, time constant (tau_rise and tau_fall), delay
+    internal_state,  #
+    synapse_history,
+    output_spikes_tensor
 ):
-    t_current = int(global_data_vector[0])
-    # Update outgoing synapses if any
-    for synapse_idx in range(len(output_synapsess[my_idx])):
-        out_synapse_info = output_synapsess[my_idx][synapse_idx]
-        out_neuron_id = out_synapse_info[0]
-        if math.isnan(out_neuron_id):
-            break
-        out_neuron_id = int(out_neuron_id)
-        # If out_neuron still in refractory period, return
-        if t_elapses[out_neuron_id] > 0:
-            continue
-        weight = out_synapse_info[1]
-        synapse_register = out_synapse_info[2:]
-        # Check if delayed Vm was over threshold, if so spike
-        syn_delay_reg_len = 0
-        for val in synapse_register:
-            if math.isnan(val):
-                break
-            syn_delay_reg_len += 1
-        if not syn_delay_reg_len:
-            continue
-        syn_delay_reg_head = t_current % (syn_delay_reg_len)
-        syn_delay_reg_tail = (
-            0
-            if syn_delay_reg_len == 1
-            or syn_delay_reg_head + 1 >= syn_delay_reg_len
-            else syn_delay_reg_head + 1
-        )
-        Vm = synapse_register[syn_delay_reg_tail]
-        if not math.isnan(Vm) and Vm != 0:
-            internal_state[out_neuron_id] += weight
+    t_current = int(globals[0])
+
+    dt = globals[1]  # time step size
+
+    scale = synapse_params[agent_index][0]
+    tau_fall = synapse_params[agent_index][1]
+    tau_rise = synapse_params[agent_index][2]
+    weight = synapse_params[agent_index][3]
+
+    pre_soma_id = locations[agent_index][0]
+
+    i = 0
+    while i < len(agent_ids) and agent_ids[i] != pre_soma_id:
+        i += 1
+    spike = output_spikes_tensor[i][t_current]
+
+
+    # r = self.r*(1-self.dt/self.td) + spike/self.td
+    # self.r = r
+
+    I_synapse = internal_state[agent_index][0]
+
+    I_synapse = I_synapse * (1 - dt / tau_fall) + spike * scale * weight
+    
+    internal_state[agent_index][0] = I_synapse
+
+
+    # # Update outgoing synapses if any
+    # for synapse_idx in range(len(output_synapsess[my_idx])):
+    #     out_synapse_info = output_synapsess[my_idx][synapse_idx]
+    #     out_neuron_id = out_synapse_info[0]
+    #     if math.isnan(out_neuron_id):
+    #         break
+    #     out_neuron_id = int(out_neuron_id)
+    #     # If out_neuron still in refractory period, return
+    #     if t_elapses[out_neuron_id] > 0:
+    #         continue
+    #     weight = out_synapse_info[1]
+    #     synapse_register = out_synapse_info[2:]
+    #     # Check if delayed Vm was over threshold, if so spike
+    #     syn_delay_reg_len = 0
+    #     for val in synapse_register:
+    #         if math.isnan(val):
+    #             break
+    #         syn_delay_reg_len += 1
+    #     if not syn_delay_reg_len:
+    #         continue
+    #     syn_delay_reg_head = t_current % (syn_delay_reg_len)
+    #     syn_delay_reg_tail = (
+    #         0
+    #         if syn_delay_reg_len == 1
+    #         or syn_delay_reg_head + 1 >= syn_delay_reg_len
+    #         else syn_delay_reg_head + 1
+    #     )
+    #     Vm = synapse_register[syn_delay_reg_tail]
+    #     if not math.isnan(Vm) and Vm != 0:
+    #         internal_state[out_neuron_id] += weight
 
 
 def synapse_with_stdp_step_func(
