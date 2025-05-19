@@ -4,27 +4,38 @@ Model class for building an SNN
 from typing import Dict, Callable, List
 
 import numpy as np
-
-from superneuroabm.core.model import Model
-from superneuroabm.core.agent import Breed
-from superneuroabm.neuron import (
-    synapse_step_func,
-    neuron_step_func,
-)
-
+from sagesim.space import NetworkSpace
+from sagesim.model import Model
+from sagesim.breed import Breed
+#from superneuroabm.neuron import (
+#    synapse_step_func,
+#    neuron_step_func,
+#)
+from superneuroabm.izh_neuron import (
+        izh_soma_step_func,
+        synapse_single_exp_step_func,
+        )
 
 class NeuromorphicModel(Model):
     def __init__(
         self,
-        neuron_breed_info: Dict[str, List[Callable]] = {
-            "Neuron": [neuron_step_func, synapse_step_func]
+        soma_breed_info: Dict[str, List[Callable]] = {
+            #"Neuron": [neuron_step_func, synapse_step_func]
+            "IZH_Soma": [izh_soma_step_func],
+            #"Single_Exp_Synapse": [synapse_single_exp_step_func],
         },
+        synapse_breed_info: Dict[str, List[Callable]] = {
+            #"Neuron": [neuron_step_func, synapse_step_func]
+            #"IZH_Soma": [izh_soma_step_func],
+            "Single_Exp_Synapse": [synapse_single_exp_step_func],
+        },
+
     ) -> None:
         """
         Creates an SNN Model and provides methods to create, simulate,
         and monitor neurons and synapses.
 
-        :param use_cuda: True if the system supports CUDA GPU
+        :param use_gpu: True if the system supports CUDA GPU
             acceleration.
         :param neuron_breed_info: Dict of breed name to List of
             Callable step functions. If specifed, will override
@@ -34,39 +45,50 @@ class NeuromorphicModel(Model):
             breed every simulation step in the order specifed in the
             list.
         """
-        super().__init__()
+        super().__init__(space = NetworkSpace())
 
         axonal_delay = 1
-        neuron_properties = {
-            "threshold": 1,
-            "reset_state": 0,
-            "leak": 0,
-            "refractory_period": 0,
-            "output_synapses": [],
-            "t_elapse": 0,
-            "internal_state": 0,
-            "neuron_delay_reg": [0 for _ in range(axonal_delay)],
-            "input_spikes": [],
-            "output_synapses_learning_params": [],
-            "output_spikes": [],
+        soma_properties = {
+            "agent_params":[0.0, 0.0, 0.0, 0.0, 0.0],  #k, vth, C, a, b,
+            "internal_state": [0.0 0.0],  #v, u
+            #"synapse_history":[], #Synapse delay
+            "output_spikes_tensor":[],
+
+            #"threshold": 1,
+            #"reset_state": 0,
+            #"leak": 0,
+            #"refractory_period": 0,
+            #"output_synapses": [],
+            #"t_elapse": 0,
+            #"internal_state": 0,
+            #"neuron_delay_reg": [0 for _ in range(axonal_delay)],
+            #"input_spikes": [],
+            #"output_synapses_learning_params": [],
+            #"output_spikes": [],
         }
-        max_dims = {
-            "threshold": [],
-            "reset_state": [],
-            "leak": [],
-            "refractory_period": [],
-            "output_synapses": [],
-            "t_elapse": [],
-            "internal_state": [],
-            "neuron_delay_reg": None,
-            "input_spikes": None,
-            "output_synapses_learning_params": None,
-            "output_spikes": None,
+        synapse_properties = {
+            "agent_params":[0.0, 0.0, 0.0, 0.0],  #scale, Tau_rise, Tau_fall, weight
+            "internal_state": [0.0 0.0],  #Isyn, Isyn_supp
+            "synapse_history":[], #Synapse delay
+            "output_spikes_tensor":[],
         }
+        #max_dims = {
+        #    "threshold": [],
+        #    "reset_state": [],
+        #    "leak": [],
+        #    "refractory_period": [],
+        #    "output_synapses": [],
+        #    "t_elapse": [],
+        #    "internal_state": [],
+        #    "neuron_delay_reg": None,
+        #    "input_spikes": None,
+        #    "output_synapses_learning_params": None,
+        #    "output_spikes": None,
+        #}
 
         self._neuron_breeds: Dict[str, Breed] = {}
         for breed_name, step_funcs in neuron_breed_info.items():
-            neuron_breed = Breed(breed_name)
+            soma_breed = Breed(breed_name)#Strt here Ashish
             for prop_name, default_val in neuron_properties.items():
                 neuron_breed.register_property(
                     prop_name, default_val, max_dims[prop_name]
@@ -84,7 +106,7 @@ class NeuromorphicModel(Model):
 
     def setup(
         self,
-        use_cuda: bool = False,
+        use_gpu: bool = False,
         output_buffer_len: int = 1000,
         retain_weights=False,
     ) -> None:
@@ -103,7 +125,7 @@ class NeuromorphicModel(Model):
                 id=neuron_id,
                 property_name="input_spikes",
                 value=new_input_spikes,
-                dims=[0, 2],
+            #    dims=[0, 2],
             )
             # Clear output buffer
             output_buffer = [0 for _ in range(output_buffer_len)]
@@ -111,7 +133,7 @@ class NeuromorphicModel(Model):
                 id=neuron_id,
                 property_name="output_spikes",
                 value=output_buffer,
-                dims=[output_buffer_len],
+            #    dims=[output_buffer_len],
             )
             # Clear internal states
             reset_state = super().get_agent_property_value(
@@ -121,7 +143,7 @@ class NeuromorphicModel(Model):
                 id=neuron_id,
                 property_name="internal_state",
                 value=reset_state,
-                dims=[],
+            #    dims=[],
             )
             # Clear neuron delay registers
             axonal_delay = len(
@@ -131,7 +153,7 @@ class NeuromorphicModel(Model):
             )
             neuron_delay_reg = [0 for _ in range(axonal_delay)]
             self.set_agent_property_value(
-                neuron_id, "neuron_delay_reg", neuron_delay_reg, [axonal_delay]
+                neuron_id, "neuron_delay_reg", neuron_delay_reg, #[axonal_delay]
             )
             # Clear synaptic delay registers
             output_synapses = self.get_agent_property_value(
@@ -157,20 +179,20 @@ class NeuromorphicModel(Model):
                 neuron_id,
                 "output_synapses",
                 output_synapses,
-                [len(output_synapses), max_synapse_info_len],
+                #[len(output_synapses), max_synapse_info_len],
             )
 
-        super().setup(use_cuda=use_cuda)
+        super().setup(use_gpu=use_gpu)
 
     def simulate(
-        self, ticks: int, update_data_ticks: int = 1, num_cpu_proc: int = 4
+        self, ticks: int, update_data_ticks: int = 1 #, num_cpu_proc: int = 4
     ) -> None:
         """
         Override of superneuroabm.core.model mainly to register an
         AgentDataCollector to monitor marked output Neurons.
 
         """
-        super().simulate(ticks, update_data_ticks, num_cpu_proc)
+        super().simulate(ticks, update_data_ticks)#, num_cpu_proc)
 
     def create_neuron(
         self,
@@ -196,10 +218,10 @@ class NeuromorphicModel(Model):
             refractory_period=refractory_period,
         )
         self.set_agent_property_value(
-            neuron_id, "neuron_delay_reg", delay_reg, [axonal_delay]
+            neuron_id, "neuron_delay_reg", delay_reg #, [axonal_delay]
         )
         self.set_agent_property_value(
-            neuron_id, "internal_state", reset_state, []
+            neuron_id, "internal_state", reset_state #, []
         )
         # synapse_infos = []
         # self._output_synapsess.append(synapse_infos)
@@ -251,7 +273,7 @@ class NeuromorphicModel(Model):
             pre_neuron_id,
             "output_synapses",
             output_synapses,
-            [len(output_synapses), len(synapse_info)],
+            #[len(output_synapses), len(synapse_info)],
         )
 
         # store original weights
@@ -271,10 +293,10 @@ class NeuromorphicModel(Model):
             id=pre_neuron_id,
             property_name="output_synapses_learning_params",
             value=synapses_learning_params,
-            dims=[
-                len(synapses_learning_params),
-                len(synapse_learning_params),
-            ],
+            #dims=[
+            #    len(synapses_learning_params),
+            #    len(synapse_learning_params),
+            #],
         )
 
     def update_synapse(
@@ -307,7 +329,7 @@ class NeuromorphicModel(Model):
                 pre_neuron_id,
                 "output_synapses",
                 output_synapses,
-                [len(output_synapses), len(output_synapses[synapse_idx])],
+                #[len(output_synapses), len(output_synapses[synapse_idx])],
             )
 
         # Update or enter learning params
@@ -320,10 +342,10 @@ class NeuromorphicModel(Model):
                 id=pre_neuron_id,
                 property_name="output_synapses_learning_params",
                 value=synapses_learning_params,
-                dims=[
-                    len(synapses_learning_params),
-                    len(synapse_learning_params),
-                ],
+                #dims=[
+                #    len(synapses_learning_params),
+                #    len(synapse_learning_params),
+                #],
             )
 
     def add_spike(self, neuron_id: int, tick: int, value: float) -> None:
@@ -339,7 +361,7 @@ class NeuromorphicModel(Model):
         )
         spikes.append([tick, value])
         self.set_agent_property_value(
-            neuron_id, "input_spikes", spikes, [len(spikes), 2]
+            neuron_id, "input_spikes", spikes #, [len(spikes), 2]
         )
 
     def get_spike_times(self, neuron_id: int) -> np.array:

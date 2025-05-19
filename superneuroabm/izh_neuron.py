@@ -46,6 +46,7 @@ def izh_soma_step_func(             # NOTE: update the name to soma_step_func fr
     agent_ids, agent_index, globals, breeds, locations,
     neuron_params,  #k, vth, C, a, b, 
     internal_state,  #v, u
+    synapse_history, #Synapse delay                       
     output_spikes_tensor
 ):
     synapse_ids = locations[agent_index]  # network location is defined by neighbors
@@ -130,9 +131,9 @@ def izh_soma_step_func(             # NOTE: update the name to soma_step_func fr
 
 def synapse_single_exp_step_func(
     agent_ids, agent_index, globals, breeds, locations,
-    synapse_params,  # scale, time constant (tau_rise and tau_fall), delay
+    synapse_params,  # scale, time constant (tau_rise and tau_fall)
     internal_state,  #
-    synapse_history,
+    synapse_history, #delay
     output_spikes_tensor
 ):
     t_current = int(globals[0])
