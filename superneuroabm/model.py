@@ -19,10 +19,12 @@ class NeuromorphicModel(Model):
     def __init__(
         self,
         soma_breed_info: Dict[str, List[Callable]] = {
-            "IZH_Soma": [izh_soma_step_func],
+            "IZH_Soma": [(izh_soma_step_func, "./izh_soma.py")]
         },
         synapse_breed_info: Dict[str, List[Callable]] = {
-            "Single_Exp_Synapse": [synapse_single_exp_step_func],
+            "Single_Exp_Synapse_STDP1": [
+                (synapse_single_exp_step_func, "./izh_soma.py")
+            ],
         },
     ) -> None:
         """
@@ -41,7 +43,6 @@ class NeuromorphicModel(Model):
         """
         super().__init__(space=NetworkSpace())
 
-        axonal_delay = 1
         soma_properties = {
             "parameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
             "internal_state": [0.0, 0.0],  # v, u
@@ -60,9 +61,11 @@ class NeuromorphicModel(Model):
             soma_breed = Breed(breed_name)  # Strt here Ashish
             for prop_name, default_val in soma_properties.items():
                 soma_breed.register_property(prop_name, default_val)
-            for step_func_order, step_func in enumerate(step_funcs):
+            for step_func_order, (step_func, module_fpath) in enumerate(step_funcs):
                 soma_breed.register_step_func(
-                    step_func=step_func, priority=step_func_order
+                    step_func=step_func,
+                    module_fpath=module_fpath,
+                    priority=step_func_order,
                 )
             self.register_breed(soma_breed)
             self._soma_breeds[breed_name] = soma_breed
@@ -72,14 +75,15 @@ class NeuromorphicModel(Model):
             synapse_breed = Breed(breed_name)  # Strt here Ashish
             for prop_name, default_val in synapse_properties.items():
                 synapse_breed.register_property(prop_name, default_val)
-            for step_func_order, step_func in enumerate(step_funcs):
+            for step_func_order, (step_func, module_fpath) in enumerate(step_funcs):
                 synapse_breed.register_step_func(
-                    step_func=step_func, priority=step_func_order
+                    step_func=step_func,
+                    module_fpath=module_fpath,
+                    priority=100 + step_func_order,
                 )
             self.register_breed(synapse_breed)
             self._synapse_breeds[breed_name] = synapse_breed
 
-        self._original_output_synapse_weights = {}
         self._synapse_index_map = {}
 
     def setup(
@@ -95,16 +99,29 @@ class NeuromorphicModel(Model):
             not reset upon setup.
         """
 
-        soma_ids = self._agent_factory.num_agents
-        for soma_id in range(soma_ids):
+        synapse_ids = self.synapse_ids
+        soma_ids = self.synapse_ids
+        for synapse_id in range(synapse_ids):
             # Clear input spikes
             new_input_spikes = []
             super().set_agent_property_value(
-                id=soma_id,
+                id=synapse_id,
                 property_name="input_spikes",
                 value=new_input_spikes,
-                #    dims=[0, 2],
             )
+            # Clear synapse delay registers
+            synapse_delay = len(
+                super().get_agent_property_value(
+                    id=synapse_id, property_name="synapse_delay_reg"
+                )
+            )
+            synapse_delay_reg = [0 for _ in range(synapse_delay)]
+            self.set_agent_property_value(
+                soma_id,
+                "synapse_delay_reg",
+                synapse_delay_reg,
+            )
+        for soma_id in range(soma_ids):
             # Clear output buffer
             output_buffer = [0 for _ in range(output_buffer_len)]
             super().set_agent_property_value(
@@ -116,48 +133,11 @@ class NeuromorphicModel(Model):
             # Clear internal states
             reset_state = super().get_agent_property_value(
                 id=soma_id, property_name="reset_state"
-            )
+            )  # TODO: fix
             super().set_agent_property_value(
                 id=soma_id,
                 property_name="internal_state",
                 value=reset_state,
-                #    dims=[],
-            )
-            # Clear soma delay registers
-            axonal_delay = len(
-                super().get_agent_property_value(
-                    id=soma_id, property_name="soma_delay_reg"
-                )
-            )
-            soma_delay_reg = [0 for _ in range(axonal_delay)]
-            self.set_agent_property_value(
-                soma_id,
-                "soma_delay_reg",
-                soma_delay_reg,  # [axonal_delay]
-            )
-            # Clear synaptic delay registers
-            output_synapses = self.get_agent_property_value(soma_id, "output_synapses")
-            max_synapse_info_len = 2
-            # Iterate through synapse info lists for this soma
-            for i in range(len(output_synapses)):
-                # Clear weight (2nd element) if necessary
-                if not retain_weights:
-                    output_synapses[i][1] = self._original_output_synapse_weights[
-                        soma_id
-                    ][i]
-                # Clear the rest of the list, which is the delay register
-                j = 2
-                while j < len(output_synapses[i]):
-                    output_synapses[i][j] = 0
-                    j += 1
-                max_synapse_info_len = max(
-                    len(output_synapses[i]), max_synapse_info_len
-                )
-            self.set_agent_property_value(
-                soma_id,
-                "output_synapses",
-                output_synapses,
-                # [len(output_synapses), max_synapse_info_len],
             )
 
         super().setup(use_gpu=use_gpu)
@@ -175,11 +155,8 @@ class NeuromorphicModel(Model):
     def create_soma(
         self,
         breed: str,
-        threshold: float = 1,  # TODO edit
-        reset_state: float = 0,
-        leak: float = 0,
-        refractory_period: int = 0,
-        axonal_delay: int = 1,
+        parameters: List[float],
+        default_internal_state: List[float],
     ) -> int:
         """
         Creates and soma agent.
@@ -188,11 +165,10 @@ class NeuromorphicModel(Model):
 
         """
         soma_id = super().create_agent_of_breed(
-            breed=self._soma_breeds[breed],
-            parameters=[threshold, leak, refractory_period, axonal_delay],  # TODO edit
-            internal_state=[0.0, 0.0],
+            breed=self._soma_breeds[breed],  # TODO fix
+            parameters=parameters,
+            internal_state=default_internal_state,
         )
-        self.set_agent_property_value(soma_id, "internal_state", reset_state)  # , []
         return soma_id
 
     def create_synapse(
@@ -200,9 +176,8 @@ class NeuromorphicModel(Model):
         breed: str,
         pre_soma_id: int,  # TODO edit
         post_soma_id: int,
-        weight: int = 1,
-        synaptic_delay: int = 1,
-        synapse_learning_params: List[float] = None,
+        parameters: List[float],
+        default_internal_state: List[float],
     ) -> None:
         """
         Creates and adds Synapse agent.
@@ -215,11 +190,12 @@ class NeuromorphicModel(Model):
             enabled step function. Must be specified in order of use
             in step function.
         """
+        synaptic_delay = int(parameters[0])
         delay_reg = [0 for _ in range(synaptic_delay)]
         soma_id = self.create_agent_of_breed(
             breed=self._synapse_breeds[breed],
-            parameters=[0.0, 0.0, 0.0, weight],  # TODO edit
-            internal_state=[0.0, 0.0],
+            parameters=parameters,
+            internal_state=default_internal_state,
             synapse_delay_reg=delay_reg,
         )
 

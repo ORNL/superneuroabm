@@ -16,17 +16,15 @@ class LogicGatesTest(unittest.TestCase):
         self._model = NeuromorphicModel()
         self._use_cuda = False
 
-    def test_two_neurons(self):
-        """Tests working of two neurons"""
+    def test_two_somas(self):
+        """Tests working of two somas"""
 
-        # Create neuron
-        neuron_0 = self._model.create_neuron(threshold=0.0)
-        neuron_1 = self._model.create_neuron(threshold=0.0)
+        # Create soma
+        soma_0 = self._model.create_soma(threshold=0.0)
+        soma_1 = self._model.create_soma(threshold=0.0)
 
         # Create synapse
-        self._model.create_synapse(
-            pre_neuron_id=neuron_0, post_neuron_id=neuron_1
-        )
+        self._model.create_synapse(pre_soma_id=soma_0, post_soma_id=soma_1)
 
         # Setup and simulate
         self._model.setup(output_buffer_len=10, use_cuda=self._use_cuda)
@@ -34,49 +32,45 @@ class LogicGatesTest(unittest.TestCase):
         # Add spikes
         spikes = [(1, 1), (2, 1)]
         for spike in spikes:
-            self._model.add_spike(
-                neuron_id=neuron_0, tick=spike[0], value=spike[1]
-            )
+            self._model.add_spike(soma_id=soma_0, tick=spike[0], value=spike[1])
 
         spikes = [(9, 1), (5, 1), (4, 1)]
         for spike in spikes:
-            self._model.add_spike(
-                neuron_id=neuron_1, tick=spike[0], value=spike[1]
-            )
+            self._model.add_spike(soma_id=soma_1, tick=spike[0], value=spike[1])
 
         self._model.simulate(ticks=10)
 
         expected_times = [1, 2]
-        print(self._model.get_spike_times(neuron_id=neuron_0))
-        print(self._model.get_spike_times(neuron_id=neuron_1))
+        print(self._model.get_spike_times(soma_id=soma_0))
+        print(self._model.get_spike_times(soma_id=soma_1))
         assert (
-            self._model.get_spike_times(neuron_id=neuron_0) == expected_times
-        ), f"Spike times are {self._model.get_spike_times(neuron_id=neuron_0)} but should be {expected_times}"
+            self._model.get_spike_times(soma_id=soma_0) == expected_times
+        ), f"Spike times are {self._model.get_spike_times(soma_id=soma_0)} but should be {expected_times}"
         expected_times = [2, 3, 4, 5, 9]
         assert (
-            self._model.get_spike_times(neuron_id=neuron_1) == expected_times
-        ), f"Spike times are {self._model.get_spike_times(neuron_id=neuron_1)} but should be {expected_times}"
+            self._model.get_spike_times(soma_id=soma_1) == expected_times
+        ), f"Spike times are {self._model.get_spike_times(soma_id=soma_1)} but should be {expected_times}"
 
     def test_or_gate(self):
         """Builds a neuromorphic circuit for OR gate and simulates it"""
 
-        # Create neurons
-        input_0 = self._model.create_neuron(threshold=0.0)
-        input_1 = self._model.create_neuron(threshold=0.0)
-        output_2 = self._model.create_neuron(threshold=0.0)
+        # Create somas
+        input_0 = self._model.create_soma(threshold=0.0)
+        input_1 = self._model.create_soma(threshold=0.0)
+        output_2 = self._model.create_soma(threshold=0.0)
 
         # Create synapses
         self._model.create_synapse(
-            pre_neuron_id=input_0, post_neuron_id=output_2, weight=1.0
+            pre_soma_id=input_0, post_soma_id=output_2, weight=1.0
         )
         self._model.create_synapse(
-            pre_neuron_id=input_1, post_neuron_id=output_2, weight=1.0
+            pre_soma_id=input_1, post_soma_id=output_2, weight=1.0
         )
 
         # Setup and simulate
         self._model.setup(output_buffer_len=10, use_cuda=self._use_cuda)
 
-        # test_cases in format time -> ([(Neuron, value), (Neuron, value)]
+        # test_cases in format time -> ([(soma, value), (soma, value)]
         test_cases = {
             1: [
                 (input_0, 0),
@@ -95,39 +89,39 @@ class LogicGatesTest(unittest.TestCase):
                 (input_1, 1),
             ],  # Input: (1, 1); Expected output: Spike at time 8
         }
-        # Overall expected spike times for output_2 neuron: [4, 6, 8]
+        # Overall expected spike times for output_2 soma: [4, 6, 8]
         expected_times = [4, 6, 8]
         for time in test_cases:
-            for neuron, value in test_cases[time]:
-                self._model.add_spike(neuron_id=neuron, tick=time, value=value)
+            for soma, value in test_cases[time]:
+                self._model.add_spike(soma_id=soma, tick=time, value=value)
 
         self._model.simulate(ticks=10)
 
-        print(self._model.get_spike_times(neuron_id=output_2))
+        print(self._model.get_spike_times(soma_id=output_2))
         assert (
-            self._model.get_spike_times(neuron_id=output_2) == expected_times
-        ), f"Spike times are {self._model.get_spike_times(neuron_id=output_2)} but should be {expected_times}"
+            self._model.get_spike_times(soma_id=output_2) == expected_times
+        ), f"Spike times are {self._model.get_spike_times(soma_id=output_2)} but should be {expected_times}"
 
     def test_and_gate(self):
         """Builds a neuromorphic circuit for AND gate and simulates it"""
 
-        # Create neurons
-        input_0 = self._model.create_neuron(threshold=0.0)
-        input_1 = self._model.create_neuron(threshold=0.0)
-        output_2 = self._model.create_neuron(threshold=2.0)
+        # Create somas
+        input_0 = self._model.create_soma(threshold=0.0)
+        input_1 = self._model.create_soma(threshold=0.0)
+        output_2 = self._model.create_soma(threshold=2.0)
 
         # Create synapses
         self._model.create_synapse(
-            pre_neuron_id=input_0, post_neuron_id=output_2, weight=1.0
+            pre_soma_id=input_0, post_soma_id=output_2, weight=1.0
         )
         self._model.create_synapse(
-            pre_neuron_id=input_1, post_neuron_id=output_2, weight=1.0
+            pre_soma_id=input_1, post_soma_id=output_2, weight=1.0
         )
 
         # Setup and simulate
         self._model.setup(output_buffer_len=10, use_cuda=self._use_cuda)
 
-        # test_cases in format time -> ([(Neuron, value), (Neuron, value)]
+        # test_cases in format time -> ([(soma, value), (soma, value)]
         test_cases = {
             1: [
                 (input_0, 0),
@@ -146,17 +140,17 @@ class LogicGatesTest(unittest.TestCase):
                 (input_1, 1),
             ],  # Input: (1, 1); Expected output: Spike at time 8
         }
-        # Overall expected spike times for output_2 neuron: [8]
+        # Overall expected spike times for output_2 soma: [8]
         expected_times = [8]
         for time in test_cases:
-            for neuron, value in test_cases[time]:
-                self._model.add_spike(neuron_id=neuron, tick=time, value=value)
+            for soma, value in test_cases[time]:
+                self._model.add_spike(soma_id=soma, tick=time, value=value)
 
         self._model.simulate(ticks=10)
-        print(self._model.get_spike_times(neuron_id=output_2))
+        print(self._model.get_spike_times(soma_id=output_2))
         assert (
-            self._model.get_spike_times(neuron_id=output_2) == expected_times
-        ), f"Spike times are {self._model.get_spike_times(neuron_id=output_2)} but should be {expected_times}"
+            self._model.get_spike_times(soma_id=output_2) == expected_times
+        ), f"Spike times are {self._model.get_spike_times(soma_id=output_2)} but should be {expected_times}"
 
         print(self._model.summary())
 

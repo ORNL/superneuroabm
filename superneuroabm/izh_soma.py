@@ -2,6 +2,7 @@
 Izhikevich Neuron and weighted synapse step functions for spiking neural networks
 
 """
+
 import math
 
 # def step_func(
@@ -41,20 +42,25 @@ import math
 #                 states[agent_index] = 2
 
 # output_synapsess, #shape: num_agents x max(synpses of an agent) x max(delay of syn)+2
- 
-def izh_soma_step_func(             # NOTE: update the name to soma_step_func from neuron_step_func
-    agent_ids, agent_index, globals, breeds, locations,
-    neuron_params,  #k, vth, C, a, b, 
-    internal_state,  #v, u
-    synapse_history, #Synapse delay                       
-    output_spikes_tensor
+
+
+def izh_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_step_func
+    agent_ids,
+    agent_index,
+    globals,
+    breeds,
+    locations,
+    neuron_params,  # k, vth, C, a, b,
+    internal_state,  # v, u
+    synapse_history,  # Synapse delay
+    output_spikes_tensor,
 ):
     synapse_ids = locations[agent_index]  # network location is defined by neighbors
 
     I_synapse = 0
     for i in range(len(synapse_ids)):
 
-        synapse_index = -1      #synapse index local to the current mpi rank
+        synapse_index = -1  # synapse index local to the current mpi rank
         i = 0
         while i < len(agent_ids) and agent_ids[i] != synapse_ids[0]:
             i += 1
@@ -67,11 +73,10 @@ def izh_soma_step_func(             # NOTE: update the name to soma_step_func fr
 
     dt = globals[1]  # time step size
 
-
     # update t_elapse from refractory period time
-    #t_elapses[my_idx] = 0 if t_elapses[my_idx] == 0 else t_elapses[my_idx] - 1
+    # t_elapses[my_idx] = 0 if t_elapses[my_idx] == 0 else t_elapses[my_idx] - 1
     # If still in refractory period, return
-    #if t_elapses[my_idx] > 0:
+    # if t_elapses[my_idx] > 0:
     #    return
     # Otherwise update Vm, etc
 
@@ -83,11 +88,11 @@ def izh_soma_step_func(             # NOTE: update the name to soma_step_func fr
             I_external += input_spikes_tensor[agent_index][i][1]
     """
 
-    #internal_state[my_idx] = (
+    # internal_state[my_idx] = (
     #    internal_state[my_idx] - leaks[my_idx]
     #    if internal_state[my_idx] - leaks[my_idx] > reset_states[my_idx]
     #    else reset_states[my_idx]
-    #)
+    # )
     ###################TODO:
     # NOTE: neuron_params would need to as long as the max number of params in any spiking neuron model
     k = neuron_params[agent_index][0]
@@ -104,7 +109,7 @@ def izh_soma_step_func(             # NOTE: update the name to soma_step_func fr
     # v' = 0.04v^2 + 5v + 140 -u + I
     # u' = a(bv - u)
     # if v=30mV: v = c, u = u + d, spike
-    
+
     # dv = (k*(internal_state[my_idx]-vrest)*(internal_state[my_idx]-vthr)-u[my_idx]+I) / C
     # internal_state: [0] - v, [1] - u
     # NOTE: size of internal_state would need to be set as the maximum possible state varaibles of any spiking neuron
@@ -114,14 +119,14 @@ def izh_soma_step_func(             # NOTE: update the name to soma_step_func fr
 
     I_bias = globals[2]  # bias current
 
-    dv = (k*(v-vrest)*(v-vthr)-u + I_synapse + I_bias) / C
-    v = v + dt*dv
+    dv = (k * (v - vrest) * (v - vthr) - u + I_synapse + I_bias) / C
+    v = v + dt * dv
 
-    u += dt*(a*(b*(v-vrest)-u))
-    s = 1*(v>=vpeak)        # output spike
-    u = u + d*s #If spiked, update recovery variable
-    v = v*(1-s) + vreset*s #If spiked, reset membrane potential
-    #self.v_ = self.v
+    u += dt * (a * (b * (v - vrest) - u))
+    s = 1 * (v >= vpeak)  # output spike
+    u = u + d * s  # If spiked, update recovery variable
+    v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
+    # self.v_ = self.v
 
     internal_state[agent_index][0] = v
     internal_state[agent_index][1] = u
@@ -129,21 +134,30 @@ def izh_soma_step_func(             # NOTE: update the name to soma_step_func fr
     output_spikes_tensor[agent_index][t_current] = s
 
 
+def stdp_aux():
+    pass
+
+
 def synapse_single_exp_step_func(
-    agent_ids, agent_index, globals, breeds, locations,
+    agent_ids,
+    agent_index,
+    globals,
+    breeds,
+    locations,
     synapse_params,  # scale, time constant (tau_rise and tau_fall)
     internal_state,  #
-    synapse_history, #delay
-    output_spikes_tensor
+    synapse_history,  # delay
+    output_spikes_tensor,
 ):
     t_current = int(globals[0])
 
     dt = globals[1]  # time step size
 
-    scale = synapse_params[agent_index][0]
-    tau_fall = synapse_params[agent_index][1]
-    tau_rise = synapse_params[agent_index][2]
-    weight = synapse_params[agent_index][3]
+    synaptic_delay = synapse_params[agent_index][0]
+    scale = synapse_params[agent_index][1]
+    tau_fall = synapse_params[agent_index][2]
+    tau_rise = synapse_params[agent_index][3]
+    weight = synapse_params[agent_index][4]
 
     pre_soma_id = locations[agent_index][0]
 
@@ -152,16 +166,14 @@ def synapse_single_exp_step_func(
         i += 1
     spike = output_spikes_tensor[i][t_current]
 
-
     # r = self.r*(1-self.dt/self.td) + spike/self.td
     # self.r = r
 
     I_synapse = internal_state[agent_index][0]
 
     I_synapse = I_synapse * (1 - dt / tau_fall) + spike * scale * weight
-    
-    internal_state[agent_index][0] = I_synapse
 
+    internal_state[agent_index][0] = I_synapse
 
     # # Update outgoing synapses if any
     # for synapse_idx in range(len(output_synapsess[my_idx])):
@@ -239,8 +251,7 @@ def synapse_with_stdp_step_func(
         syn_delay_reg_head = t_current % (syn_delay_reg_len)
         syn_delay_reg_tail = (
             0
-            if syn_delay_reg_len == 1
-            or syn_delay_reg_head + 1 >= syn_delay_reg_len
+            if syn_delay_reg_len == 1 or syn_delay_reg_head + 1 >= syn_delay_reg_len
             else syn_delay_reg_head + 1
         )
         # The earliest spike still in the register is at
@@ -253,9 +264,9 @@ def synapse_with_stdp_step_func(
         # Perform STDP weight change
         if t_current < 2:
             return
-        output_synapse_learning_params = output_synapses_learning_paramss[
-            my_idx
-        ][synapse_idx]
+        output_synapse_learning_params = output_synapses_learning_paramss[my_idx][
+            synapse_idx
+        ]
         stdp_timesteps = output_synapse_learning_params[0]
         A_pos = output_synapse_learning_params[1]  # 0.6
         A_neg = output_synapse_learning_params[2]  # 0.3
@@ -270,16 +281,12 @@ def synapse_with_stdp_step_func(
                 presynaptic_spikes[t_current - 1 - delta_t]
                 * postsynaptic_spikes[t_current]
             )
-            delta_w += (
-                A_pos * math.exp(delta_t / tau_pos) * pre_to_post_correlation
-            )
+            delta_w += A_pos * math.exp(delta_t / tau_pos) * pre_to_post_correlation
             post_to_pre_correlation = (
                 postsynaptic_spikes[t_current]
                 * presynaptic_spikes[t_current - 1 - delta_t]
             )
-            delta_w -= (
-                A_neg * math.exp(delta_t / tau_neg) * post_to_pre_correlation
-            )
+            delta_w -= A_neg * math.exp(delta_t / tau_neg) * post_to_pre_correlation
         w_old = weight
         sigma = 0.8  # weight change rate
         w_max = 1000
