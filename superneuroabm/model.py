@@ -59,7 +59,7 @@ class NeuromorphicModel(Model):
         synapse_properties = {
             "parameters": [0.0, 0.0, 0.0, 0.0],  # scale, Tau_rise, Tau_fall, weight
             "internal_state": [0.0, 0.0],  # Isyn, Isyn_supp
-            "neuron_delay_reg": [],  # Synapse delay
+            "synapse_delay_reg": [],  # Synapse delay
             "output_spikes_tensor": [],
         }
 
@@ -203,8 +203,6 @@ class NeuromorphicModel(Model):
             internal_state=[0.0, 0.0],
         )
         self.set_agent_property_value(neuron_id, "internal_state", reset_state)  # , []
-        # synapse_infos = []
-        # self._output_synapsess.append(synapse_infos)
         return neuron_id
 
     def create_synapse(
@@ -227,20 +225,17 @@ class NeuromorphicModel(Model):
             enabled step function. Must be specified in order of use
             in step function.
         """
+        delay_reg = [0 for _ in range(synaptic_delay)]
         soma_id = self.create_agent_of_breed(
             breed=self._synapse_breeds[breed],
             parameters=[0.0, 0.0, 0.0, weight],  # TODO edit
             internal_state=[0.0, 0.0],
-        )
-        delay_reg = [0 for _ in range(synaptic_delay)]
-        self.set_agent_property_value(
-            soma_id,
-            "neuron_delay_reg",
-            delay_reg,
+            synapse_delay_reg=delay_reg,
         )
 
         network_space: NetworkSpace = self.get_space()
-        network_space.connect_agents(pre_neuron_id, post_neuron_id, weight=weight)
+        network_space.connect_agents(pre_neuron_id, soma_id, directed=True)
+        network_space.connect_agents(soma_id, post_neuron_id, directed=True)
 
     def update_synapse(
         self,
