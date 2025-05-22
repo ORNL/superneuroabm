@@ -1,35 +1,37 @@
 """
 Model class for building an SNN
 """
+
 from typing import Dict, Callable, List
 
 import numpy as np
 from sagesim.space import NetworkSpace
 from sagesim.model import Model
 from sagesim.breed import Breed
-#from superneuroabm.neuron import (
+
+# from superneuroabm.neuron import (
 #    synapse_step_func,
 #    neuron_step_func,
-#)
+# )
 from superneuroabm.izh_neuron import (
-        izh_soma_step_func,
-        synapse_single_exp_step_func,
-        )
+    izh_soma_step_func,
+    synapse_single_exp_step_func,
+)
+
 
 class NeuromorphicModel(Model):
     def __init__(
         self,
         soma_breed_info: Dict[str, List[Callable]] = {
-            #"Neuron": [neuron_step_func, synapse_step_func]
+            # "Neuron": [neuron_step_func, synapse_step_func]
             "IZH_Soma": [izh_soma_step_func],
-            #"Single_Exp_Synapse": [synapse_single_exp_step_func],
+            # "Single_Exp_Synapse": [synapse_single_exp_step_func],
         },
         synapse_breed_info: Dict[str, List[Callable]] = {
-            #"Neuron": [neuron_step_func, synapse_step_func]
-            #"IZH_Soma": [izh_soma_step_func],
+            # "Neuron": [neuron_step_func, synapse_step_func]
+            # "IZH_Soma": [izh_soma_step_func],
             "Single_Exp_Synapse": [synapse_single_exp_step_func],
         },
-
     ) -> None:
         """
         Creates an SNN Model and provides methods to create, simulate,
@@ -45,62 +47,46 @@ class NeuromorphicModel(Model):
             breed every simulation step in the order specifed in the
             list.
         """
-        super().__init__(space = NetworkSpace())
+        super().__init__(space=NetworkSpace())
 
         axonal_delay = 1
         soma_properties = {
-            "agent_params":[0.0, 0.0, 0.0, 0.0, 0.0],  #k, vth, C, a, b,
-            "internal_state": [0.0 0.0],  #v, u
-            #"synapse_history":[], #Synapse delay
-            "output_spikes_tensor":[],
-
-            #"threshold": 1,
-            #"reset_state": 0,
-            #"leak": 0,
-            #"refractory_period": 0,
-            #"output_synapses": [],
-            #"t_elapse": 0,
-            #"internal_state": 0,
-            #"neuron_delay_reg": [0 for _ in range(axonal_delay)],
-            #"input_spikes": [],
-            #"output_synapses_learning_params": [],
-            #"output_spikes": [],
+            "parameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
+            "internal_state": [0.0, 0.0],  # v, u
+            # "synapse_history":[], #Synapse delay
+            "output_spikes_tensor": [],
         }
         synapse_properties = {
-            "agent_params":[0.0, 0.0, 0.0, 0.0],  #scale, Tau_rise, Tau_fall, weight
-            "internal_state": [0.0 0.0],  #Isyn, Isyn_supp
-            "synapse_history":[], #Synapse delay
-            "output_spikes_tensor":[],
+            "parameters": [0.0, 0.0, 0.0, 0.0],  # scale, Tau_rise, Tau_fall, weight
+            "internal_state": [0.0, 0.0],  # Isyn, Isyn_supp
+            "neuron_delay_reg": [],  # Synapse delay
+            "output_spikes_tensor": [],
         }
-        #max_dims = {
-        #    "threshold": [],
-        #    "reset_state": [],
-        #    "leak": [],
-        #    "refractory_period": [],
-        #    "output_synapses": [],
-        #    "t_elapse": [],
-        #    "internal_state": [],
-        #    "neuron_delay_reg": None,
-        #    "input_spikes": None,
-        #    "output_synapses_learning_params": None,
-        #    "output_spikes": None,
-        #}
 
         self._neuron_breeds: Dict[str, Breed] = {}
-        for breed_name, step_funcs in neuron_breed_info.items():
-            soma_breed = Breed(breed_name)#Strt here Ashish
-            for prop_name, default_val in neuron_properties.items():
-                neuron_breed.register_property(
-                    prop_name, default_val, max_dims[prop_name]
-                )
+        for breed_name, step_funcs in soma_breed_info.items():
+            soma_breed = Breed(breed_name)  # Strt here Ashish
+            for prop_name, default_val in soma_properties.items():
+                soma_breed.register_property(prop_name, default_val)
             for step_func_order, step_func in enumerate(step_funcs):
-                neuron_breed.register_step_func(
+                soma_breed.register_step_func(
                     step_func=step_func, priority=step_func_order
                 )
-            self.register_breed(neuron_breed)
-            self._neuron_breeds[breed_name] = neuron_breed
+            self.register_breed(soma_breed)
+            self._neuron_breeds[breed_name] = soma_breed
 
-        self._output_synapsess_max_dim = [0, 2]
+        self._synapse_breeds: Dict[str, Breed] = {}
+        for breed_name, step_funcs in synapse_breed_info.items():
+            synapse_breed = Breed(breed_name)  # Strt here Ashish
+            for prop_name, default_val in synapse_properties.items():
+                synapse_breed.register_property(prop_name, default_val)
+            for step_func_order, step_func in enumerate(step_funcs):
+                synapse_breed.register_step_func(
+                    step_func=step_func, priority=step_func_order
+                )
+            self.register_breed(synapse_breed)
+            self._synapse_breeds[breed_name] = synapse_breed
+
         self._original_output_synapse_weights = {}
         self._synapse_index_map = {}
 
@@ -125,7 +111,7 @@ class NeuromorphicModel(Model):
                 id=neuron_id,
                 property_name="input_spikes",
                 value=new_input_spikes,
-            #    dims=[0, 2],
+                #    dims=[0, 2],
             )
             # Clear output buffer
             output_buffer = [0 for _ in range(output_buffer_len)]
@@ -133,7 +119,7 @@ class NeuromorphicModel(Model):
                 id=neuron_id,
                 property_name="output_spikes",
                 value=output_buffer,
-            #    dims=[output_buffer_len],
+                #    dims=[output_buffer_len],
             )
             # Clear internal states
             reset_state = super().get_agent_property_value(
@@ -143,7 +129,7 @@ class NeuromorphicModel(Model):
                 id=neuron_id,
                 property_name="internal_state",
                 value=reset_state,
-            #    dims=[],
+                #    dims=[],
             )
             # Clear neuron delay registers
             axonal_delay = len(
@@ -153,7 +139,9 @@ class NeuromorphicModel(Model):
             )
             neuron_delay_reg = [0 for _ in range(axonal_delay)]
             self.set_agent_property_value(
-                neuron_id, "neuron_delay_reg", neuron_delay_reg, #[axonal_delay]
+                neuron_id,
+                "neuron_delay_reg",
+                neuron_delay_reg,  # [axonal_delay]
             )
             # Clear synaptic delay registers
             output_synapses = self.get_agent_property_value(
@@ -164,9 +152,9 @@ class NeuromorphicModel(Model):
             for i in range(len(output_synapses)):
                 # Clear weight (2nd element) if necessary
                 if not retain_weights:
-                    output_synapses[i][
-                        1
-                    ] = self._original_output_synapse_weights[neuron_id][i]
+                    output_synapses[i][1] = self._original_output_synapse_weights[
+                        neuron_id
+                    ][i]
                 # Clear the rest of the list, which is the delay register
                 j = 2
                 while j < len(output_synapses[i]):
@@ -179,25 +167,25 @@ class NeuromorphicModel(Model):
                 neuron_id,
                 "output_synapses",
                 output_synapses,
-                #[len(output_synapses), max_synapse_info_len],
+                # [len(output_synapses), max_synapse_info_len],
             )
 
         super().setup(use_gpu=use_gpu)
 
     def simulate(
-        self, ticks: int, update_data_ticks: int = 1 #, num_cpu_proc: int = 4
+        self, ticks: int, update_data_ticks: int = 1  # , num_cpu_proc: int = 4
     ) -> None:
         """
         Override of superneuroabm.core.model mainly to register an
         AgentDataCollector to monitor marked output Neurons.
 
         """
-        super().simulate(ticks, update_data_ticks)#, num_cpu_proc)
+        super().simulate(ticks, update_data_ticks)  # , num_cpu_proc)
 
-    def create_neuron(
+    def create_soma(
         self,
-        breed: str = "Neuron",
-        threshold: float = 1,
+        breed: str,
+        threshold: float = 1,  # TODO edit
         reset_state: float = 0,
         leak: float = 0,
         refractory_period: int = 0,
@@ -209,27 +197,20 @@ class NeuromorphicModel(Model):
         :return: SAGESim agent id of neuron
 
         """
-        delay_reg = [0 for _ in range(axonal_delay)]
         neuron_id = super().create_agent_of_breed(
             breed=self._neuron_breeds[breed],
-            threshold=threshold,
-            reset_state=reset_state,
-            leak=leak,
-            refractory_period=refractory_period,
+            parameters=[threshold, leak, refractory_period, axonal_delay],  # TODO edit
+            internal_state=[0.0, 0.0],
         )
-        self.set_agent_property_value(
-            neuron_id, "neuron_delay_reg", delay_reg #, [axonal_delay]
-        )
-        self.set_agent_property_value(
-            neuron_id, "internal_state", reset_state #, []
-        )
+        self.set_agent_property_value(neuron_id, "internal_state", reset_state)  # , []
         # synapse_infos = []
         # self._output_synapsess.append(synapse_infos)
         return neuron_id
 
     def create_synapse(
         self,
-        pre_neuron_id: int,
+        breed: str,
+        pre_neuron_id: int,  # TODO edit
         post_neuron_id: int,
         weight: int = 1,
         synaptic_delay: int = 1,
@@ -246,58 +227,20 @@ class NeuromorphicModel(Model):
             enabled step function. Must be specified in order of use
             in step function.
         """
-        output_synapses = self.get_agent_property_value(
-            pre_neuron_id, "output_synapses"
-        )
-        if pre_neuron_id in self._synapse_index_map:
-            output_synapse_index_map = self._synapse_index_map[pre_neuron_id]
-            if post_neuron_id in output_synapse_index_map:
-                raise ValueError(
-                    f"Synapse {pre_neuron_id} -> {post_neuron_id}already exists"
-                )
-            else:
-                output_synapse_index_map[post_neuron_id] = len(output_synapses)
-        else:
-            output_synapse_index_map = {post_neuron_id: 0}
-        self._synapse_index_map[pre_neuron_id] = output_synapse_index_map
-
-        # Update or enter new synapse params
-        output_synapses = self.get_agent_property_value(
-            pre_neuron_id, "output_synapses"
+        soma_id = self.create_agent_of_breed(
+            breed=self._synapse_breeds[breed],
+            parameters=[0.0, 0.0, 0.0, weight],  # TODO edit
+            internal_state=[0.0, 0.0],
         )
         delay_reg = [0 for _ in range(synaptic_delay)]
-        synapse_info = [post_neuron_id, weight]
-        synapse_info.extend(delay_reg)
-        output_synapses.append(synapse_info)
         self.set_agent_property_value(
-            pre_neuron_id,
-            "output_synapses",
-            output_synapses,
-            #[len(output_synapses), len(synapse_info)],
+            soma_id,
+            "neuron_delay_reg",
+            delay_reg,
         )
 
-        # store original weights
-        self._original_output_synapse_weights[
-            pre_neuron_id
-        ] = self._original_output_synapse_weights.get(pre_neuron_id, [])
-        self._original_output_synapse_weights[pre_neuron_id].append(weight)
-
-        # Update or enter learning params
-        synapses_learning_params = self.get_agent_property_value(
-            pre_neuron_id, "output_synapses_learning_params"
-        )
-        if synapse_learning_params == None:
-            synapse_learning_params = []
-        synapses_learning_params.append(synapse_learning_params)
-        self.set_agent_property_value(
-            id=pre_neuron_id,
-            property_name="output_synapses_learning_params",
-            value=synapses_learning_params,
-            #dims=[
-            #    len(synapses_learning_params),
-            #    len(synapse_learning_params),
-            #],
-        )
+        network_space: NetworkSpace = self.get_space()
+        network_space.connect_agents(pre_neuron_id, post_neuron_id, weight=weight)
 
     def update_synapse(
         self,
@@ -329,7 +272,6 @@ class NeuromorphicModel(Model):
                 pre_neuron_id,
                 "output_synapses",
                 output_synapses,
-                #[len(output_synapses), len(output_synapses[synapse_idx])],
             )
 
         # Update or enter learning params
@@ -342,10 +284,6 @@ class NeuromorphicModel(Model):
                 id=pre_neuron_id,
                 property_name="output_synapses_learning_params",
                 value=synapses_learning_params,
-                #dims=[
-                #    len(synapses_learning_params),
-                #    len(synapse_learning_params),
-                #],
             )
 
     def add_spike(self, neuron_id: int, tick: int, value: float) -> None:
@@ -361,7 +299,7 @@ class NeuromorphicModel(Model):
         )
         spikes.append([tick, value])
         self.set_agent_property_value(
-            neuron_id, "input_spikes", spikes #, [len(spikes), 2]
+            neuron_id, "input_spikes", spikes  # , [len(spikes), 2]
         )
 
     def get_spike_times(self, neuron_id: int) -> np.array:
@@ -369,9 +307,7 @@ class NeuromorphicModel(Model):
             id=neuron_id,
             property_name="output_spikes",
         )
-        spike_times = [
-            i for i in range(len(spike_train)) if spike_train[i] > 0
-        ]
+        spike_times = [i for i in range(len(spike_train)) if spike_train[i] > 0]
         return spike_times
 
     def summary(self) -> str:
