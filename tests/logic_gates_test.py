@@ -20,11 +20,51 @@ class LogicGatesTest(unittest.TestCase):
         """Tests working of two somas"""
 
         # Create soma
-        soma_0 = self._model.create_soma(threshold=0.0)
-        soma_1 = self._model.create_soma(threshold=0.0)
+        k = 1.2
+        vthr = -45
+        C = 150
+        a = 0.01
+        b = 5
+        vpeak = 50
+        vrest = -75
+        d = 130
+        vreset = -56
+        soma_parameters = [k, vthr, C, a, b, vpeak, vrest, d, vreset]
+        v = vrest
+        u = 0
+        default_internal_state = [v, u]
+        soma_0 = self._model.create_soma(
+            breed="IZH_Soma",
+            parameters=soma_parameters,
+            default_internal_state=default_internal_state,
+        )
+        soma_1 = self._model.create_soma(
+            breed="IZH_Soma",
+            parameters=soma_parameters,
+            default_internal_state=default_internal_state,
+        )
 
         # Create synapse
-        self._model.create_synapse(pre_soma_id=soma_0, post_soma_id=soma_1)
+        weight = 1.0
+        synaptic_delay = 1.0
+        scale = 1.0
+        tau_fall = 1e-3
+        tau_rise = 0
+        synapse_parameters = [
+            weight,
+            synaptic_delay,
+            scale,
+            tau_fall,
+            tau_rise,
+        ]
+        I_synapse = 0.0
+        synapse_internal_state = [I_synapse]
+        self._model.create_synapse(
+            pre_soma_id=soma_0,
+            post_soma_id=soma_1,
+            parameters=synapse_parameters,
+            default_internal_state=synapse_internal_state,
+        )
 
         # Setup and simulate
         self._model.setup(output_buffer_len=10, use_cuda=self._use_cuda)
