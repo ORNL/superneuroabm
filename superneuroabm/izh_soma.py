@@ -153,11 +153,11 @@ def synapse_single_exp_step_func(
 
     dt = globals[1]  # time step size
 
-    synaptic_delay = synapse_params[agent_index][0]
-    scale = synapse_params[agent_index][1]
-    tau_fall = synapse_params[agent_index][2]
-    tau_rise = synapse_params[agent_index][3]
-    weight = synapse_params[agent_index][4]
+    weight = synapse_params[agent_index][0]
+    synaptic_delay = synapse_params[agent_index][1]
+    scale = synapse_params[agent_index][2]
+    tau_fall = synapse_params[agent_index][3]
+    tau_rise = synapse_params[agent_index][4]
 
     pre_soma_id = locations[agent_index][0]
 
