@@ -47,14 +47,19 @@ class NeuromorphicModel(Model):
             "parameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
             "internal_state": [0.0, 0.0],  # v, u
             # "synapse_history":[], #Synapse delay
+            "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
         }
         synapse_properties = {
             "parameters": [0.0, 0.0, 0.0, 0.0],  # scale, Tau_rise, Tau_fall, weight
             "internal_state": [0.0, 0.0],  # Isyn, Isyn_supp
             "synapse_delay_reg": [],  # Synapse delay
+            "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
         }
+        self._synapse_ids = []
+        self._soma_ids = []
+        self._soma_reset_states = {}
 
         self._soma_breeds: Dict[str, Breed] = {}
         for breed_name, step_funcs in soma_breed_info.items():
@@ -89,7 +94,6 @@ class NeuromorphicModel(Model):
     def setup(
         self,
         use_gpu: bool = False,
-        output_buffer_len: int = 1000,
         retain_weights=False,
     ) -> None:
         """
@@ -99,8 +103,8 @@ class NeuromorphicModel(Model):
             not reset upon setup.
         """
 
-        synapse_ids = self.synapse_ids
-        soma_ids = self.synapse_ids
+        synapse_ids = self._synapse_ids
+        soma_ids = self._soma_ids
         for synapse_id in range(synapse_ids):
             # Clear input spikes
             new_input_spikes = []
@@ -121,25 +125,37 @@ class NeuromorphicModel(Model):
                 "synapse_delay_reg",
                 synapse_delay_reg,
             )
-        for soma_id in range(soma_ids):
-            # Clear output buffer
-            output_buffer = [0 for _ in range(output_buffer_len)]
-            super().set_agent_property_value(
-                id=soma_id,
-                property_name="output_spikes",
-                value=output_buffer,
-                #    dims=[output_buffer_len],
-            )
+            # Optionally clear weights
+            if not retain_weights:
+                synapse_parameters = super().get_agent_property_value(
+                    id=synapse_id,
+                    property_name="parameters",
+                )
+                synapse_parameters[0] = 0.0  # weight
+                synapse_parameters = super().set_agent_property_value(
+                    id=synapse_id,
+                    property_name="parameters",
+                    value=synapse_parameters,
+                )
             # Clear internal states
-            reset_state = super().get_agent_property_value(
-                id=soma_id, property_name="reset_state"
-            )  # TODO: fix
+            synapse_internal_state = super().get_agent_property_value(
+                id=synapse_id,
+                property_name="internal_state",
+            )
+            synapse_internal_state = [0.0 for _ in synapse_internal_state]
+            super().set_agent_property_value(
+                id=synapse_id,
+                property_name="internal_state",
+                value=synapse_internal_state,
+            )
+
+        for soma_id in range(soma_ids):
+            # Clear internal states
             super().set_agent_property_value(
                 id=soma_id,
                 property_name="internal_state",
-                value=reset_state,
+                value=self._soma_reset_states[soma_id],
             )
-
         super().setup(use_gpu=use_gpu)
 
     def simulate(
@@ -150,6 +166,15 @@ class NeuromorphicModel(Model):
         AgentDataCollector to monitor marked output somas.
 
         """
+        soma_ids = self.synapse_ids
+        for soma_id in range(soma_ids):
+            # Clear output buffer
+            output_buffer = [0 for _ in range(ticks)]
+            super().set_agent_property_value(
+                id=soma_id,
+                property_name="output_spikes_tensor",
+                value=output_buffer,
+            )
         super().simulate(ticks, update_data_ticks)  # , num_cpu_proc)
 
     def create_soma(
@@ -169,6 +194,8 @@ class NeuromorphicModel(Model):
             parameters=parameters,
             internal_state=default_internal_state,
         )
+        self._soma_ids.append(soma_id)
+        self._soma_reset_states[soma_id] = parameters
         return soma_id
 
     def create_synapse(
@@ -198,6 +225,7 @@ class NeuromorphicModel(Model):
             internal_state=default_internal_state,
             synapse_delay_reg=delay_reg,
         )
+        self._synapse_ids.append(soma_id)
 
         network_space: NetworkSpace = self.get_space()
         network_space.connect_agents(pre_soma_id, soma_id, directed=True)
@@ -207,9 +235,9 @@ class NeuromorphicModel(Model):
         self,
         pre_soma_id: int,
         post_soma_id: int,
-        weight: int = None,
-        synapse_learning_params: List[float] = None,
+        parameters: List[float] = None,
     ):
+        raise NotImplementedError("update_synapse is not implemented.")
         if pre_soma_id in self._synapse_index_map:
             output_synapse_index_map = self._synapse_index_map[pre_soma_id]
             if post_soma_id in output_synapse_index_map:
@@ -245,7 +273,7 @@ class NeuromorphicModel(Model):
                 value=synapses_learning_params,
             )
 
-    def add_spike(self, soma_id: int, tick: int, value: float) -> None:
+    def add_spike(self, synapse_id: int, tick: int, value: float) -> None:
         """
         Schedules an external input spike to this soma.
 
@@ -253,18 +281,18 @@ class NeuromorphicModel(Model):
         :param value: spike value
         """
         spikes = self.get_agent_property_value(
-            id=soma_id,
-            property_name="input_spikes",
+            id=synapse_id,
+            property_name="input_spikes_tensor",
         )
         spikes.append([tick, value])
         self.set_agent_property_value(
-            soma_id, "input_spikes", spikes  # , [len(spikes), 2]
+            synapse_id, "input_spikes_tensor", spikes  # , [len(spikes), 2]
         )
 
     def get_spike_times(self, soma_id: int) -> np.array:
         spike_train = super().get_agent_property_value(
             id=soma_id,
-            property_name="output_spikes",
+            property_name="output_spikes_tensor",
         )
         spike_times = [i for i in range(len(spike_train)) if spike_train[i] > 0]
         return spike_times
@@ -275,6 +303,7 @@ class NeuromorphicModel(Model):
 
         :return: str information of netowkr struture
         """
+        raise NotImplementedError("summary is not implemented.")
         summary = []
         summary.append("soma information:")
         for soma_id in range(self._agent_factory.num_agents):
