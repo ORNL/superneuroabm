@@ -4,6 +4,7 @@ Izhikevich Neuron and weighted synapse step functions for spiking neural network
 """
 
 import math
+import cupy as cp
 
 # def step_func(
 #     agent_ids, agent_index, globals, breeds, locations, states, preventative_measures
@@ -161,10 +162,13 @@ def synapse_single_exp_step_func(
 
     pre_soma_id = locations[agent_index][0]
 
-    i = 0
-    while i < len(agent_ids) and agent_ids[i] != pre_soma_id:
-        i += 1
-    spike = output_spikes_tensor[i][t_current]
+    if not cp.isnan(pre_soma_id):
+        i = 0
+        while i < len(agent_ids) and agent_ids[i] != pre_soma_id:
+            i += 1
+        spike = output_spikes_tensor[i][t_current]
+    else:
+        spike = 0
 
     # r = self.r*(1-self.dt/self.td) + spike/self.td
     # self.r = r
