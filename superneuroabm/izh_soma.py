@@ -54,6 +54,7 @@ def izh_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     neuron_params,  # k, vth, C, a, b,
     internal_state,  # v, u
     synapse_history,  # Synapse delay
+    input_spikes_tensor,  # input spikes
     output_spikes_tensor,
 ):
     synapse_ids = locations[agent_index]  # network location is defined by neighbors
@@ -148,6 +149,7 @@ def synapse_single_exp_step_func(
     synapse_params,  # scale, time constant (tau_rise and tau_fall)
     internal_state,  #
     synapse_history,  # delay
+    input_spikes_tensor,  # input spikes
     output_spikes_tensor,
 ):
     t_current = int(globals[0])
@@ -169,6 +171,10 @@ def synapse_single_exp_step_func(
         spike = output_spikes_tensor[i][t_current]
     else:
         spike = 0
+
+        for i in range(len(input_spikes_tensor[agent_index])):
+            if input_spikes_tensor[agent_index][i][0] == t_current:
+                spike += input_spikes_tensor[agent_index][i][1] #TODO: check if we need analog values for spikes
 
     # r = self.r*(1-self.dt/self.td) + spike/self.td
     # self.r = r
