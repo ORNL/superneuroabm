@@ -1,5 +1,7 @@
 import unittest
 
+import numpy as np
+
 from superneuroabm.model import NeuromorphicModel
 
 
@@ -60,12 +62,14 @@ class LogicGatesTest(unittest.TestCase):
         I_synapse = 0.0
         synapse_internal_state = [I_synapse]
         syn_ext = self._model.create_synapse(
-            pre_soma_id=Nan,
+            breed="Single_Exp_Synapse_STDP1",
+            pre_soma_id=np.nan,
             post_soma_id=soma_0,
             parameters=synapse_parameters,
             default_internal_state=synapse_internal_state,
         )
         syn_int = self._model.create_synapse(
+            breed="Single_Exp_Synapse_STDP1",
             pre_soma_id=soma_0,
             post_soma_id=soma_1,
             parameters=synapse_parameters,

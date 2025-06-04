@@ -46,7 +46,7 @@ class NeuromorphicModel(Model):
         soma_properties = {
             "parameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
             "internal_state": [0.0, 0.0],  # v, u
-            # "synapse_history":[], #Synapse delay
+            "synapse_delay_reg":[], #Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
         }
@@ -105,12 +105,12 @@ class NeuromorphicModel(Model):
 
         synapse_ids = self._synapse_ids
         soma_ids = self._soma_ids
-        for synapse_id in range(synapse_ids):
+        for synapse_id in range(len(synapse_ids)):
             # Clear input spikes
             new_input_spikes = []
             super().set_agent_property_value(
                 id=synapse_id,
-                property_name="input_spikes",
+                property_name="input_spikes_tensor",
                 value=new_input_spikes,
             )
             # Clear synapse delay registers
@@ -121,7 +121,7 @@ class NeuromorphicModel(Model):
             )
             synapse_delay_reg = [0 for _ in range(synapse_delay)]
             self.set_agent_property_value(
-                soma_id,
+                synapse_id,
                 "synapse_delay_reg",
                 synapse_delay_reg,
             )
@@ -149,7 +149,7 @@ class NeuromorphicModel(Model):
                 value=synapse_internal_state,
             )
 
-        for soma_id in range(soma_ids):
+        for soma_id in range(len(soma_ids)):
             # Clear internal states
             super().set_agent_property_value(
                 id=soma_id,
@@ -205,7 +205,7 @@ class NeuromorphicModel(Model):
         post_soma_id: int,
         parameters: List[float],
         default_internal_state: List[float],
-    ) -> None:
+    ) -> int:
         """
         Creates and adds Synapse agent.
 
@@ -219,17 +219,20 @@ class NeuromorphicModel(Model):
         """
         synaptic_delay = int(parameters[0])
         delay_reg = [0 for _ in range(synaptic_delay)]
-        soma_id = self.create_agent_of_breed(
+        synapse_id = self.create_agent_of_breed(
             breed=self._synapse_breeds[breed],
             parameters=parameters,
             internal_state=default_internal_state,
             synapse_delay_reg=delay_reg,
         )
-        self._synapse_ids.append(soma_id)
+        self._synapse_ids.append(synapse_id)
 
         network_space: NetworkSpace = self.get_space()
-        network_space.connect_agents(pre_soma_id, soma_id, directed=True)
-        network_space.connect_agents(soma_id, post_soma_id, directed=True)
+        if not np.isnan(pre_soma_id):
+            network_space.connect_agents(pre_soma_id, synapse_id, directed=True)
+        if not np.isnan(post_soma_id):
+            network_space.connect_agents(synapse_id, post_soma_id, directed=True)
+        return synapse_id
 
     def update_synapse(
         self,
