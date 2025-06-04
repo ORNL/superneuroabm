@@ -94,6 +94,15 @@ class NeuromorphicModel(Model):
             self._synapse_breeds[breed_name] = synapse_breed
 
         self._synapse_index_map = {}
+     
+    def set_global_property_value(name: str, value: float)->None:
+        if name in super().globals:
+            super().set_global_property_value(name, value)
+        else:
+            super().register_global_property(name, value)
+    
+    def get_global_property_value(name: str)->float:
+        return super().get_global_property_value(name)
 
     def setup(
         self,

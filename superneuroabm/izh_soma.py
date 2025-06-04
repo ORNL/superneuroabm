@@ -127,7 +127,7 @@ def izh_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     v = v + dt * dv
 
     u += dt * (a * (b * (v - vrest) - u))
-    s = 1 * (v >= vpeak)  # output spike
+    s = 1 * (v >= vthr)  # output spike
     u = u + d * s  # If spiked, update recovery variable
     v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
     # self.v_ = self.v

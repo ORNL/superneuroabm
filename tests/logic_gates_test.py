@@ -20,7 +20,8 @@ class LogicGatesTest(unittest.TestCase):
 
     def test_two_somas(self):
         """Tests working of two somas"""
-
+        self._model.register_global_property("dt",1e-1)
+        self._model.register_global_property("I_bias",450)
         # Create soma
         k = 1.2
         vthr = -45
@@ -88,7 +89,7 @@ class LogicGatesTest(unittest.TestCase):
         #for spike in spikes:
         #    self._model.add_spike(soma_id=soma_1, tick=spike[0], value=spike[1])     #TODO: fix this
 
-        self._model.simulate(ticks=10)
+        self._model.simulate(ticks=1000, update_data_ticks=1000)
 
         expected_times = [1, 2]
         print(self._model.get_spike_times(soma_id=soma_0))
