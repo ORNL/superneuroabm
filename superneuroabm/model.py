@@ -3,27 +3,31 @@ Model class for building an SNN
 """
 
 from typing import Dict, Callable, List
+from pathlib import Path
 
 import numpy as np
 from sagesim.space import NetworkSpace
 from sagesim.model import Model
 from sagesim.breed import Breed
+from pathlib import Path
 
 from superneuroabm.izh_soma import (
     izh_soma_step_func,
     synapse_single_exp_step_func,
 )
 
+CURRENT_DIR_ABSPATH = Path(__file__).resolve().parent
+
 
 class NeuromorphicModel(Model):
     def __init__(
         self,
         soma_breed_info: Dict[str, List[Callable]] = {
-            "IZH_Soma": [(izh_soma_step_func, "./izh_soma.py")]
+            "IZH_Soma": [(izh_soma_step_func, CURRENT_DIR_ABSPATH / "izh_soma.py")],
         },
         synapse_breed_info: Dict[str, List[Callable]] = {
             "Single_Exp_Synapse_STDP1": [
-                (synapse_single_exp_step_func, "./izh_soma.py")
+                (synapse_single_exp_step_func, CURRENT_DIR_ABSPATH / "izh_soma.py")
             ],
         },
     ) -> None:
@@ -46,7 +50,7 @@ class NeuromorphicModel(Model):
         soma_properties = {
             "parameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
             "internal_state": [0.0, 0.0],  # v, u
-            "synapse_delay_reg":[], #Synapse delay
+            "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
         }
@@ -105,7 +109,7 @@ class NeuromorphicModel(Model):
 
         synapse_ids = self._synapse_ids
         soma_ids = self._soma_ids
-        for synapse_id in range(len(synapse_ids)):
+        for synapse_id in synapse_ids:
             # Clear input spikes
             new_input_spikes = []
             super().set_agent_property_value(
@@ -149,7 +153,7 @@ class NeuromorphicModel(Model):
                 value=synapse_internal_state,
             )
 
-        for soma_id in range(len(soma_ids)):
+        for soma_id in soma_ids:
             # Clear internal states
             super().set_agent_property_value(
                 id=soma_id,
@@ -166,8 +170,8 @@ class NeuromorphicModel(Model):
         AgentDataCollector to monitor marked output somas.
 
         """
-        soma_ids = self.synapse_ids
-        for soma_id in range(soma_ids):
+        soma_ids = self._synapse_ids
+        for soma_id in soma_ids:
             # Clear output buffer
             output_buffer = [0 for _ in range(ticks)]
             super().set_agent_property_value(

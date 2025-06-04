@@ -5,6 +5,7 @@ Izhikevich Neuron and weighted synapse step functions for spiking neural network
 
 import math
 import cupy as cp
+from cupyx import jit
 
 # def step_func(
 #     agent_ids, agent_index, globals, breeds, locations, states, preventative_measures
@@ -45,10 +46,11 @@ import cupy as cp
 # output_synapsess, #shape: num_agents x max(synpses of an agent) x max(delay of syn)+2
 
 
+@jit.rawkernel(device="cuda")
 def izh_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_step_func
-    agent_ids,
     agent_index,
     globals,
+    agent_ids,
     breeds,
     locations,
     neuron_params,  # k, vth, C, a, b,
@@ -59,7 +61,7 @@ def izh_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
 ):
     synapse_ids = locations[agent_index]  # network location is defined by neighbors
 
-    I_synapse = 0
+    I_synapse = 0.0
     for i in range(len(synapse_ids)):
 
         synapse_index = -1  # synapse index local to the current mpi rank
@@ -140,10 +142,11 @@ def stdp_aux():
     pass
 
 
+@jit.rawkernel(device="cuda")
 def synapse_single_exp_step_func(
-    agent_ids,
     agent_index,
     globals,
+    agent_ids,
     breeds,
     locations,
     synapse_params,  # scale, time constant (tau_rise and tau_fall)
@@ -170,11 +173,17 @@ def synapse_single_exp_step_func(
             i += 1
         spike = output_spikes_tensor[i][t_current]
     else:
-        spike = 0
-
-        for i in range(len(input_spikes_tensor[agent_index])):
+        spike = 0.0
+        spike_buffer_max_len = len(input_spikes_tensor[agent_index])
+        i = 0
+        while i < spike_buffer_max_len and not cp.isnan(
+            input_spikes_tensor[agent_index][i][0]
+        ):
             if input_spikes_tensor[agent_index][i][0] == t_current:
-                spike += input_spikes_tensor[agent_index][i][1] #TODO: check if we need analog values for spikes
+                spike += input_spikes_tensor[agent_index][i][
+                    1
+                ]  # TODO: check if we need analog values for spikes
+            i += 1
 
     # r = self.r*(1-self.dt/self.td) + spike/self.td
     # self.r = r
