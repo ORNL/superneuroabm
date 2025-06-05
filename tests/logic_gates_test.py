@@ -94,6 +94,7 @@ class LogicGatesTest(unittest.TestCase):
         expected_times = [1, 2]
         print(self._model.get_spike_times(soma_id=soma_0))
         print(self._model.get_spike_times(soma_id=soma_1))
+        print(self._model.get_internal_states(agent_id=soma_0))
         assert (
             self._model.get_spike_times(soma_id=soma_0) == expected_times
         ), f"Spike times are {self._model.get_spike_times(soma_id=soma_0)} but should be {expected_times}"

@@ -53,6 +53,7 @@ class NeuromorphicModel(Model):
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
+            "internal_states_buffer":[],
         }
         synapse_properties = {
             "parameters": [0.0, 0.0, 0.0, 0.0],  # scale, Tau_rise, Tau_fall, weight
@@ -60,6 +61,7 @@ class NeuromorphicModel(Model):
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
+            "internal_states_buffer":[],
         }
         self._synapse_ids = []
         self._soma_ids = []
@@ -179,14 +181,34 @@ class NeuromorphicModel(Model):
         AgentDataCollector to monitor marked output somas.
 
         """
-        soma_ids = self._synapse_ids
-        for soma_id in soma_ids:
+        for soma_id in self._soma_ids:
             # Clear output buffer
             output_buffer = [0 for _ in range(ticks)]
             super().set_agent_property_value(
                 id=soma_id,
                 property_name="output_spikes_tensor",
                 value=output_buffer,
+            )
+            initial_internal_state = super().get_agent_property_value(
+                id=soma_id, 
+                property_name="internal_state"
+            )
+            internal_states_buffer = [initial_internal_state[::] for _ in range(ticks)]
+            super().set_agent_property_value(
+                id=soma_id,
+                property_name="internal_states_buffer",
+                value=internal_states_buffer,
+            )
+        for synapse_id in self._synapse_ids:
+            initial_internal_state = super().get_agent_property_value(
+                id=synapse_id, 
+                property_name="internal_state"
+            )
+            internal_states_buffer = [initial_internal_state[::] for _ in range(ticks)]
+            super().set_agent_property_value(
+                id=synapse_id,
+                property_name="internal_states_buffer",
+                value=internal_states_buffer,
             )
         super().simulate(ticks, update_data_ticks)  # , num_cpu_proc)
 
@@ -312,6 +334,11 @@ class NeuromorphicModel(Model):
         )
         spike_times = [i for i in range(len(spike_train)) if spike_train[i] > 0]
         return spike_times
+
+    def get_internal_states(self, agent_id: int) -> np.array:
+        return super().get_agent_property_value(
+                id = agent_id, 
+                property_name = "internal_states_buffer")
 
     def summary(self) -> str:
         """
