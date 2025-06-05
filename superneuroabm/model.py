@@ -53,7 +53,7 @@ class NeuromorphicModel(Model):
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
-            "internal_states_buffer":[],
+            "internal_states_buffer": [],
         }
         synapse_properties = {
             "parameters": [0.0, 0.0, 0.0, 0.0],  # scale, Tau_rise, Tau_fall, weight
@@ -61,7 +61,7 @@ class NeuromorphicModel(Model):
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
-            "internal_states_buffer":[],
+            "internal_states_buffer": [],
         }
         self._synapse_ids = []
         self._soma_ids = []
@@ -96,14 +96,14 @@ class NeuromorphicModel(Model):
             self._synapse_breeds[breed_name] = synapse_breed
 
         self._synapse_index_map = {}
-     
-    def set_global_property_value(name: str, value: float)->None:
+
+    def set_global_property_value(name: str, value: float) -> None:
         if name in super().globals:
             super().set_global_property_value(name, value)
         else:
             super().register_global_property(name, value)
-    
-    def get_global_property_value(name: str)->float:
+
+    def get_global_property_value(name: str) -> float:
         return super().get_global_property_value(name)
 
     def setup(
@@ -117,7 +117,6 @@ class NeuromorphicModel(Model):
         :param retain_weights: False by default. If True, updated weights are
             not reset upon setup.
         """
-
         synapse_ids = self._synapse_ids
         soma_ids = self._soma_ids
         for synapse_id in synapse_ids:
@@ -163,7 +162,6 @@ class NeuromorphicModel(Model):
                 property_name="internal_state",
                 value=synapse_internal_state,
             )
-
         for soma_id in soma_ids:
             # Clear internal states
             super().set_agent_property_value(
@@ -190,8 +188,7 @@ class NeuromorphicModel(Model):
                 value=output_buffer,
             )
             initial_internal_state = super().get_agent_property_value(
-                id=soma_id, 
-                property_name="internal_state"
+                id=soma_id, property_name="internal_state"
             )
             internal_states_buffer = [initial_internal_state[::] for _ in range(ticks)]
             super().set_agent_property_value(
@@ -201,8 +198,7 @@ class NeuromorphicModel(Model):
             )
         for synapse_id in self._synapse_ids:
             initial_internal_state = super().get_agent_property_value(
-                id=synapse_id, 
-                property_name="internal_state"
+                id=synapse_id, property_name="internal_state"
             )
             internal_states_buffer = [initial_internal_state[::] for _ in range(ticks)]
             super().set_agent_property_value(
@@ -230,7 +226,7 @@ class NeuromorphicModel(Model):
             internal_state=default_internal_state,
         )
         self._soma_ids.append(soma_id)
-        self._soma_reset_states[soma_id] = parameters
+        self._soma_reset_states[soma_id] = default_internal_state
         return soma_id
 
     def create_synapse(
@@ -337,8 +333,8 @@ class NeuromorphicModel(Model):
 
     def get_internal_states(self, agent_id: int) -> np.array:
         return super().get_agent_property_value(
-                id = agent_id, 
-                property_name = "internal_states_buffer")
+            id=agent_id, property_name="internal_states_buffer"
+        )
 
     def summary(self) -> str:
         """
