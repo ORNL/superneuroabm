@@ -331,7 +331,7 @@ class NeuromorphicModel(Model):
         spike_times = [i for i in range(len(spike_train)) if spike_train[i] > 0]
         return spike_times
 
-    def get_internal_states(self, agent_id: int) -> np.array:
+    def get_internal_states_history(self, agent_id: int) -> np.array:
         return super().get_agent_property_value(
             id=agent_id, property_name="internal_states_buffer"
         )

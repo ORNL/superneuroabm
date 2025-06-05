@@ -20,8 +20,8 @@ class LogicGatesTest(unittest.TestCase):
 
     def test_two_somas(self):
         """Tests working of two somas"""
-        self._model.register_global_property("dt",1e-1)
-        self._model.register_global_property("I_bias",450)
+        self._model.register_global_property("dt", 1e-1)
+        self._model.register_global_property("I_bias", 450)
         # Create soma
         k = 1.2
         vthr = -45
@@ -79,14 +79,13 @@ class LogicGatesTest(unittest.TestCase):
 
         # Setup and simulate
         self._model.setup(use_gpu=self._use_gpu)
-
         # Add spikes
         spikes = [(1, 1), (2, 1)]
         for spike in spikes:
             self._model.add_spike(synapse_id=syn_ext, tick=spike[0], value=spike[1])
 
-        #spikes = [(9, 1), (5, 1), (4, 1)]
-        #for spike in spikes:
+        # spikes = [(9, 1), (5, 1), (4, 1)]
+        # for spike in spikes:
         #    self._model.add_spike(soma_id=soma_1, tick=spike[0], value=spike[1])     #TODO: fix this
 
         self._model.simulate(ticks=1000, update_data_ticks=1000)
@@ -94,14 +93,14 @@ class LogicGatesTest(unittest.TestCase):
         expected_times = [1, 2]
         print(self._model.get_spike_times(soma_id=soma_0))
         print(self._model.get_spike_times(soma_id=soma_1))
-        print(self._model.get_internal_states(agent_id=soma_0))
+        print(self._model.get_internal_states_history(agent_id=soma_0))
         assert (
             self._model.get_spike_times(soma_id=soma_0) == expected_times
         ), f"Spike times are {self._model.get_spike_times(soma_id=soma_0)} but should be {expected_times}"
-        #expected_times = [2, 3, 4, 5, 9]
-        #assert (
+        # expected_times = [2, 3, 4, 5, 9]
+        # assert (
         #    self._model.get_spike_times(soma_id=soma_1) == expected_times
-        #), f"Spike times are {self._model.get_spike_times(soma_id=soma_1)} but should be {expected_times}"
+        # ), f"Spike times are {self._model.get_spike_times(soma_id=soma_1)} but should be {expected_times}"
 
     def test_or_gate(self):
         """Builds a neuromorphic circuit for OR gate and simulates it"""
