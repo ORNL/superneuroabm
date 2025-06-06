@@ -1,10 +1,12 @@
 # SuperNeuroABM
 A GPU-based multi-agent simulation framework for neuromorphic computing 
 
-# Dependencies
-For GPU mode;
-- NVIDIA GPU device with compute capability 6.0+
-- CUDA toolkit and drivers
+
+# Requirements
+For GPU mode:
+- NVIDIA GPU with compute capability 6.0+ with CUDA toolkit and drivers
+- Or: AMD GPU (tested on AMD MI250X on Frontier) with ROCm 5.7.1 drivers
+- `pip install git+https://github.com/ORNL/SAGESim` 
 
 # Unit Tests
 To run unit tests, `cd` to root dir and run:

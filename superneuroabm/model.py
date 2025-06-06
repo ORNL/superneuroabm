@@ -73,6 +73,11 @@ class NeuromorphicModel(Model):
             for prop_name, default_val in soma_properties.items():
                 soma_breed.register_property(prop_name, default_val)
             for step_func_order, (step_func, module_fpath) in enumerate(step_funcs):
+                module_fpath = (
+                    CURRENT_DIR_ABSPATH / "izh_soma.py"
+                    if module_fpath is None
+                    else module_fpath
+                )
                 soma_breed.register_step_func(
                     step_func=step_func,
                     module_fpath=module_fpath,
@@ -87,6 +92,11 @@ class NeuromorphicModel(Model):
             for prop_name, default_val in synapse_properties.items():
                 synapse_breed.register_property(prop_name, default_val)
             for step_func_order, (step_func, module_fpath) in enumerate(step_funcs):
+                module_fpath = (
+                    CURRENT_DIR_ABSPATH / "izh_soma.py"
+                    if module_fpath is None
+                    else module_fpath
+                )
                 synapse_breed.register_step_func(
                     step_func=step_func,
                     module_fpath=module_fpath,
