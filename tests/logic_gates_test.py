@@ -88,12 +88,12 @@ class LogicGatesTest(unittest.TestCase):
         # for spike in spikes:
         #    self._model.add_spike(soma_id=soma_1, tick=spike[0], value=spike[1])     #TODO: fix this
 
-        self._model.simulate(ticks=1000, update_data_ticks=1000)
+        self._model.simulate(ticks=100000, update_data_ticks=100000)
 
         expected_times = [1, 2]
         print(self._model.get_spike_times(soma_id=soma_0))
         print(self._model.get_spike_times(soma_id=soma_1))
-        print(self._model.get_internal_states_history(agent_id=soma_0))
+        # print(self._model.get_internal_states_history(agent_id=soma_0))
         assert (
             self._model.get_spike_times(soma_id=soma_0) == expected_times
         ), f"Spike times are {self._model.get_spike_times(soma_id=soma_0)} but should be {expected_times}"
