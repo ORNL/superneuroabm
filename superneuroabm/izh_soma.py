@@ -109,6 +109,7 @@ def izh_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     vrest = neuron_params[agent_index][6]
     d = neuron_params[agent_index][7]
     vreset = neuron_params[agent_index][8]
+    I_in = neuron_params[agent_index][9]
 
     # From https://www.izhikevich.org/publications/spikes.htm
     # v' = 0.04v^2 + 5v + 140 -u + I
@@ -124,7 +125,7 @@ def izh_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
 
     I_bias = globals[2]  # bias current
 
-    dv = (k * (v - vrest) * (v - vthr) - u + I_synapse + I_bias) / C
+    dv = (k * (v - vrest) * (v - vthr) - u + I_synapse + I_bias+I_in) / C
     v = v + dt * dv
 
     u += dt * (a * (b * (v - vrest) - u))
