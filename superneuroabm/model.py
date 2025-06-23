@@ -24,6 +24,7 @@ class NeuromorphicModel(Model):
         self,
         soma_breed_info: Dict[str, List[Callable]] = {
             "IZH_Soma": [(izh_soma_step_func, CURRENT_DIR_ABSPATH / "izh_soma.py")],
+            "LIF_Soma": [(lif_soma_step_func, CURRENT_DIR_ABSPATH /"step_functions/soma/lif.py")],
         },
         synapse_breed_info: Dict[str, List[Callable]] = {
             "Single_Exp_Synapse_STDP1": [
