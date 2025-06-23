@@ -15,6 +15,7 @@ from superneuroabm.izh_soma import (
     izh_soma_step_func,
     synapse_single_exp_step_func,
 )
+from superneuroabm.step_functions.soma.lif import lif_soma_step_func
 
 CURRENT_DIR_ABSPATH = Path(__file__).resolve().parent
 
@@ -24,7 +25,7 @@ class NeuromorphicModel(Model):
         self,
         soma_breed_info: Dict[str, List[Callable]] = {
             "IZH_Soma": [(izh_soma_step_func, CURRENT_DIR_ABSPATH / "izh_soma.py")],
-            "LIF_Soma": [(lif_soma_step_func, CURRENT_DIR_ABSPATH /"step_functions/soma/lif.py")],
+            "LIF_Soma": [(lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions/soma/lif.py")],
         },
         synapse_breed_info: Dict[str, List[Callable]] = {
             "Single_Exp_Synapse_STDP1": [

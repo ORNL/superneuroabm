@@ -32,7 +32,6 @@ class LogicGatesTest(unittest.TestCase):
         vrest = -60 # resting potential   
         vreset = -60 # reset potential
         tref_allows_integration = 1 # whether to allow integration during refractory period
-        
         I_in = 4e-8
         soma_parameters = [C, R,vthr, tref, vrest, vreset, tref_allows_integration, I_in]
         v = vrest
