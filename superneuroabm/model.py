@@ -58,8 +58,8 @@ class NeuromorphicModel(Model):
             "internal_states_buffer": [],
         }
         synapse_properties = {
-            "parameters": [0.0, 0.0, 0.0, 0.0],  # scale, Tau_rise, Tau_fall, weight
-            "internal_state": [0.0, 0.0],  # Isyn, Isyn_supp
+            "parameters": [0.0 for _ in range(10)],  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
+            "internal_state": [0.0 for _ in range(4)],  # Isyn, Isyn_supp, pre_trace, post_trace
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],

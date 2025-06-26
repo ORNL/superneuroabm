@@ -7,6 +7,8 @@ import math
 import cupy as cp
 from cupyx import jit
 
+from superneuroabm.step_functions.synapse.util import get_pre_soma_spike
+
 # def step_func(
 #     agent_ids, agent_index, globals, breeds, locations, states, preventative_measures
 # ):
@@ -171,25 +173,15 @@ def synapse_single_exp_step_func(
     tau_rise = synapse_params[agent_index][4]
 
     pre_soma_id = locations[agent_index][0]
-
-    if not cp.isnan(pre_soma_id):
-        i = 0
-        while i < len(agent_ids) and agent_ids[i] != pre_soma_id:
-            i += 1
-        spike = output_spikes_tensor[i][t_current]
-    else:
-        spike = 0.0
-        spike_buffer_max_len = len(input_spikes_tensor[agent_index])
-        i = 0
-        while i < spike_buffer_max_len and not cp.isnan(
-            input_spikes_tensor[agent_index][i][0]
-        ):
-            if input_spikes_tensor[agent_index][i][0] == t_current:
-                spike += input_spikes_tensor[agent_index][i][
-                    1
-                ]  # TODO: check if we need analog values for spikes
-            i += 1
-
+    spike = get_pre_soma_spike(
+        agent_index,
+        globals,
+        agent_ids,
+        pre_soma_id,
+        t_current,
+        input_spikes_tensor,
+        output_spikes_tensor,
+    )
     # r = self.r*(1-self.dt/self.td) + spike/self.td
     # self.r = r
 
