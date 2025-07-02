@@ -31,4 +31,6 @@ def get_pre_soma_spike(
                     1
                 ]  # TODO: check if we need analog values for spikes
             i += 1
+    
+    # print(f"Pre-soma spike for agent {agent_index} at time {t_current}: {spike}")
     return spike

@@ -126,7 +126,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         self._model.setup(use_gpu=self._use_gpu)
 
         # Define input spike pattern: spike at time 1 and 2 with value 1
-        spikes = [(1, 1), (2, 1)]  # (time_tick, spike_value)
+        spikes = [(1, 1), (2, 1), (10, 100)]  # (time_tick, spike_value)
 
         # Inject spikes into the external synapse
         for spike in spikes:
@@ -142,6 +142,14 @@ class LogicGatesTestLIF(unittest.TestCase):
         internal_states_history_soma0 = np.array(
             self._model.get_internal_states_history(agent_id=soma_0)
         )
+
+        # Extract the synaptic current history for soma_0:
+        internal_states_history_syn0 = np.array(
+            self._model.get_internal_states_history(agent_id=syn_ext)
+        )
+
+        print(f"Internal states history from synapse 0: {internal_states_history_syn0}")
+        print(f"Internal states history from soma 0: {internal_states_history_soma0}")
 
         # Generate visualization of membrane potential over time
         plt.figure(figsize=(5, 5))

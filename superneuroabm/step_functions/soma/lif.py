@@ -72,6 +72,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     else:
         v = v + ((dt * tcount) > (tlast + tref)) * dv * dt
 
+    
     s = 1 * (v >= vthr) and (
         dt * tcount > tlast + tref
     )  # output spike only happens if the membrane potential exceeds the threshold and the neuron is not in refractory period.

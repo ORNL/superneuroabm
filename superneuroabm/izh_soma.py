@@ -182,6 +182,7 @@ def synapse_single_exp_step_func(
         input_spikes_tensor,
         output_spikes_tensor,
     )
+    
     # r = self.r*(1-self.dt/self.td) + spike/self.td
     # self.r = r
 
@@ -191,7 +192,8 @@ def synapse_single_exp_step_func(
 
     internal_state[agent_index][0] = I_synapse
     internal_states_buffer[agent_index][t_current][0] = I_synapse
-
+    internal_states_buffer[agent_index][t_current][1] = spike
+    internal_states_buffer[agent_index][t_current][2] = t_current
     # # Update outgoing synapses if any
     # for synapse_idx in range(len(output_synapsess[my_idx])):
     #     out_synapse_info = output_synapsess[my_idx][synapse_idx]
