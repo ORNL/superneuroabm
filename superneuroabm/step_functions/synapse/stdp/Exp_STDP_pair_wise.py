@@ -4,6 +4,7 @@ Copied LIF Neuron step function, needs to be updated to use the new STDP step fu
 """
 
 import math
+import numpy as np
 import cupy as cp
 from cupyx import jit
 
@@ -38,7 +39,14 @@ def exp_stdp_all_to_all(
     a_exp_post = synapse_params[agent_index][8]
     stdp_history_length = synapse_params[agent_index][9]
     
-    pre_soma_id = locations[agent_index][0]
+    location_data = locations[agent_index]
+    if len(location_data) == 1:
+        pre_soma_id = np.nan
+        post_soma_id = location_data[0]
+    else:
+        pre_soma_id = location_data[0]
+        post_soma_id = location_data[1]
+    
     pre_soma_spike = get_pre_soma_spike(
         agent_index,
         globals,
@@ -48,8 +56,6 @@ def exp_stdp_all_to_all(
         input_spikes_tensor,
         output_spikes_tensor,
     )
-
-    post_soma_id = locations[agent_index][1]
     post_soma_spike = get_pre_soma_spike(
         agent_index,
         globals,

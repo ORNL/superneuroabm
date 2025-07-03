@@ -4,6 +4,7 @@ Izhikevich Neuron and weighted synapse step functions for spiking neural network
 """
 
 import math
+import numpy as np
 import cupy as cp
 from cupyx import jit
 
@@ -172,7 +173,13 @@ def synapse_single_exp_step_func(
     tau_fall = synapse_params[agent_index][3]
     tau_rise = synapse_params[agent_index][4]
 
-    pre_soma_id = locations[agent_index][0]
+    location_data = locations[agent_index]
+    if len(location_data) == 1:
+        pre_soma_id = np.nan
+        post_soma_id = location_data[0]
+    else:
+        pre_soma_id = location_data[0]
+        post_soma_id = location_data[1]
     spike = get_pre_soma_spike(
         agent_index,
         globals,
