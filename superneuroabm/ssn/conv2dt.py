@@ -1,6 +1,5 @@
 
 import numpy as np
-from superneuroabm.model import NeuromorphicModel
 import torch.nn as nn
 
 class Conv2dT(nn.Module):
@@ -11,6 +10,7 @@ class Conv2dT(nn.Module):
     def __init__(
         self,
         model,
+        ticks,
         in_channels,
         out_channels,
         kernel_size,
@@ -27,6 +27,7 @@ class Conv2dT(nn.Module):
             kernel_size = (kernel_size, kernel_size)
 
         self.model = model
+        self.ticks = ticks
         self.model.register_global_property("dt", 1e-1)
         self.model.register_global_property("I_bias", 0)
 
@@ -76,8 +77,8 @@ class Conv2dT(nn.Module):
         """
         x: list of list of spike events:
         [
-          [(tick, value), (tick, value), ..., N synapses],  # for output channel 0
-          [(tick, value), (tick, value), ..., N synapses],  # for output channel 1
+          [(tick, (x,y))],  # for output channel 0
+          [(tick, (x,y)), (tick, (x,y)), ...],  # for output channel 1
           ...
         ]
         """
@@ -85,18 +86,26 @@ class Conv2dT(nn.Module):
             raise ValueError(f"Expected input for {self.out_channels} output channels")
 
         for out_ch, spikes_per_channel in enumerate(x):
-            if len(spikes_per_channel) != self.num_synapses_per_soma:
-                raise ValueError(f"Expected {self.num_synapses_per_soma} synapses per output channel")
+            x_coord = [spike[1][0] for spike in spikes_per_channel]
+            y_coord = [spike[1][1] for spike in spikes_per_channel]
 
-            for synapse_id, spike in enumerate(spikes_per_channel):
-                tick, value = spike
+            spikes_grouped_by_what = [[], []]
+            for spike in spikes_grouped_by_what:
+                tick, _ = spike
+        
+
+
+
+            for synapse in self.synapses[out_ch]:
+
+                # Add spike to the synapse
                 self.model.add_spike(
-                    synapse_id=self.synapses[out_ch][synapse_id],
+                    synapse_id=synapse,
                     tick=tick,
-                    value=value
+                    value=1.0
                 )
 
-        self.model.simulate(ticks=1, update_data_ticks=1)
+        self.model.simulate(ticks=self.ticks, update_data_ticks=1)
 
         output_spikes = []
         for out_ch in range(self.out_channels):
