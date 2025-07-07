@@ -195,42 +195,14 @@ def synapse_single_exp_step_func(
 
     I_synapse = internal_state[agent_index][0]
 
-    I_synapse = I_synapse * (1 - dt / tau_fall) + spike * scale * weight
+    # I_synapse = I_synapse * (1 - dt / tau_fall) + spike * scale * weight
+
+    I_synapse = spike * scale * weight
 
     internal_state[agent_index][0] = I_synapse
     internal_states_buffer[agent_index][t_current][0] = I_synapse
-    internal_states_buffer[agent_index][t_current][1] = spike
-    internal_states_buffer[agent_index][t_current][2] = t_current
-    # # Update outgoing synapses if any
-    # for synapse_idx in range(len(output_synapsess[my_idx])):
-    #     out_synapse_info = output_synapsess[my_idx][synapse_idx]
-    #     out_neuron_id = out_synapse_info[0]
-    #     if math.isnan(out_neuron_id):
-    #         break
-    #     out_neuron_id = int(out_neuron_id)
-    #     # If out_neuron still in refractory period, return
-    #     if t_elapses[out_neuron_id] > 0:
-    #         continue
-    #     weight = out_synapse_info[1]
-    #     synapse_register = out_synapse_info[2:]
-    #     # Check if delayed Vm was over threshold, if so spike
-    #     syn_delay_reg_len = 0
-    #     for val in synapse_register:
-    #         if math.isnan(val):
-    #             break
-    #         syn_delay_reg_len += 1
-    #     if not syn_delay_reg_len:
-    #         continue
-    #     syn_delay_reg_head = t_current % (syn_delay_reg_len)
-    #     syn_delay_reg_tail = (
-    #         0
-    #         if syn_delay_reg_len == 1
-    #         or syn_delay_reg_head + 1 >= syn_delay_reg_len
-    #         else syn_delay_reg_head + 1
-    #     )
-    #     Vm = synapse_register[syn_delay_reg_tail]
-    #     if not math.isnan(Vm) and Vm != 0:
-    #         internal_state[out_neuron_id] += weight
+    internal_states_buffer[agent_index][t_current][1] = weight
+    internal_states_buffer[agent_index][t_current][2] = scale
 
 
 def synapse_with_stdp_step_func(
