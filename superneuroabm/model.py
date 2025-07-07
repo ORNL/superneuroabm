@@ -121,7 +121,7 @@ class NeuromorphicModel(Model):
     def setup(
         self,
         use_gpu: bool = False,
-        retain_weights=False,
+        retain_weights=True,
     ) -> None:
         """
         Resets the simulation and initializes agents.
@@ -260,7 +260,7 @@ class NeuromorphicModel(Model):
             enabled step function. Must be specified in order of use
             in step function.
         """
-        synaptic_delay = int(parameters[0])
+        synaptic_delay = int(parameters[1])
         delay_reg = [0 for _ in range(synaptic_delay)]
         synapse_id = self.create_agent_of_breed(
             breed=self._synapse_breeds[breed],
