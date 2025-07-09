@@ -73,43 +73,86 @@ class Conv2dT(nn.Module):
                 channel_synapses.append(synapse)
             self.synapses.append(channel_synapses)
 
-    def forward(self, x):
+    def forward(self, input_spikes, stride=1):
         """
-        x: list of list of spike events:
-        [
-          [(tick, (x,y))],  # for output channel 0
-          [(tick, (x,y)), (tick, (x,y)), ...],  # for output channel 1
-          ...
-        ]
-        """
-        if len(x) != self.out_channels:
-            raise ValueError(f"Expected input for {self.out_channels} output channels")
-
-        for out_ch, spikes_per_channel in enumerate(x):
-            x_coord = [spike[1][0] for spike in spikes_per_channel]
-            y_coord = [spike[1][1] for spike in spikes_per_channel]
-
-            spikes_grouped_by_what = [[], []]
-            for spike in spikes_grouped_by_what:
-                tick, _ = spike
+        Perform proper spatial convolution on DVS camera spike events.
         
+        Args:
+            input_spikes: List of spike events [(tick, (x, y))]
+            stride: Convolution stride (default=1)
+            
+        Returns:
+            List of output spikes for each output channel
+        """
+        # Group spikes by spatial position for efficient lookup
+        spike_map = {}
+        for spike in input_spikes:
+            tick, (x, y) = spike
+            if (x, y) not in spike_map:
+                spike_map[(x, y)] = []
+            spike_map[(x, y)].append(tick)
+        
+        # Process each spike position (sparse optimization)
+        for (input_x, input_y), spike_times in spike_map.items():
+            # For each kernel position, calculate which output position this spike contributes to
+            for ky in range(self.kernel_size[0]):
+                for kx in range(self.kernel_size[1]):
+                    # Calculate output position for this kernel position
+                    out_x = input_x - kx
+                    out_y = input_y - ky
+                    
+                    # Only process if output position is valid (non-negative)
+                    if out_x >= 0 and out_y >= 0 and out_x % stride == 0 and out_y % stride == 0:
+                        synapse_idx = ky * self.kernel_size[1] + kx
+                        
+                        # Add spikes to all output channels
+                        for out_ch in range(self.out_channels):
+                            for tick in spike_times:
+                                self.model.add_spike(
+                                    synapse_id=self.synapses[out_ch][synapse_idx],
+                                    tick=tick,
+                                    value=1.0
+                                )
 
-
-
-            for synapse in self.synapses[out_ch]:
-
-                # Add spike to the synapse
-                self.model.add_spike(
-                    synapse_id=synapse,
-                    tick=tick,
-                    value=1.0
-                )
-
+        # Run simulation
         self.model.simulate(ticks=self.ticks, update_data_ticks=1)
 
+        # Collect output spikes
         output_spikes = []
         for out_ch in range(self.out_channels):
             spikes = self.model.get_spike_times(soma_id=self.somas[out_ch])
             output_spikes.append(spikes)
 
         return output_spikes
+
+
+if __name__ == "__main__":
+    # Example usage with DVS camera data
+    from superneuroabm.model import NeuromorphicModel
+    
+    # Create a NeuromorphicModel with proper setup
+    model = NeuromorphicModel()
+    model.setup(use_gpu=False)
+    
+    # Create a 3x3 convolution layer with 2 output channels
+    conv_layer = Conv2dT(
+        model=model,
+        ticks=100,
+        in_channels=1,
+        out_channels=2,
+        kernel_size=(3, 3)
+    )
+    
+    # Example DVS spike data: [(tick, (x, y))]
+    dvs_spikes = [
+        (10, (0, 0)), (12, (1, 0)), (15, (2, 0)),
+        (20, (0, 1)), (22, (1, 1)), (25, (2, 1)),
+        (30, (0, 2)), (32, (1, 2)), (35, (2, 2))
+    ]
+    
+    # Process spikes through convolution (no input shape needed!)
+    print("Using sparse spatial convolution:")
+    output_spikes_spatial = conv_layer.forward(dvs_spikes, stride=1)
+    for i, channel_spikes in enumerate(output_spikes_spatial):
+        print(f"Channel {i}: {len(channel_spikes)} spikes")
+        print(f"  Spike times: {channel_spikes}")
