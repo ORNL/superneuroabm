@@ -82,8 +82,10 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     internal_state[agent_index][0] = v
     internal_state[agent_index][1] += 1
     internal_state[agent_index][2] = tlast
+    internal_state[agent_index][3] = I_synapse  # Update time count
 
     output_spikes_tensor[agent_index][t_current] = s
     internal_states_buffer[agent_index][t_current][0] = internal_state[agent_index][0]
     internal_states_buffer[agent_index][t_current][1] = internal_state[agent_index][1]
     internal_states_buffer[agent_index][t_current][2] = internal_state[agent_index][2]
+    internal_states_buffer[agent_index][t_current][3] = internal_state[agent_index][3]

@@ -51,7 +51,7 @@ class NeuromorphicModel(Model):
 
         soma_properties = {
             "parameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
-            "internal_state": [0.0, 0.0],  # v, u
+            "internal_state": [0.0, 0.0, 0.0, 0.0],  # v, u
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
