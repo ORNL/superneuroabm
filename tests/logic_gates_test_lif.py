@@ -520,6 +520,14 @@ class LogicGatesTestLIF(unittest.TestCase):
                       [internal_states_history_synA[i][0], internal_states_history_synB[i][0]]
                 writer.writerow(row)
 
+        # Also save complete soma data as output_LIF.csv
+        with open("output_LIF.csv", "w", newline="") as file:
+            writer = csv.writer(file)
+            # Write header based on LIF soma step function (lines 88-91)
+            writer.writerow(["Membrane_Potential_mV", "Time_Count", "Last_Spike_Time", "I_Synapse"])
+            # Write complete soma internal states
+            writer.writerows(internal_states_history_soma0)
+
         # Verify that soma responds to dual inputs
         actual_spikes = len(self._model.get_spike_times(soma_id=soma_0))
 
