@@ -121,13 +121,13 @@ class NeuromorphicModel(Model):
     def setup(
         self,
         use_gpu: bool = False,
-        retain_weights=True,
+        retain_parameters=False,
     ) -> None:
         """
         Resets the simulation and initializes agents.
 
-        :param retain_weights: False by default. If True, updated weights are
-            not reset upon setup.
+        :param retain_parameters: False by default. If True, parameters are
+            reset to their default values upon setup.
         """
         synapse_ids = self._synapse_ids
         soma_ids = self._soma_ids
@@ -151,17 +151,14 @@ class NeuromorphicModel(Model):
                 "synapse_delay_reg",
                 synapse_delay_reg,
             )
-            # Optionally clear weights
-            if not retain_weights:
-                synapse_parameters = super().get_agent_property_value(
+            # Reset parameters to defaults if retain_parameters is True
+            if retain_parameters:
+                # Reset all synapse parameters to their default values
+                default_synapse_parameters = [0.0 for _ in range(10)]  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
+                super().set_agent_property_value(
                     id=synapse_id,
                     property_name="parameters",
-                )
-                synapse_parameters[0] = 0.0  # weight
-                synapse_parameters = super().set_agent_property_value(
-                    id=synapse_id,
-                    property_name="parameters",
-                    value=synapse_parameters,
+                    value=default_synapse_parameters,
                 )
             # Clear internal states
             synapse_internal_state = super().get_agent_property_value(
