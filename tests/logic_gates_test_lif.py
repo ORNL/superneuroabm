@@ -386,7 +386,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         weight_A = 2.0  # Stronger synaptic weight
         synaptic_delay_A = 1.0  # Transmission delay (ms)
         scale_A = 1.0  # Scaling factor
-        tau_fall_A = 2e-3  # Decay time constant (2 ms)
+        tau_fall_A = 1  # Decay time constant (2 ms)
         tau_rise_A = 0  # Rise time constant (instantaneous)
         synapse_parameters_A = [
             weight_A,
@@ -398,9 +398,9 @@ class LogicGatesTestLIF(unittest.TestCase):
 
         # Define synaptic parameters for second synapse (weaker weight)
         weight_B = 1.0  # Weaker synaptic weight
-        synaptic_delay_B = 2.0  # Longer transmission delay (ms)
+        synaptic_delay_B = 1.0  # Longer transmission delay (ms)
         scale_B = 1.0  # Scaling factor
-        tau_fall_B = 1e-3  # Faster decay time constant (1 ms)
+        tau_fall_B = 1  # Faster decay time constant (1 ms)
         tau_rise_B = 0  # Rise time constant (instantaneous)
         synapse_parameters_B = [
             weight_B,
@@ -416,7 +416,7 @@ class LogicGatesTestLIF(unittest.TestCase):
 
         # Create first external input synapse (stronger input)
         syn_ext_A = self._model.create_synapse(
-            breed="Single_Exp_Synapse_STDP1",
+            breed="Single_Exp_Synapse",
             pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
             post_soma_id=soma_0,
             parameters=synapse_parameters_A,
@@ -425,7 +425,7 @@ class LogicGatesTestLIF(unittest.TestCase):
 
         # Create second external input synapse (weaker input)
         syn_ext_B = self._model.create_synapse(
-            breed="Single_Exp_Synapse_STDP1",
+            breed="Single_Exp_Synapse",
             pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
             post_soma_id=soma_0,
             parameters=synapse_parameters_B,
@@ -450,7 +450,7 @@ class LogicGatesTestLIF(unittest.TestCase):
             self._model.add_spike(synapse_id=syn_ext_B, tick=spike[0], value=spike[1])
 
         # Run simulation for 50 time steps, recording every tick
-        self._model.simulate(ticks=50, update_data_ticks=50)
+        self._model.simulate(ticks=1000, update_data_ticks=1)
 
         # Extract simulation results for analysis
         internal_states_history_soma0 = np.array(
