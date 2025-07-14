@@ -269,9 +269,9 @@ class NeuromorphicModel(Model):
 
         network_space: NetworkSpace = self.get_space()
         if not np.isnan(pre_soma_id):
-            network_space.connect_agents(pre_soma_id, synapse_id, directed=True)
+            network_space.connect_agents(synapse_id, pre_soma_id, directed=True)
         if not np.isnan(post_soma_id):
-            network_space.connect_agents(synapse_id, post_soma_id, directed=True)
+            network_space.connect_agents(post_soma_id, synapse_id, directed=True)
         return synapse_id
 
     def update_synapse(

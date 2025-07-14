@@ -125,6 +125,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         # Initialize the simulation environment
         self._model.setup(use_gpu=self._use_gpu)
 
+
         # Define input spike pattern: spike at time 1 and 2 with value 1
         spikes = [(1, 1), (2, 1), (10, 100)]  # (time_tick, spike_value)
 
