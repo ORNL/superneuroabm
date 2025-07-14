@@ -10,6 +10,7 @@ from cupyx import jit
 
 @jit.rawkernel(device="cuda")
 def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_step_func
+    tick,
     agent_index,
     globals,
     agent_ids,
@@ -37,7 +38,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
 
     # Get the current time step value:
     t_current = int(
-        globals[0]
+        tick
     )  # Check if tcount is needed or if we ca use this directly.
     dt = globals[1]  # time step size
     I_bias = globals[2]  # bias current

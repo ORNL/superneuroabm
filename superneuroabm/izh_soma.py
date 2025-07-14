@@ -51,6 +51,7 @@ from superneuroabm.step_functions.synapse.util import get_pre_soma_spike
 
 @jit.rawkernel(device="cuda")
 def izh_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_step_func
+    tick,
     agent_index,
     globals,
     agent_ids,
@@ -77,7 +78,7 @@ def izh_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
             I_synapse += internal_state[synapse_index][0]
 
     # Get the current time step value:
-    t_current = int(globals[0])
+    t_current = int(tick)
 
     dt = globals[1]  # time step size
 
@@ -151,6 +152,7 @@ def stdp_aux():
 
 @jit.rawkernel(device="cuda")
 def synapse_single_exp_step_func(
+    tick,
     agent_index,
     globals,
     agent_ids,
@@ -163,7 +165,7 @@ def synapse_single_exp_step_func(
     output_spikes_tensor,
     internal_states_buffer,
 ):
-    t_current = int(globals[0])
+    t_current = int(tick)
 
     dt = globals[1]  # time step size
 
@@ -174,13 +176,12 @@ def synapse_single_exp_step_func(
     tau_rise = synapse_params[agent_index][4]
 
     location_data = locations[agent_index]
-    if len(location_data) == 1:
+    if len(location_data) == 0:
         pre_soma_id = np.nan
-        post_soma_id = location_data[0]
     else:
         pre_soma_id = location_data[0]
-        post_soma_id = location_data[1]
     spike = get_pre_soma_spike(
+        tick,
         agent_index,
         globals,
         agent_ids,

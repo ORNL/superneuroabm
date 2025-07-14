@@ -4,6 +4,7 @@ from cupyx import jit
 
 @jit.rawkernel(device="cuda")
 def get_pre_soma_spike(
+    tick,
     agent_index,
     globals,
     agent_ids,
@@ -12,7 +13,7 @@ def get_pre_soma_spike(
     input_spikes_tensor,  # input spikes
     output_spikes_tensor,
 ):
-    t_current = int(globals[0])
+    t_current = int(tick)
 
     if not cp.isnan(pre_soma_id):
         i = 0
