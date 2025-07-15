@@ -11,6 +11,7 @@ from superneuroabm.step_functions.synapse.util import get_pre_soma_spike
 
 @jit.rawkernel(device="cuda")
 def exp_stdp_all_to_all(
+    tick,
     agent_index,
     globals,
     agent_ids,
