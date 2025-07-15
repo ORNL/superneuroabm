@@ -10,6 +10,7 @@ from cupyx import jit
 
 @jit.rawkernel(device="cuda")
 def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_step_func
+    tick,
     agent_index,
     globals,
     agent_ids,
@@ -37,7 +38,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
 
     # Get the current time step value:
     t_current = int(
-        globals[0]
+        tick
     )  # Check if tcount is needed or if we ca use this directly.
     dt = globals[1]  # time step size
     I_bias = globals[2]  # bias current
@@ -72,6 +73,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     else:
         v = v + ((dt * tcount) > (tlast + tref)) * dv * dt
 
+    
     s = 1 * (v >= vthr) and (
         dt * tcount > tlast + tref
     )  # output spike only happens if the membrane potential exceeds the threshold and the neuron is not in refractory period.
@@ -81,8 +83,10 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     internal_state[agent_index][0] = v
     internal_state[agent_index][1] += 1
     internal_state[agent_index][2] = tlast
+    internal_state[agent_index][3] = I_synapse  # Update time count
 
     output_spikes_tensor[agent_index][t_current] = s
     internal_states_buffer[agent_index][t_current][0] = internal_state[agent_index][0]
     internal_states_buffer[agent_index][t_current][1] = internal_state[agent_index][1]
     internal_states_buffer[agent_index][t_current][2] = internal_state[agent_index][2]
+    internal_states_buffer[agent_index][t_current][3] = internal_state[agent_index][3]

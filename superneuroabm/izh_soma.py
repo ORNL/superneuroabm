@@ -4,6 +4,7 @@ Izhikevich Neuron and weighted synapse step functions for spiking neural network
 """
 
 import math
+import numpy as np
 import cupy as cp
 from cupyx import jit
 
@@ -50,6 +51,7 @@ from superneuroabm.step_functions.synapse.util import get_pre_soma_spike
 
 @jit.rawkernel(device="cuda")
 def izh_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_step_func
+    tick,
     agent_index,
     globals,
     agent_ids,
@@ -76,7 +78,7 @@ def izh_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
             I_synapse += internal_state[synapse_index][0]
 
     # Get the current time step value:
-    t_current = int(globals[0])
+    t_current = int(tick)
 
     dt = globals[1]  # time step size
 
@@ -150,6 +152,7 @@ def stdp_aux():
 
 @jit.rawkernel(device="cuda")
 def synapse_single_exp_step_func(
+    tick,
     agent_index,
     globals,
     agent_ids,
@@ -162,7 +165,7 @@ def synapse_single_exp_step_func(
     output_spikes_tensor,
     internal_states_buffer,
 ):
-    t_current = int(globals[0])
+    t_current = int(tick)
 
     dt = globals[1]  # time step size
 
@@ -172,8 +175,13 @@ def synapse_single_exp_step_func(
     tau_fall = synapse_params[agent_index][3]
     tau_rise = synapse_params[agent_index][4]
 
-    pre_soma_id = locations[agent_index][0]
+    location_data = locations[agent_index]
+    if len(location_data) == 0:
+        pre_soma_id = np.nan
+    else:
+        pre_soma_id = location_data[0]
     spike = get_pre_soma_spike(
+        tick,
         agent_index,
         globals,
         agent_ids,
@@ -182,6 +190,7 @@ def synapse_single_exp_step_func(
         input_spikes_tensor,
         output_spikes_tensor,
     )
+    
     # r = self.r*(1-self.dt/self.td) + spike/self.td
     # self.r = r
 
@@ -191,37 +200,8 @@ def synapse_single_exp_step_func(
 
     internal_state[agent_index][0] = I_synapse
     internal_states_buffer[agent_index][t_current][0] = I_synapse
-
-    # # Update outgoing synapses if any
-    # for synapse_idx in range(len(output_synapsess[my_idx])):
-    #     out_synapse_info = output_synapsess[my_idx][synapse_idx]
-    #     out_neuron_id = out_synapse_info[0]
-    #     if math.isnan(out_neuron_id):
-    #         break
-    #     out_neuron_id = int(out_neuron_id)
-    #     # If out_neuron still in refractory period, return
-    #     if t_elapses[out_neuron_id] > 0:
-    #         continue
-    #     weight = out_synapse_info[1]
-    #     synapse_register = out_synapse_info[2:]
-    #     # Check if delayed Vm was over threshold, if so spike
-    #     syn_delay_reg_len = 0
-    #     for val in synapse_register:
-    #         if math.isnan(val):
-    #             break
-    #         syn_delay_reg_len += 1
-    #     if not syn_delay_reg_len:
-    #         continue
-    #     syn_delay_reg_head = t_current % (syn_delay_reg_len)
-    #     syn_delay_reg_tail = (
-    #         0
-    #         if syn_delay_reg_len == 1
-    #         or syn_delay_reg_head + 1 >= syn_delay_reg_len
-    #         else syn_delay_reg_head + 1
-    #     )
-    #     Vm = synapse_register[syn_delay_reg_tail]
-    #     if not math.isnan(Vm) and Vm != 0:
-    #         internal_state[out_neuron_id] += weight
+    internal_states_buffer[agent_index][t_current][1] = spike
+    internal_states_buffer[agent_index][t_current][2] = t_current
 
 
 def synapse_with_stdp_step_func(
