@@ -57,17 +57,13 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     # NOTE: size of internal_state would need to be set as the maximum possible state varaibles of any spiking neuron
     # Internal state variables
     v = internal_state[agent_index][0]  # membrane potential
-    tcount = internal_state[agent_index][
-        1
-    ]  # time count from the start of the simulation
+    tcount = internal_state[agent_index][1]  # time count from the start of the simulation
     tlast = internal_state[agent_index][2]  # last spike time
 
     # Calculate the membrane potential update
-    dv = (vrest - v) / (R * C) + (I_synapse + I_bias + I_in) / C
-    if tref_allows_integration:
-        v = v + dt * dv
-    else:
-        v = v + ((dt * tcount) > (tlast + tref)) * dv * dt
+    dv = (vrest - v) / (R * C) + (I_synapse*1e-5 + I_bias + I_in) / C
+
+    v +=  (dv*dt) if ((dt * tcount) > (tlast + tref)) or tref_allows_integration else 0.0
 
     s = 1 * (v >= vthr) and (
         dt * tcount > tlast + tref

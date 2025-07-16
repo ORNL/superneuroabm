@@ -66,11 +66,11 @@ def izh_soma_step_func(
     I_bias = globals[2]  # bias current
 
     dv = (k * (v - vrest) * (v - vthr) - u + I_synapse + I_bias + I_in) / C
-    v = v + dt * dv
+    v = v + dt * dv *1e3
 
-    u += dt * (a * (b * (v - vrest) - u))
+    u += dt * 1e3 * (a * (b * (v - vrest) - u))
     s = 1 * (v >= vthr)  # output spike
-    u = u + d * s  # If spiked, update recovery variable
+    u = u + d * s   # If spiked, update recovery variable
     v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
 
     internal_state[agent_index][0] = v
