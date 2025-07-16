@@ -3,8 +3,6 @@ LIF Neuron and weighted synapse step functions for spiking neural networks
 
 """
 
-import math
-import cupy as cp
 from cupyx import jit
 
 
@@ -37,9 +35,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
             I_synapse += internal_state[synapse_index][0]
 
     # Get the current time step value:
-    t_current = int(
-        tick
-    )  # Check if tcount is needed or if we ca use this directly.
+    t_current = int(tick)  # Check if tcount is needed or if we ca use this directly.
     dt = globals[1]  # time step size
     I_bias = globals[2]  # bias current
 
@@ -73,7 +69,6 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     else:
         v = v + ((dt * tcount) > (tlast + tref)) * dv * dt
 
-    
     s = 1 * (v >= vthr) and (
         dt * tcount > tlast + tref
     )  # output spike only happens if the membrane potential exceeds the threshold and the neuron is not in refractory period.
