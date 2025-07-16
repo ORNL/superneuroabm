@@ -564,12 +564,12 @@ class LogicGatesTestLIF(unittest.TestCase):
         the combined input strength.
         """
         # Set global simulation parameters
-        self._model.register_global_property("dt", 1e-1)  # Time step (100 μs)
+        self._model.register_global_property("dt", 1e-3)  # Time step (100 μs)
         self._model.register_global_property("I_bias", 0)  # No bias current
 
         # Define LIF neuron parameters
         C = 10e-9  # Membrane capacitance in Farads (10 nF)
-        R = 1e12  # Membrane resistance in Ohms (1 TΩ)
+        R = 1e6  # Membrane resistance in Ohms (1 TΩ)
         vthr = -45  # Spike threshold voltage (mV)
         tref = 5e-3  # Refractory period (5 ms)
         vrest = -60  # Resting potential (mV)
@@ -578,7 +578,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         I_in = 0  # No direct input current (only synaptic input)
 
         # Package parameters for soma creation
-        soma_parameters = [
+        soma_parameters_0 = [
             C,
             R,
             vthr,
@@ -593,27 +593,48 @@ class LogicGatesTestLIF(unittest.TestCase):
         v = vrest  # Initial membrane voltage
         tcount = 0  # Time counter
         tlast = 0  # Last spike time
-        default_internal_state = [v, tcount, tlast, 0]
+        default_internal_state_0 = [v, tcount, tlast, 0]
 
         # Create single LIF neuron that will receive dual inputs
         soma_0 = self._model.create_soma(
             breed="LIF_Soma",
-            parameters=soma_parameters,
-            default_internal_state=default_internal_state,
+            parameters=soma_parameters_0,
+            default_internal_state=default_internal_state_0,
         )
 
-        # Create single LIF neuron that will receive dual inputs
+        # # Create single LIF neuron that will receive dual inputs
+        # soma_1 = self._model.create_soma(
+        #     breed="IZH_Soma",
+        #     parameters=soma_parameters,
+        #     default_internal_state=default_internal_state,
+        # )
+
+        # Create IZH soma
+        k = 1.2
+        vthr = -45
+        C = 150
+        a = 0.01
+        b = 5
+        vpeak = 50
+        vrest = -75
+        d = 130
+        vreset = -56
+        I_in = 350
+        soma_parameters_1 = [k, vthr, C, a, b, vpeak, vrest, d, vreset, I_in]
+        v = vrest
+        u = 0
+        default_internal_state_1 = [v, u]
         soma_1 = self._model.create_soma(
-            breed="LIF_Soma",
-            parameters=soma_parameters,
-            default_internal_state=default_internal_state,
+            breed="IZH_Soma",
+            parameters=soma_parameters_1,
+            default_internal_state=default_internal_state_1,
         )
 
         # Define synaptic parameters for first synapse (stronger weight)
         weight_A = 2.0  # Stronger synaptic weight
         synaptic_delay_A = 1.0  # Transmission delay (ms)
         scale_A = 1.0  # Scaling factor
-        tau_fall_A = 1  # Decay time constant (2 ms)
+        tau_fall_A = 1e-2  # Decay time constant (2 ms)
         tau_rise_A = 0  # Rise time constant (instantaneous)
         synapse_parameters_A = [
             weight_A,
@@ -627,7 +648,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         weight_B = 1.0  # Weaker synaptic weight
         synaptic_delay_B = 1.0  # Longer transmission delay (ms)
         scale_B = 1.0  # Scaling factor
-        tau_fall_B = 1  # Faster decay time constant (1 ms)
+        tau_fall_B = 1e-2  # Faster decay time constant (1 ms)
         tau_rise_B = 0  # Rise time constant (instantaneous)
         synapse_parameters_B = [
             weight_B,
@@ -787,14 +808,18 @@ class LogicGatesTestLIF(unittest.TestCase):
         #     writer.writerows(internal_states_history_soma0)
 
         # Verify that soma responds to dual inputs
-        actual_spikes = len(self._model.get_spike_times(soma_id=soma_0))
+        actual_spikes_soma_0 = self._model.get_spike_times(soma_id=soma_0)
+        print(f"Soma 0 spike times: {actual_spikes_soma_0}")
+
+        actual_spikes_soma_1 = self._model.get_spike_times(soma_id=soma_1)
+        print(f"Soma 1 spike times: {actual_spikes_soma_1}")
 
         # We expect at least some integration effect from dual inputs
         # The exact number depends on the timing and strength of inputs
         minimum_expected_spikes = 1
         assert (
-            actual_spikes >= minimum_expected_spikes
-        ), f"Soma should generate at least {minimum_expected_spikes} spike(s) from dual inputs, got {actual_spikes}"
+            len(actual_spikes_soma_0) >= minimum_expected_spikes
+        ), f"Soma should generate at least {minimum_expected_spikes} spike(s) from dual inputs, got {len(actual_spikes_soma_0)}"
 
         # Additional verification: check that both synapses contributed
         # by verifying non-zero synaptic currents
@@ -804,7 +829,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         assert max_synA_current > 0, "Synapse A should show non-zero current"
         assert max_synB_current > 0, "Synapse B should show non-zero current"
 
-        print(f"Test passed: Soma generated {actual_spikes} spikes from dual synaptic inputs")
+        print(f"Test passed: Soma generated {len(actual_spikes_soma_0)} spikes from dual synaptic inputs")
         print(f"Max synaptic currents - A: {max_synA_current:.2e}, B: {max_synB_current:.2e}")
 
 

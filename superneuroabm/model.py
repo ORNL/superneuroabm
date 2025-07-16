@@ -11,11 +11,12 @@ from sagesim.model import Model
 from sagesim.breed import Breed
 from pathlib import Path
 
-from superneuroabm.izh_soma import (
-    izh_soma_step_func,
-    synapse_single_exp_step_func,
-)
+from superneuroabm.step_functions.soma.izh import izh_soma_step_func
 from superneuroabm.step_functions.soma.lif import lif_soma_step_func
+from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
+from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp import (
+    exp_stdp_all_to_all,
+)
 
 CURRENT_DIR_ABSPATH = Path(__file__).resolve().parent
 
@@ -24,12 +25,28 @@ class NeuromorphicModel(Model):
     def __init__(
         self,
         soma_breed_info: Dict[str, List[Callable]] = {
-            "IZH_Soma": [(izh_soma_step_func, CURRENT_DIR_ABSPATH / "izh_soma.py")],
-            "LIF_Soma": [(lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions/soma/lif.py")],
+            "IZH_Soma": [
+                (
+                    izh_soma_step_func,
+                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "izh.py",
+                )
+            ],
+            "LIF_Soma": [
+                (
+                    lif_soma_step_func,
+                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif.py",
+                )
+            ],
         },
         synapse_breed_info: Dict[str, List[Callable]] = {
             "Single_Exp_Synapse": [
-                (synapse_single_exp_step_func, CURRENT_DIR_ABSPATH / "izh_soma.py")
+                (
+                    synapse_single_exp_step_func,
+                    CURRENT_DIR_ABSPATH
+                    / "step_functions"
+                    / "synapse"
+                    / "single_exp.py",
+                )
             ],
         },
     ) -> None:
@@ -58,8 +75,12 @@ class NeuromorphicModel(Model):
             "internal_states_buffer": [],
         }
         synapse_properties = {
-            "parameters": [0.0 for _ in range(10)],  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
-            "internal_state": [0.0 for _ in range(4)],  # Isyn, Isyn_supp, pre_trace, post_trace
+            "parameters": [
+                0.0 for _ in range(10)
+            ],  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
+            "internal_state": [
+                0.0 for _ in range(4)
+            ],  # Isyn, Isyn_supp, pre_trace, post_trace
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
@@ -154,7 +175,9 @@ class NeuromorphicModel(Model):
             # Reset parameters to defaults if retain_parameters is True
             if retain_parameters:
                 # Reset all synapse parameters to their default values
-                default_synapse_parameters = [0.0 for _ in range(10)]  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
+                default_synapse_parameters = [
+                    0.0 for _ in range(10)
+                ]  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
                 super().set_agent_property_value(
                     id=synapse_id,
                     property_name="parameters",
