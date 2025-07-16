@@ -25,14 +25,28 @@ class NeuromorphicModel(Model):
     def __init__(
         self,
         soma_breed_info: Dict[str, List[Callable]] = {
-            "IZH_Soma": [(izh_soma_step_func, CURRENT_DIR_ABSPATH / "izh_soma.py")],
+            "IZH_Soma": [
+                (
+                    izh_soma_step_func,
+                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "izh.py",
+                )
+            ],
             "LIF_Soma": [
-                (lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions/soma/lif.py")
+                (
+                    lif_soma_step_func,
+                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif.py",
+                )
             ],
         },
         synapse_breed_info: Dict[str, List[Callable]] = {
             "Single_Exp_Synapse": [
-                (synapse_single_exp_step_func, CURRENT_DIR_ABSPATH / "izh_soma.py")
+                (
+                    synapse_single_exp_step_func,
+                    CURRENT_DIR_ABSPATH
+                    / "step_functions"
+                    / "synapse"
+                    / "single_exp.py",
+                )
             ],
         },
     ) -> None:
