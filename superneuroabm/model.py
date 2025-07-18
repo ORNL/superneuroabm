@@ -11,9 +11,11 @@ from sagesim.model import Model
 from sagesim.breed import Breed
 from pathlib import Path
 
-from superneuroabm.izh_soma import (
-    izh_soma_step_func,
-    synapse_single_exp_step_func,
+from superneuroabm.step_functions.soma.izh import izh_soma_step_func
+from superneuroabm.step_functions.soma.lif import lif_soma_step_func
+from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
+from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp import (
+    exp_stdp_all_to_all,
 )
 
 CURRENT_DIR_ABSPATH = Path(__file__).resolve().parent
@@ -23,11 +25,28 @@ class NeuromorphicModel(Model):
     def __init__(
         self,
         soma_breed_info: Dict[str, List[Callable]] = {
-            "IZH_Soma": [(izh_soma_step_func, CURRENT_DIR_ABSPATH / "izh_soma.py")],
+            "IZH_Soma": [
+                (
+                    izh_soma_step_func,
+                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "izh.py",
+                )
+            ],
+            "LIF_Soma": [
+                (
+                    lif_soma_step_func,
+                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif.py",
+                )
+            ],
         },
         synapse_breed_info: Dict[str, List[Callable]] = {
-            "Single_Exp_Synapse_STDP1": [
-                (synapse_single_exp_step_func, CURRENT_DIR_ABSPATH / "izh_soma.py")
+            "Single_Exp_Synapse": [
+                (
+                    synapse_single_exp_step_func,
+                    CURRENT_DIR_ABSPATH
+                    / "step_functions"
+                    / "synapse"
+                    / "single_exp.py",
+                )
             ],
         },
     ) -> None:
@@ -49,15 +68,19 @@ class NeuromorphicModel(Model):
 
         soma_properties = {
             "parameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
-            "internal_state": [0.0, 0.0],  # v, u
+            "internal_state": [0.0, 0.0, 0.0, 0.0],  # v, u
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
             "internal_states_buffer": [],
         }
         synapse_properties = {
-            "parameters": [0.0, 0.0, 0.0, 0.0],  # scale, Tau_rise, Tau_fall, weight
-            "internal_state": [0.0, 0.0],  # Isyn, Isyn_supp
+            "parameters": [
+                0.0 for _ in range(10)
+            ],  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
+            "internal_state": [
+                0.0 for _ in range(4)
+            ],  # Isyn, Isyn_supp, pre_trace, post_trace
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
@@ -119,13 +142,13 @@ class NeuromorphicModel(Model):
     def setup(
         self,
         use_gpu: bool = False,
-        retain_weights=False,
+        retain_parameters=False,
     ) -> None:
         """
         Resets the simulation and initializes agents.
 
-        :param retain_weights: False by default. If True, updated weights are
-            not reset upon setup.
+        :param retain_parameters: False by default. If True, parameters are
+            reset to their default values upon setup.
         """
         synapse_ids = self._synapse_ids
         soma_ids = self._soma_ids
@@ -149,17 +172,16 @@ class NeuromorphicModel(Model):
                 "synapse_delay_reg",
                 synapse_delay_reg,
             )
-            # Optionally clear weights
-            if not retain_weights:
-                synapse_parameters = super().get_agent_property_value(
+            # Reset parameters to defaults if retain_parameters is True
+            if retain_parameters:
+                # Reset all synapse parameters to their default values
+                default_synapse_parameters = [
+                    0.0 for _ in range(10)
+                ]  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
+                super().set_agent_property_value(
                     id=synapse_id,
                     property_name="parameters",
-                )
-                synapse_parameters[0] = 0.0  # weight
-                synapse_parameters = super().set_agent_property_value(
-                    id=synapse_id,
-                    property_name="parameters",
-                    value=synapse_parameters,
+                    value=default_synapse_parameters,
                 )
             # Clear internal states
             synapse_internal_state = super().get_agent_property_value(
@@ -258,7 +280,7 @@ class NeuromorphicModel(Model):
             enabled step function. Must be specified in order of use
             in step function.
         """
-        synaptic_delay = int(parameters[0])
+        synaptic_delay = int(parameters[1])
         delay_reg = [0 for _ in range(synaptic_delay)]
         synapse_id = self.create_agent_of_breed(
             breed=self._synapse_breeds[breed],
@@ -270,9 +292,9 @@ class NeuromorphicModel(Model):
 
         network_space: NetworkSpace = self.get_space()
         if not np.isnan(pre_soma_id):
-            network_space.connect_agents(pre_soma_id, synapse_id, directed=True)
+            network_space.connect_agents(synapse_id, pre_soma_id, directed=True)
         if not np.isnan(post_soma_id):
-            network_space.connect_agents(synapse_id, post_soma_id, directed=True)
+            network_space.connect_agents(post_soma_id, synapse_id, directed=True)
         return synapse_id
 
     def update_synapse(

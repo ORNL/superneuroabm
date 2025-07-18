@@ -14,6 +14,6 @@ setup(
     long_description_content_type="text/markdown",
     project_urls={"Source": "https://github.com/ORNL/superneuroabm"},
     install_requires=[
-        sagesim,
+        "sagesim",
     ],
 )
