@@ -19,10 +19,12 @@ def synapse_single_exp_step_func(
     locations,
     synapse_params,  # scale, time constant (tau_rise and tau_fall)
     internal_state,  #
+    internal_learning_state,
     synapse_history,  # delay
     input_spikes_tensor,  # input spikes
     output_spikes_tensor,
     internal_states_buffer,
+    internal_learning_states_buffer,
 ):
     t_current = int(tick)
 

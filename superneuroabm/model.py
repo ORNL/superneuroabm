@@ -17,6 +17,9 @@ from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_s
 from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp import (
     exp_stdp_all_to_all,
 )
+from superneuroabm.step_functions.synapse.stdp.learning_rule_selector import (
+    learning_rule_selector,
+)
 
 CURRENT_DIR_ABSPATH = Path(__file__).resolve().parent
 
@@ -46,7 +49,15 @@ class NeuromorphicModel(Model):
                     / "step_functions"
                     / "synapse"
                     / "single_exp.py",
-                )
+                ), 
+                (
+                    learning_rule_selector,
+                    CURRENT_DIR_ABSPATH
+                    / "step_functions"
+                    / "synapse"
+                    / "stdp"
+                    / "learning_rule_selector.py",
+                ),
             ],
         },
     ) -> None:
@@ -68,23 +79,33 @@ class NeuromorphicModel(Model):
 
         soma_properties = {
             "parameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
+            "learning_parameters": [
+                0.0 for _ in range(5)
+            ],  # STDP_function name, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, Wmax, Wmin
             "internal_state": [0.0, 0.0, 0.0, 0.0],  # v, u
+            "internal_learning_state": [0.0 for _ in range(3)],  # pre_trace, post_trace, dW
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
             "internal_states_buffer": [],
+            "internal_learning_states_buffer": [],  # learning states buffer
         }
         synapse_properties = {
             "parameters": [
                 0.0 for _ in range(10)
             ],  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
+            "learning_parameters": [
+                0.0 for _ in range(5)
+            ],  # STDP_function name, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, Wmax, Wmin
             "internal_state": [
                 0.0 for _ in range(4)
             ],  # Isyn, Isyn_supp, pre_trace, post_trace
+            "internal_learning_state": [0.0 for _ in range(3)],  # pre_trace, post_trace, dW
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
             "internal_states_buffer": [],
+            "internal_learning_states_buffer": [],  # learning states buffer
         }
         self._synapse_ids = []
         self._soma_ids = []
@@ -173,7 +194,7 @@ class NeuromorphicModel(Model):
                 synapse_delay_reg,
             )
             # Reset parameters to defaults if retain_parameters is True
-            if retain_parameters:
+            if not retain_parameters:
                 # Reset all synapse parameters to their default values
                 default_synapse_parameters = [
                     0.0 for _ in range(10)
@@ -182,6 +203,11 @@ class NeuromorphicModel(Model):
                     id=synapse_id,
                     property_name="parameters",
                     value=default_synapse_parameters,
+                )
+                super().set_agent_property_value(
+                    id=synapse_id,
+                    property_name="learning_parameters",
+                    value=default_learning_parameters,
                 )
             # Clear internal states
             synapse_internal_state = super().get_agent_property_value(
@@ -267,7 +293,9 @@ class NeuromorphicModel(Model):
         pre_soma_id: int,  # TODO edit
         post_soma_id: int,
         parameters: List[float],
+        learning_parameters: List[float],
         default_internal_state: List[float],
+        default_internal_learning_state: List[float],
     ) -> int:
         """
         Creates and adds Synapse agent.
@@ -285,7 +313,9 @@ class NeuromorphicModel(Model):
         synapse_id = self.create_agent_of_breed(
             breed=self._synapse_breeds[breed],
             parameters=parameters,
+            learning_parameters=learning_parameters,
             internal_state=default_internal_state,
+            internal_learning_state=default_internal_learning_state,
             synapse_delay_reg=delay_reg,
         )
         self._synapse_ids.append(synapse_id)
