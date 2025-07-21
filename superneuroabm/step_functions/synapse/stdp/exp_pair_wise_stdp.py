@@ -3,7 +3,6 @@ Exponential STDP (Spike-Timing Dependent Plasticity) step function for spiking n
 
 """
 
-import numpy as np
 from cupyx import jit
 
 from superneuroabm.step_functions.synapse.util import get_pre_soma_spike
