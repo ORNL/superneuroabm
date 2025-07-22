@@ -551,7 +551,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         print(f"Max synaptic currents - A: {max_synA_current:.2e}, B: {max_synB_current:.2e}")
 
 
-    def test_dual_external_synapses_dual_somas(self):
+    def test_dual_external_synapses_dual_same_somas(self):
         """
         Tests the integration of inputs from two external synapses to a single LIF neuron.
 
@@ -604,9 +604,9 @@ class LogicGatesTestLIF(unittest.TestCase):
 
         # # Create single LIF neuron that will receive dual inputs
         # soma_1 = self._model.create_soma(
-        #     breed="IZH_Soma",
-        #     parameters=soma_parameters,
-        #     default_internal_state=default_internal_state,
+        #     breed="LIF_Soma",
+        #     parameters=soma_parameters_0,
+        #     default_internal_state=default_internal_state_0,
         # )
 
         # Create IZH soma
