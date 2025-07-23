@@ -49,7 +49,7 @@ class NeuromorphicModel(Model):
                     / "step_functions"
                     / "synapse"
                     / "single_exp.py",
-                ), 
+                ),
                 (
                     learning_rule_selector,
                     CURRENT_DIR_ABSPATH
@@ -83,7 +83,9 @@ class NeuromorphicModel(Model):
                 0.0 for _ in range(5)
             ],  # STDP_function name, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, Wmax, Wmin
             "internal_state": [0.0, 0.0, 0.0, 0.0],  # v, u
-            "internal_learning_state": [0.0 for _ in range(3)],  # pre_trace, post_trace, dW
+            "internal_learning_state": [
+                0.0 for _ in range(3)
+            ],  # pre_trace, post_trace, dW
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
@@ -100,7 +102,9 @@ class NeuromorphicModel(Model):
             "internal_state": [
                 0.0 for _ in range(4)
             ],  # Isyn, Isyn_supp, pre_trace, post_trace
-            "internal_learning_state": [0.0 for _ in range(3)],  # pre_trace, post_trace, dW
+            "internal_learning_state": [
+                0.0 for _ in range(3)
+            ],  # pre_trace, post_trace, dW
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
@@ -163,7 +167,7 @@ class NeuromorphicModel(Model):
     def setup(
         self,
         use_gpu: bool = False,
-        retain_parameters=False,
+        retain_parameters=True,
     ) -> None:
         """
         Resets the simulation and initializes agents.
