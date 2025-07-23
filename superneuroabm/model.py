@@ -154,6 +154,8 @@ class NeuromorphicModel(Model):
             self._synapse_breeds[breed_name] = synapse_breed
 
         self._synapse_index_map = {}
+        self._synapse2defaultparameters: Dict[int, List[float]] = {}
+        self._synapse2defaultlearningparameters: Dict[int, List[float]] = {}
 
     def set_global_property_value(name: str, value: float) -> None:
         if name in super().globals:
@@ -200,18 +202,21 @@ class NeuromorphicModel(Model):
             # Reset parameters to defaults if retain_parameters is True
             if not retain_parameters:
                 # Reset all synapse parameters to their default values
-                default_synapse_parameters = [
-                    0.0 for _ in range(10)
+                default_synapse_parameters = self._synapse2defaultparameters[
+                    synapse_id
                 ]  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
                 super().set_agent_property_value(
                     id=synapse_id,
                     property_name="parameters",
                     value=default_synapse_parameters,
                 )
+                default_synapse_learning_parameters = (
+                    self._synapse2defaultlearningparameters[synapse_id]
+                )
                 super().set_agent_property_value(
                     id=synapse_id,
                     property_name="learning_parameters",
-                    value=default_learning_parameters,
+                    value=default_synapse_learning_parameters,
                 )
             # Clear internal states
             synapse_internal_state = super().get_agent_property_value(
@@ -312,6 +317,7 @@ class NeuromorphicModel(Model):
             enabled step function. Must be specified in order of use
             in step function.
         """
+
         synaptic_delay = int(parameters[1])
         delay_reg = [0 for _ in range(synaptic_delay)]
         synapse_id = self.create_agent_of_breed(
@@ -322,6 +328,8 @@ class NeuromorphicModel(Model):
             internal_learning_state=default_internal_learning_state,
             synapse_delay_reg=delay_reg,
         )
+        self._synapse2defaultparameters[synapse_id] = parameters
+        self._synapse2defaultlearningparameters[synapse_id] = learning_parameters
         self._synapse_ids.append(synapse_id)
 
         network_space: NetworkSpace = self.get_space()
