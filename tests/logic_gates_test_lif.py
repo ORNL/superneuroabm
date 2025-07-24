@@ -969,9 +969,20 @@ def test_dual_external_synapses_dual_somas_STDP(self):
         tau_fall_B,
         tau_rise_B,
     ]
+    tau_pre_stdp = 10e-3  # Pre-synaptic STDP time constant (10 ms)
+    tau_post_stdp = 10e-3  # Post-synaptic STDP time constant (10 ms)
+    a_exp_pre = 0.005  # Pre-synaptic STDP learning rate
+    a_exp_post = 0.005  # Post-synaptic STDP learning rate
+    stdp_history_length = 100  # Length of STDP history buffer
+    learning_parameters_A = [tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length]
+    learning_parameters_B = [tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length]
 
+    # Internal learning state for STDP synapses
     
-
+    pre_trace=0
+    post_trace=0
+    dW=0
+    internal_learning_state_A = [pre_trace, post_trace, dW]
     # Initial synaptic current for both synapses
     I_synapse = 0.0
     synapse_internal_state = [I_synapse]
@@ -983,8 +994,8 @@ def test_dual_external_synapses_dual_somas_STDP(self):
         post_soma_id=soma_0,
         parameters=synapse_parameters_A,
         default_internal_state=synapse_internal_state,
-        learning_parameters = ,
-        default_internal_learning_state = ,
+        learning_parameters = learning_parameters_A,
+        default_internal_learning_state =internal_learning_state_A,
     )
 
     # Create second external input synapse (weaker input)
@@ -994,6 +1005,8 @@ def test_dual_external_synapses_dual_somas_STDP(self):
         post_soma_id=soma_0,
         parameters=synapse_parameters_B,
         default_internal_state=synapse_internal_state,
+        learning_parameters = learning_parameters_A,
+        default_internal_learning_state =internal_learning_state_A,
     )
 
     # Create second external input synapse (weaker input)
@@ -1003,6 +1016,8 @@ def test_dual_external_synapses_dual_somas_STDP(self):
         post_soma_id=soma_1,
         parameters=synapse_parameters_B,
         default_internal_state=synapse_internal_state,
+        learning_parameters = learning_parameters_A,
+        default_internal_learning_state =internal_learning_state_A,
     )
 
     # Initialize the simulation environment

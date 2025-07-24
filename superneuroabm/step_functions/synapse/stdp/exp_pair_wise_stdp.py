@@ -32,12 +32,13 @@ def exp_pair_wise_stdp(
 
     weight = synapse_params[agent_index][0]
     synaptic_delay = synapse_params[agent_index][1]
-    tau_pre_stdp = learning_params[agent_index][1]
-    tau_post_stdp = learning_params[agent_index][2]
-    a_exp_pre = learning_params[agent_index][3]
-    a_exp_post = learning_params[agent_index][4]
+
+    tau_pre_stdp = learning_params[agent_index][0]
+    tau_post_stdp = learning_params[agent_index][1]
+    a_exp_pre = learning_params[agent_index][2]
+    a_exp_post = learning_params[agent_index][3]
     # a_exp_post = learning_params[agent_index][4]
-    stdp_history_length = synapse_params[agent_index][5]
+    stdp_history_length = learning_params[agent_index][4]
     # Wmax, Wmin
 
     pre_soma_id = locations[agent_index][0]
@@ -69,9 +70,9 @@ def exp_pair_wise_stdp(
     internal_learning_state[agent_index][0] = pre_trace
     internal_learning_state[agent_index][1] = post_trace
     internal_learning_state[agent_index][2] = dW
-    internal_learning_state[agent_index][t_current][0] = pre_trace
-    internal_learning_state[agent_index][t_current][1] = post_trace
-    internal_learning_state[agent_index][t_current][2] = dW
+    internal_learning_states_buffer[agent_index][t_current][0] = pre_trace
+    internal_learning_states_buffer[agent_index][t_current][1] = post_trace
+    internal_learning_states_buffer[agent_index][t_current][2] = dW
 
     # spike_pre_[t_current] = pre_soma_spike #spike_pre_ is an array of size (stdp_history_length, number of input neurons), pre_soma_spike is (number of input neurons,)
     # spike_post_[:, t_current] = post_soma_spike#spike_post_ is an array of size (number of output neurons,stdp_history_length), post_soma_spike is (number of output neurons,)
