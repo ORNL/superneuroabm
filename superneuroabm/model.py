@@ -49,7 +49,7 @@ class NeuromorphicModel(Model):
                     / "step_functions"
                     / "synapse"
                     / "single_exp.py",
-                ), 
+                ),
                 (
                     learning_rule_selector,
                     CURRENT_DIR_ABSPATH
@@ -83,7 +83,9 @@ class NeuromorphicModel(Model):
                 0.0 for _ in range(5)
             ],  # STDP_function name, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, Wmax, Wmin
             "internal_state": [0.0, 0.0, 0.0, 0.0],  # v, u
-            "internal_learning_state": [0.0 for _ in range(3)],  # pre_trace, post_trace, dW
+            "internal_learning_state": [
+                0.0 for _ in range(3)
+            ],  # pre_trace, post_trace, dW
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
@@ -100,7 +102,9 @@ class NeuromorphicModel(Model):
             "internal_state": [
                 0.0 for _ in range(4)
             ],  # Isyn, Isyn_supp, pre_trace, post_trace
-            "internal_learning_state": [0.0 for _ in range(3)],  # pre_trace, post_trace, dW
+            "internal_learning_state": [
+                0.0 for _ in range(3)
+            ],  # pre_trace, post_trace, dW
             "synapse_delay_reg": [],  # Synapse delay
             "input_spikes_tensor": [],  # input spikes tensor
             "output_spikes_tensor": [],
@@ -150,6 +154,10 @@ class NeuromorphicModel(Model):
             self._synapse_breeds[breed_name] = synapse_breed
 
         self._synapse_index_map = {}
+        self._synapse2defaultparameters: Dict[int, List[float]] = {}
+        self._synapse2defaultlearningparameters: Dict[int, List[float]] = {}
+        self._synapse2defaultinternalstate: Dict[int, List[float]] = {}
+        self._synapse2defaultinternallearningstate: Dict[int, List[float]] = {}
 
     def set_global_property_value(name: str, value: float) -> None:
         if name in super().globals:
@@ -163,7 +171,7 @@ class NeuromorphicModel(Model):
     def setup(
         self,
         use_gpu: bool = False,
-        retain_parameters=False,
+        retain_parameters=True,
     ) -> None:
         """
         Resets the simulation and initializes agents.
@@ -196,29 +204,34 @@ class NeuromorphicModel(Model):
             # Reset parameters to defaults if retain_parameters is True
             if not retain_parameters:
                 # Reset all synapse parameters to their default values
-                default_synapse_parameters = [
-                    0.0 for _ in range(10)
+                default_synapse_parameters = self._synapse2defaultparameters[
+                    synapse_id
                 ]  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
                 super().set_agent_property_value(
                     id=synapse_id,
                     property_name="parameters",
                     value=default_synapse_parameters,
                 )
+                default_synapse_learning_parameters = (
+                    self._synapse2defaultlearningparameters[synapse_id]
+                )
                 super().set_agent_property_value(
                     id=synapse_id,
                     property_name="learning_parameters",
-                    value=default_learning_parameters,
+                    value=default_synapse_learning_parameters,
                 )
             # Clear internal states
-            synapse_internal_state = super().get_agent_property_value(
-                id=synapse_id,
-                property_name="internal_state",
-            )
-            synapse_internal_state = [0.0 for _ in synapse_internal_state]
+            synapse_internal_state = self._synapse2defaultinternalstate
             super().set_agent_property_value(
                 id=synapse_id,
                 property_name="internal_state",
                 value=synapse_internal_state,
+            )
+            synapse_internal_learning_state = self._synapse2defaultinternallearningstate
+            super().set_agent_property_value(
+                id=synapse_id,
+                property_name="internal_learning_state",
+                value=synapse_internal_learning_state,
             )
         for soma_id in soma_ids:
             # Clear internal states
@@ -308,6 +321,7 @@ class NeuromorphicModel(Model):
             enabled step function. Must be specified in order of use
             in step function.
         """
+
         synaptic_delay = int(parameters[1])
         delay_reg = [0 for _ in range(synaptic_delay)]
         synapse_id = self.create_agent_of_breed(
@@ -317,6 +331,12 @@ class NeuromorphicModel(Model):
             internal_state=default_internal_state,
             internal_learning_state=default_internal_learning_state,
             synapse_delay_reg=delay_reg,
+        )
+        self._synapse2defaultparameters[synapse_id] = parameters
+        self._synapse2defaultlearningparameters[synapse_id] = learning_parameters
+        self._synapse2defaultinternalstate[synapse_id] = default_internal_state
+        self._synapse2defaultinternallearningstate[synapse_id] = (
+            default_internal_learning_state
         )
         self._synapse_ids.append(synapse_id)
 
