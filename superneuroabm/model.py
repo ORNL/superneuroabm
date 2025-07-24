@@ -14,9 +14,6 @@ from pathlib import Path
 from superneuroabm.step_functions.soma.izh import izh_soma_step_func
 from superneuroabm.step_functions.soma.lif import lif_soma_step_func
 from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
-from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp import (
-    exp_stdp_all_to_all,
-)
 from superneuroabm.step_functions.synapse.stdp.learning_rule_selector import (
     learning_rule_selector,
 )
@@ -306,9 +303,9 @@ class NeuromorphicModel(Model):
         pre_soma_id: int,  # TODO edit
         post_soma_id: int,
         parameters: List[float],
-        learning_parameters: List[float],
         default_internal_state: List[float],
-        default_internal_learning_state: List[float],
+        learning_parameters: List[float] = None,
+        default_internal_learning_state: List[float] = None,
     ) -> int:
         """
         Creates and adds Synapse agent.
