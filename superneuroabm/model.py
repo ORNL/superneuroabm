@@ -156,6 +156,8 @@ class NeuromorphicModel(Model):
         self._synapse_index_map = {}
         self._synapse2defaultparameters: Dict[int, List[float]] = {}
         self._synapse2defaultlearningparameters: Dict[int, List[float]] = {}
+        self._synapse2defaultinternalstate: Dict[int, List[float]] = {}
+        self._synapse2defaultinternallearningstate: Dict[int, List[float]] = {}
 
     def set_global_property_value(name: str, value: float) -> None:
         if name in super().globals:
@@ -219,15 +221,17 @@ class NeuromorphicModel(Model):
                     value=default_synapse_learning_parameters,
                 )
             # Clear internal states
-            synapse_internal_state = super().get_agent_property_value(
-                id=synapse_id,
-                property_name="internal_state",
-            )
-            synapse_internal_state = [0.0 for _ in synapse_internal_state]
+            synapse_internal_state = self._synapse2defaultinternalstate
             super().set_agent_property_value(
                 id=synapse_id,
                 property_name="internal_state",
                 value=synapse_internal_state,
+            )
+            synapse_internal_learning_state = self._synapse2defaultinternallearningstate
+            super().set_agent_property_value(
+                id=synapse_id,
+                property_name="internal_learning_state",
+                value=synapse_internal_learning_state,
             )
         for soma_id in soma_ids:
             # Clear internal states
@@ -330,6 +334,10 @@ class NeuromorphicModel(Model):
         )
         self._synapse2defaultparameters[synapse_id] = parameters
         self._synapse2defaultlearningparameters[synapse_id] = learning_parameters
+        self._synapse2defaultinternalstate[synapse_id] = default_internal_state
+        self._synapse2defaultinternallearningstate[synapse_id] = (
+            default_internal_learning_state
+        )
         self._synapse_ids.append(synapse_id)
 
         network_space: NetworkSpace = self.get_space()
