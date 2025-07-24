@@ -10,7 +10,7 @@ setup(
         "superneuroabm.step_functions",
         "superneuroabm.step_functions.soma",
         "superneuroabm.step_functions.synapse",
-        "superneuroabm.step_functions.stdp",
+        "superneuroabm.step_functions.synapse.stdp",
     ],
     include_package_data=True,
     url="https://code.ornl.gov/superneuro/superneuroabm",
