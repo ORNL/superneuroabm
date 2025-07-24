@@ -218,13 +218,16 @@ class NeuromorphicModel(Model):
                     value=default_synapse_learning_parameters,
                 )
             # Clear internal states
-            synapse_internal_state = self._synapse2defaultinternalstate
+
+            synapse_internal_state = self._synapse2defaultinternalstate[synapse_id]
             super().set_agent_property_value(
                 id=synapse_id,
                 property_name="internal_state",
                 value=synapse_internal_state,
             )
-            synapse_internal_learning_state = self._synapse2defaultinternallearningstate
+            synapse_internal_learning_state = (
+                self._synapse2defaultinternallearningstate[synapse_id]
+            )
             super().set_agent_property_value(
                 id=synapse_id,
                 property_name="internal_learning_state",
@@ -273,6 +276,18 @@ class NeuromorphicModel(Model):
                 id=synapse_id,
                 property_name="internal_states_buffer",
                 value=internal_states_buffer,
+            )
+
+            initial_internal_learning_state = super().get_agent_property_value(
+                id=synapse_id, property_name="internal_learning_state"
+            )
+            internal_learning_states_buffer = [
+                initial_internal_learning_state[::] for _ in range(ticks)
+            ]
+            super().set_agent_property_value(
+                id=synapse_id,
+                property_name="internal_learning_states_buffer",
+                value=internal_learning_states_buffer,
             )
         super().simulate(ticks, update_data_ticks)  # , num_cpu_proc)
 
@@ -340,6 +355,7 @@ class NeuromorphicModel(Model):
         network_space: NetworkSpace = self.get_space()
         if not np.isnan(pre_soma_id):
             network_space.connect_agents(synapse_id, pre_soma_id, directed=True)
+            network_space.connect_agents(pre_soma_id, synapse_id, directed=True)
         if not np.isnan(post_soma_id):
             network_space.connect_agents(post_soma_id, synapse_id, directed=True)
         return synapse_id
