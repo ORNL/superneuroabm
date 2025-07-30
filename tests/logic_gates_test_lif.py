@@ -602,13 +602,6 @@ class LogicGatesTestLIF(unittest.TestCase):
             default_internal_state=default_internal_state_0,
         )
 
-        # # Create single LIF neuron that will receive dual inputs
-        # soma_1 = self._model.create_soma(
-        #     breed="IZH_Soma",
-        #     parameters=soma_parameters,
-        #     default_internal_state=default_internal_state,
-        # )
-
         # Create IZH soma
         k = 1.2
         vthr = -45
@@ -624,6 +617,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         v = vrest
         u = 0
         default_internal_state_1 = [v, u]
+
         soma_1 = self._model.create_soma(
             breed="IZH_Soma",
             parameters=soma_parameters_1,
