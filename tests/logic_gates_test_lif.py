@@ -107,7 +107,7 @@ class LogicGatesTestLIF(unittest.TestCase):
 
         # Create external input synapse (stimulates soma_0)
         syn_ext = self._model.create_synapse(
-            breed="Single_Exp_Synapse_STDP1",
+            breed="Single_Exp_Synapse",
             pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
             post_soma_id=soma_0,
             parameters=synapse_parameters,
@@ -115,7 +115,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         )
         # Create internal synapse (soma_0 -> soma_1)
         syn_int = self._model.create_synapse(
-            breed="Single_Exp_Synapse_STDP1",
+            breed="Single_Exp_Synapse",
             pre_soma_id=soma_0,
             post_soma_id=soma_1,
             parameters=synapse_parameters,
