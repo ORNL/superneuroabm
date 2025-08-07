@@ -29,7 +29,7 @@ def exp_pair_wise_stdp(
 ):
     t_current = int(tick)
 
-    dt = globals[1]  # time step size
+    dt = globals[0]  # time step size
 
     weight = synapse_params[agent_index][0]
     synaptic_delay = synapse_params[agent_index][1]

@@ -40,7 +40,7 @@ def izh_soma_step_func(
     # Get the current time step value:
     t_current = int(tick)
 
-    dt = globals[1]  # time step size
+    dt = globals[0]  # time step size
 
     # NOTE: neuron_params would need to be as long as the max number of params in any spiking neuron model
     k = neuron_params[agent_index][0]
@@ -66,7 +66,7 @@ def izh_soma_step_func(
     v = internal_state[agent_index][0]
     u = internal_state[agent_index][1]
 
-    I_bias = globals[2]  # bias current
+    I_bias = globals[1]  # bias current
 
     dv = (k * (v - vrest) * (v - vthr) - u + I_synapse + I_bias + I_in) / C
     v = v + dt * dv *1e3

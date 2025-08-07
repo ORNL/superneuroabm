@@ -39,8 +39,8 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
 
     # Get the current time step value:
     t_current = int(tick)  # Check if tcount is needed or if we ca use this directly.
-    dt = globals[1]  # time step size
-    I_bias = globals[2]  # bias current
+    dt = globals[0]  # time step size
+    I_bias = globals[1]  # bias current
 
     # NOTE: neuron_params would need to as long as the max number of params in any spiking neuron model
     # Neuron Parameter
