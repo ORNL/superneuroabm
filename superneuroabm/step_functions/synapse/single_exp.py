@@ -39,10 +39,8 @@ def synapse_single_exp_step_func(
     tau_rise = synapse_params[agent_index][4]
 
     location_data = locations[agent_index]
-    num_locations = 0
-    while not cp.isnan(location_data[num_locations]):
-        num_locations += 1
-    pre_soma_id = -1 if num_locations == 1 else location_data[0]
+    pre_soma_id = -1 if cp.isnan(location_data[1]) else location_data[0]
+    post_soma_id = location_data[0] if cp.isnan(location_data[1]) else location_data[1]
     spike = get_pre_soma_spike(
         tick,
         agent_index,

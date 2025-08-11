@@ -49,12 +49,10 @@ def exp_pair_wise_stdp(
     dW = internal_learning_state[agent_index][2]
 
     location_data = locations[agent_index]
-    pre_soma_id = -1
-    if len(location_data) == 2:
-        post_soma_id = location_data[0]
-    post_soma_id = location_data[0]
-    if len(location_data) == 2:
-        post_soma_id = location_data[1]
+    pre_soma_id = -1 if cp.isnan(location_data[1]) else location_data[0]
+    post_soma_id = location_data[0] if cp.isnan(location_data[1]) else location_data[1]
+
+
     # Get the pre-soma spike
     pre_soma_spike = get_pre_soma_spike(
         tick,
@@ -80,7 +78,12 @@ def exp_pair_wise_stdp(
 
     pre_trace = pre_trace * (1 - dt / tau_pre_stdp) + pre_soma_spike * a_exp_pre
     post_trace = post_trace * (1 - dt / tau_post_stdp) + post_soma_spike * a_exp_post
-    dW = post_trace * pre_soma_spike - pre_trace * post_soma_spike
+    dW = pre_trace * post_soma_spike - post_trace * pre_soma_spike
+    # dW = 0
+
+
+    weight += dW  # Update the weight
+    synapse_params[agent_index][0] = weight  # Update the weight in synapse_params
 
     internal_learning_state[agent_index][0] = pre_trace
     internal_learning_state[agent_index][1] = post_trace
@@ -107,7 +110,7 @@ def exp_pair_wise_stdp(
 
     internal_state[agent_index][2] = pre_trace
     internal_state[agent_index][3] = post_trace
-    internal_states_buffer[agent_index][t_current][2] = pre_trace
+    internal_states_buffer[agent_index][t_current][2] = post_soma_spike
     internal_states_buffer[agent_index][t_current][3] = post_trace
     # if t_current==100:
     # print("Calculation at t_current=100:")

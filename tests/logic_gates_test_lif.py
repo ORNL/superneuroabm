@@ -998,7 +998,7 @@ class LogicGatesTestLIF(unittest.TestCase):
             post_soma_id=soma_1,
             parameters=synapse_parameters_B,
             default_internal_state=synapse_internal_state,
-            learning_parameters=learning_parameters_A,
+            learning_parameters=learning_parameters_B,
             default_internal_learning_state=internal_learning_state_A,
         )
 
@@ -1020,7 +1020,7 @@ class LogicGatesTestLIF(unittest.TestCase):
             self._model.add_spike(synapse_id=syn_ext_B, tick=spike[0], value=spike[1])
 
         # Run simulation for 50 time steps, recording every tick
-        self._model.simulate(ticks=600, update_data_ticks=1)
+        self._model.simulate(ticks=100, update_data_ticks=1)
 
         # Extract simulation results for analysis
         internal_states_history_soma0 = np.array(
@@ -1047,17 +1047,28 @@ class LogicGatesTestLIF(unittest.TestCase):
             self._model.get_internal_learning_states_history(agent_id=syn_ext_A)
         )
 
+        internal_learning_state_B = np.array(
+            self._model.get_internal_learning_states_history(agent_id=syn_ext_B)
+        )
+
+        internal_learning_state_C = np.array(
+            self._model.get_internal_learning_states_history(agent_id=syn_int_C)
+        )
+
         # Print debug information
         # print(f"Soma 0 spike times: {self._model.get_spike_times(soma_id=soma_0)}")
         # print(f"Soma 0 I synapse: {internal_states_history_soma0}")
         # print(f"Synapse A internal states: {internal_states_history_synA[:10]}")  # First 10 timesteps
         # print(f"Synapse B internal states: {internal_states_history_synB[:10]}")  # First 10 timesteps
 
+        print(f"Synapse A internal learning state, post soma spikes: {internal_learning_state_A[:, 1]}")
+
+        print(f"Synapse C internal learning state, post soma id: {internal_learning_state_C[:, 1]}")
         # Generate visualization comparing membrane potential and synaptic currents
-        plt.figure(figsize=(12, 8))
+        plt.figure(figsize=(24, 16))
 
         # Plot membrane potential
-        plt.subplot(5, 1, 1)
+        plt.subplot(12, 1, 1)
         plt.plot(internal_states_history_soma0[:, 0], "b-", label="Soma 0")
         plt.axhline(y=vthr, color="r", linestyle="--", label="Threshold")
         plt.ylabel("Membrane Pot. (mV)")
@@ -1065,7 +1076,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         plt.legend()
 
         # Plot membrane potential
-        plt.subplot(5, 1, 2)
+        plt.subplot(12, 1, 2)
         plt.plot(internal_states_history_soma1[:, 0], "b-", label="Soma 1")
         plt.axhline(y=vthr, color="r", linestyle="--", label="Threshold")
         plt.ylabel("Membrane Pot. (mV)")
@@ -1073,24 +1084,69 @@ class LogicGatesTestLIF(unittest.TestCase):
         plt.legend()
 
         # Plot synaptic current from synapse A
-        plt.subplot(5, 1, 3)
+        plt.subplot(12, 1, 3)
         plt.plot(internal_states_history_synA[:, 0], "g-", label="Synapse A Current")
         plt.ylabel("Synaptic Current A")
         plt.legend()
 
-        # Plot synaptic current from synapse B
-        plt.subplot(5, 1, 4)
-        plt.plot(internal_states_history_synB[:, 0], "m-", label="Synapse B Current")
-        plt.xlabel("Time (ticks)")
-        plt.ylabel("Synaptic Current B")
+        plt.subplot(12, 1, 4)
+        plt.plot(internal_learning_state_C[:, 2], "r-", label="Synapse C dW")
+        plt.ylabel("Synaptic Weight Change (dW) ")
         plt.legend()
 
-        # Plot synaptic current from synapse B
-        plt.subplot(5, 1, 5)
-        plt.plot(internal_states_history_synC[:, 0], "m-", label="Synapse C Current")
-        plt.xlabel("Time (ticks)")
-        plt.ylabel("Synaptic Current C")
+        plt.subplot(12, 1, 5)
+        plt.plot(internal_learning_state_C[:, 0], "r-", label="Synapse C pre_trace")
+        plt.ylabel("Synaptic pre-trace ")
         plt.legend()
+
+        plt.subplot(12, 1, 6)
+        plt.plot(internal_learning_state_C[:, 1], "r-", label="Synapse C post-trace")
+        plt.ylabel("Synaptic C post-trace ")
+        plt.legend()
+
+        plt.subplot(12, 1, 7)
+        plt.plot(internal_learning_state_A[:, 2], "r-", label="Synapse A dW")
+        plt.ylabel("Synaptic Weight Change (dW) ")
+        plt.legend()
+
+        plt.subplot(12, 1, 8)
+        plt.plot(internal_learning_state_A[:, 0], "r-", label="Synapse A pre_trace")
+        plt.ylabel("Synaptic A pre-trace ")
+        plt.legend()
+
+        plt.subplot(12, 1, 9)
+        plt.plot(internal_learning_state_A[:, 1], "r-", label="Synapse A post-trace")
+        plt.ylabel("Synaptic A post-trace ")
+        plt.legend()
+
+        plt.subplot(12, 1, 10)
+        plt.plot(internal_learning_state_B[:, 2], "r-", label="Synapse B dW")
+        plt.ylabel("Synaptic Weight Change (dW) ")
+        plt.legend()
+
+        plt.subplot(12, 1, 11)
+        plt.plot(internal_learning_state_B[:, 0], "r-", label="Synapse B pre_trace")
+        plt.ylabel("Synaptic pre-trace ")
+        plt.legend()
+
+        plt.subplot(12, 1, 12)
+        plt.plot(internal_learning_state_B[:, 1], "r-", label="Synapse B post-trace")
+        plt.ylabel("Synaptic B post-trace ")
+        plt.legend()
+
+        # # Plot synaptic current from synapse B
+        # plt.subplot(6, 1, 5)
+        # plt.plot(internal_states_history_synB[:, 0], "m-", label="Synapse B Current")
+        # plt.xlabel("Time (ticks)")
+        # plt.ylabel("Synaptic Current B")
+        # plt.legend()
+
+        # # Plot synaptic current from synapse B
+        # plt.subplot(6, 1, 6)
+        # plt.plot(internal_states_history_synC[:, 0], "m-", label="Synapse C Current")
+        # plt.xlabel("Time (ticks)")
+        # plt.ylabel("Synaptic Current C")
+        # plt.legend()
 
         plt.tight_layout()
         plt.savefig(
