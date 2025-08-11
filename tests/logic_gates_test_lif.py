@@ -468,7 +468,7 @@ class LogicGatesTestLIF(unittest.TestCase):
             self._model.add_spike(synapse_id=syn_ext_B, tick=spike[0], value=spike[1])
 
         # Run simulation for 50 time steps, recording every tick
-        self._model.simulate(ticks=1000, update_data_ticks=1)
+        self._model.simulate(ticks=600, update_data_ticks=600)
 
         # Extract simulation results for analysis
         internal_states_history_soma0 = np.array(
@@ -725,7 +725,7 @@ class LogicGatesTestLIF(unittest.TestCase):
             self._model.add_spike(synapse_id=syn_ext_B, tick=spike[0], value=spike[1])
 
         # Run simulation for 50 time steps, recording every tick
-        self._model.simulate(ticks=600, update_data_ticks=1)
+        self._model.simulate(ticks=600, update_data_ticks=600)
 
         # Extract simulation results for analysis
         internal_states_history_soma0 = np.array(
@@ -937,12 +937,14 @@ class LogicGatesTestLIF(unittest.TestCase):
         ]
 
         # Define STDP learning parameters
+        stdpType = 0  # Exp pair-wise STDP
         tau_pre_stdp = 10e-3  # Pre-synaptic STDP time constant (10 ms)
         tau_post_stdp = 10e-3  # Post-synaptic STDP time constant (10 ms)
         a_exp_pre = 0.005  # Pre-synaptic STDP learning rate
         a_exp_post = 0.005  # Post-synaptic STDP learning rate
         stdp_history_length = 100  # Length of STDP history buffer
         learning_parameters_A = [
+            stdpType,
             tau_pre_stdp,
             tau_post_stdp,
             a_exp_pre,
@@ -950,11 +952,12 @@ class LogicGatesTestLIF(unittest.TestCase):
             stdp_history_length,
         ]
         learning_parameters_B = [
-            tau_pre_stdp,
-            tau_post_stdp,
-            a_exp_pre,
-            a_exp_post,
-            stdp_history_length,
+            stdpType,           #0
+            tau_pre_stdp,       #1
+            tau_post_stdp,      #2
+            a_exp_pre,          #3
+            a_exp_post,         #4
+            stdp_history_length,#5
         ]
 
         # Internal learning state for STDP synapses
@@ -984,7 +987,7 @@ class LogicGatesTestLIF(unittest.TestCase):
             post_soma_id=soma_0,
             parameters=synapse_parameters_B,
             default_internal_state=synapse_internal_state,
-            learning_parameters=learning_parameters_A,
+            learning_parameters=learning_parameters_B,
             default_internal_learning_state=internal_learning_state_A,
         )
 
@@ -1039,6 +1042,11 @@ class LogicGatesTestLIF(unittest.TestCase):
             self._model.get_internal_states_history(agent_id=syn_int_C)
         )
 
+        # Get the internal learning states for synapses
+        internal_learning_state_A = np.array(
+            self._model.get_internal_learning_states_history(agent_id=syn_ext_A)
+        )
+
         # Print debug information
         # print(f"Soma 0 spike times: {self._model.get_spike_times(soma_id=soma_0)}")
         # print(f"Soma 0 I synapse: {internal_states_history_soma0}")
@@ -1091,33 +1099,6 @@ class LogicGatesTestLIF(unittest.TestCase):
             bbox_inches="tight",
         )
         plt.close()
-
-        # # Save detailed simulation data to CSV
-        # with open("output_dual_synapses.csv", "w", newline="") as file:
-        #     writer = csv.writer(file)
-        #     # Write header
-        #     writer.writerow(
-        #         [
-        #             "Membrane_Potential_mV",
-        #             "Time_Count",
-        #             "Last_Spike_Time",
-        #             "SynA_Current",
-        #             "SynB_Current",
-        #         ]
-        #     )
-        #     # Write combined data
-        #     for i in range(len(internal_states_history_soma0)):
-        #         row = list(internal_states_history_soma0[i]) + \
-        #               [internal_states_history_synA[i][0], internal_states_history_synB[i][0]]
-        #         writer.writerow(row)
-
-        # # Also save complete soma data as output_LIF.csv
-        # with open("output_LIF.csv", "w", newline="") as file:
-        #     writer = csv.writer(file)
-        #     # Write header based on LIF soma step function (lines 88-91)
-        #     writer.writerow(["Membrane_Potential_mV", "Time_Count", "Last_Spike_Time", "I_Synapse"])
-        #     # Write complete soma internal states
-        #     writer.writerows(internal_states_history_soma0)
 
         # Verify that soma responds to dual inputs
         actual_spikes_soma_0 = self._model.get_spike_times(soma_id=soma_0)

@@ -31,15 +31,17 @@ def exp_pair_wise_stdp(
 
     dt = globals[0]  # time step size
 
+    # Get the synapse parameters:
     weight = synapse_params[agent_index][0]
     synaptic_delay = synapse_params[agent_index][1]
 
-    tau_pre_stdp = learning_params[agent_index][0]
-    tau_post_stdp = learning_params[agent_index][1]
-    a_exp_pre = learning_params[agent_index][2]
-    a_exp_post = learning_params[agent_index][3]
-    # a_exp_post = learning_params[agent_index][4]
-    stdp_history_length = learning_params[agent_index][4]
+    # Get the learning parameters:
+    # stdpType = 0 # Parsed in the learning rule selector
+    tau_pre_stdp = learning_params[agent_index][1]
+    tau_post_stdp = learning_params[agent_index][2]
+    a_exp_pre = learning_params[agent_index][3]
+    a_exp_post = learning_params[agent_index][4]
+    stdp_history_length = learning_params[agent_index][5]
     # Wmax, Wmin
 
     pre_trace = internal_learning_state[agent_index][0]
