@@ -24,9 +24,7 @@ def learning_rule_selector(
     internal_states_buffer,
     internal_learning_states_buffer,
 ):
-    t_current = int(tick)
 
-    dt = globals[1]  # time step size
 
     stdpType = learning_params[agent_index][0]  # 0 for None, 1 for exp_pair_wise_stdp
     # Wmax, Wmin
