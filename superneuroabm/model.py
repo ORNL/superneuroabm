@@ -444,6 +444,11 @@ class NeuromorphicModel(Model):
             id=agent_id, property_name="internal_states_buffer"
         )
 
+    def get_internal_learning_states_history(self, agent_id: int) -> np.array:
+        return super().get_agent_property_value(
+            id=agent_id, property_name="internal_learning_states_buffer"
+        )
+
     def summary(self) -> str:
         """
         Verbose summary of the network structure.
