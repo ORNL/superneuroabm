@@ -724,7 +724,6 @@ class LogicGatesTestLIF(unittest.TestCase):
         for spike in spikes_B:
             self._model.add_spike(synapse_id=syn_ext_B, tick=spike[0], value=spike[1])
 
-        print(self._model._agent_factory._property_name_2_agent_data_tensor)
         # Run simulation for 50 time steps, recording every tick
         self._model.simulate(ticks=600, update_data_ticks=1)
 

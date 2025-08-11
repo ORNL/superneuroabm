@@ -7,6 +7,7 @@ import cupy as cp
 from cupyx import jit
 
 from superneuroabm.step_functions.synapse.util import get_pre_soma_spike
+from sagesim.utils import get_neighbor_data_from_tensor
 
 
 @jit.rawkernel(device="cuda")
@@ -38,7 +39,10 @@ def synapse_single_exp_step_func(
     tau_rise = synapse_params[agent_index][4]
 
     location_data = locations[agent_index]
-    pre_soma_id = -1 if len(location_data) == 1 else location_data[0]
+    num_locations = 0
+    while not cp.isnan(location_data[num_locations]):
+        num_locations += 1
+    pre_soma_id = -1 if num_locations == 1 else location_data[0]
     spike = get_pre_soma_spike(
         tick,
         agent_index,
@@ -58,3 +62,4 @@ def synapse_single_exp_step_func(
     internal_states_buffer[agent_index][t_current][0] = I_synapse
     internal_states_buffer[agent_index][t_current][1] = spike
     internal_states_buffer[agent_index][t_current][2] = t_current
+    internal_states_buffer[agent_index][t_current][3] = pre_soma_id
