@@ -724,6 +724,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         for spike in spikes_B:
             self._model.add_spike(synapse_id=syn_ext_B, tick=spike[0], value=spike[1])
 
+        print(self._model._agent_factory._property_name_2_agent_data_tensor)
         # Run simulation for 50 time steps, recording every tick
         self._model.simulate(ticks=600, update_data_ticks=1)
 
@@ -799,33 +800,6 @@ class LogicGatesTestLIF(unittest.TestCase):
             bbox_inches="tight",
         )
         plt.close()
-
-        # # Save detailed simulation data to CSV
-        # with open("output_dual_synapses.csv", "w", newline="") as file:
-        #     writer = csv.writer(file)
-        #     # Write header
-        #     writer.writerow(
-        #         [
-        #             "Membrane_Potential_mV",
-        #             "Time_Count",
-        #             "Last_Spike_Time",
-        #             "SynA_Current",
-        #             "SynB_Current",
-        #         ]
-        #     )
-        #     # Write combined data
-        #     for i in range(len(internal_states_history_soma0)):
-        #         row = list(internal_states_history_soma0[i]) + \
-        #               [internal_states_history_synA[i][0], internal_states_history_synB[i][0]]
-        #         writer.writerow(row)
-
-        # # Also save complete soma data as output_LIF.csv
-        # with open("output_LIF.csv", "w", newline="") as file:
-        #     writer = csv.writer(file)
-        #     # Write header based on LIF soma step function (lines 88-91)
-        #     writer.writerow(["Membrane_Potential_mV", "Time_Count", "Last_Spike_Time", "I_Synapse"])
-        #     # Write complete soma internal states
-        #     writer.writerows(internal_states_history_soma0)
 
         # Verify that soma responds to dual inputs
         actual_spikes_soma_0 = self._model.get_spike_times(soma_id=soma_0)
@@ -962,6 +936,8 @@ class LogicGatesTestLIF(unittest.TestCase):
             tau_fall_B,
             tau_rise_B,
         ]
+
+        # Define STDP learning parameters
         tau_pre_stdp = 10e-3  # Pre-synaptic STDP time constant (10 ms)
         tau_post_stdp = 10e-3  # Post-synaptic STDP time constant (10 ms)
         a_exp_pre = 0.005  # Pre-synaptic STDP learning rate
@@ -983,7 +959,6 @@ class LogicGatesTestLIF(unittest.TestCase):
         ]
 
         # Internal learning state for STDP synapses
-
         pre_trace = 0
         post_trace = 0
         dW = 0
@@ -1112,7 +1087,7 @@ class LogicGatesTestLIF(unittest.TestCase):
 
         plt.tight_layout()
         plt.savefig(
-            "logic_gates_test_lif_dual_synapses_dual_somas.png",
+            "logic_gates_test_lif_dual_synapses_dual_somas_stdp.png",
             dpi=150,
             bbox_inches="tight",
         )

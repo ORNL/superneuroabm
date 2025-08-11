@@ -319,8 +319,8 @@ class NeuromorphicModel(Model):
         post_soma_id: int,
         parameters: List[float],
         default_internal_state: List[float],
-        learning_parameters: List[float] = None,
-        default_internal_learning_state: List[float] = None,
+        learning_parameters: List[float] = [-1],
+        default_internal_learning_state: List[float] = [],
     ) -> int:
         """
         Creates and adds Synapse agent.
@@ -354,10 +354,17 @@ class NeuromorphicModel(Model):
 
         network_space: NetworkSpace = self.get_space()
         if not np.isnan(pre_soma_id):
-            network_space.connect_agents(synapse_id, pre_soma_id, directed=True)
-            network_space.connect_agents(pre_soma_id, synapse_id, directed=True)
+            network_space.connect_agents(
+                synapse_id, pre_soma_id, directed=True
+            )  # Necessary for read and STDP
         if not np.isnan(post_soma_id):
-            network_space.connect_agents(post_soma_id, synapse_id, directed=True)
+            network_space.connect_agents(
+                synapse_id, post_soma_id, directed=True
+            )  # Necessary due to STDP
+
+            network_space.connect_agents(
+                post_soma_id, synapse_id, directed=True
+            )  # Necessary due to STDP
         return synapse_id
 
     def update_synapse(
