@@ -725,7 +725,7 @@ class LogicGatesTestLIF(unittest.TestCase):
             self._model.add_spike(synapse_id=syn_ext_B, tick=spike[0], value=spike[1])
 
         # Run simulation for 50 time steps, recording every tick
-        self._model.simulate(ticks=600, update_data_ticks=1)
+        self._model.simulate(ticks=600, update_data_ticks=600)
 
         # Extract simulation results for analysis
         internal_states_history_soma0 = np.array(
