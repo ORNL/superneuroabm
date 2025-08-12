@@ -1,9 +1,9 @@
 """
-Single exponential synapse step functions for spiking neural networks
+Weighted synapse step functions for spiking neural networks
 
 """
 
-import numpy as np
+# import numpy as np
 import cupy as cp
 from cupyx import jit
 
@@ -59,23 +59,5 @@ def weighted_synapse_step_func(
 
     internal_states_buffer[agent_index][t_current][0] = I_synapse
     internal_states_buffer[agent_index][t_current][1] = spike
-
-
-
-    #############Code from Copilot######################
-    # # Store the weight for reference
-    # internal_states_buffer[agent_index][t_current][2] = weight
-    # # Store the synaptic delay for reference
-    # internal_states_buffer[agent_index][t_current][3] = synaptic_delay
-
-    # # Apply synaptic delay to the spike before affecting I_synapse
-    # delayed_tick = t_current - int(synaptic_delay)
-    # if delayed_tick >= 0:
-    #     delayed_spike = internal_states_buffer[agent_index][delayed_tick][1]
-    # else:
-    #     delayed_spike = 0.0
-
-    # I_synapse = delayed_spike * weight
-
-    # internal_state[agent_index][0] = I_synapse
-    # internal_states_buffer[agent_index][t_current][0] = I_synapse
+    internal_states_buffer[agent_index][t_current][2] = t_current
+    internal_states_buffer[agent_index][t_current][3] = pre_soma_id
