@@ -1186,9 +1186,128 @@ class LogicGatesTestLIF(unittest.TestCase):
         )
 
 
+
+
+    def test_single_weighted_synapse(self):
+        """
+        Tests the functionality of a single LIF neuron with a weighted synapse.
+
+        This test creates a simple circuit:
+        1. External input -> Synapse -> Soma
+
+        The test verifies that input spikes propagate through the synapse
+        and generate expected output spikes in the soma.
+        """
+        # Set global simulation parameters
+        self._model.register_global_property("dt", 1e-1)  # Time step (100 μs)
+        self._model.register_global_property("I_bias", 0)  # No bias current
+
+        # Define LIF neuron parameters
+        C = 10e-9  # Membrane capacitance in Farads (10 nF)
+        R = 1e6  # Membrane resistance in Ohms (1 TΩ)
+        vthr = -45  # Spike threshold voltage (mV)
+        tref = 5e-3  # Refractory period (5 ms)
+        vrest = -60  # Resting potential (mV)
+        vreset = -60  # Reset potential after spike (mV)
+        tref_allows_integration = 1  # Allow integration during refractory period
+        I_in = 0  # No direct input current (only synaptic input)
+
+        # Package parameters for soma creation
+        soma_parameters = [
+            C,
+            R,
+            vthr,
+            tref,
+            vrest,
+            vreset,
+            tref_allows_integration,
+            I_in,
+        ]
+
+        # Set initial internal state for neuron
+        v = vrest  # Initial membrane voltage
+        tcount = 0  # Time counter
+        tlast = 0  # Last spike time
+        default_internal_state = [v, tcount, tlast]
+
+        # Create LIF neuron that will receive input from synapse
+        soma_0 = self._model.create_soma(
+            breed="LIF_Soma",
+            parameters=soma_parameters,
+            default_internal_state=default_internal_state,
+        )
+
+        # Define synaptic parameters for the synapse
+        weight = 10.0  # Synaptic weight (strength)
+        synaptic_delay = 1.0  # Transmission delay (ms)
+        synapse_parameters = [
+            weight,
+            synaptic_delay,
+        ]
+
+        # Initial synaptic current
+        I_synapse = 0.0
+        synapse_internal_state = [I_synapse]
+
+        inp_synapse = self._model.create_synapse(
+            breed="Weighted_Synapse",
+            pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
+            post_soma_id=soma_0,
+            parameters=synapse_parameters,
+            default_internal_state=synapse_internal_state,
+        )
+        
+        # Initialize the simulation environment
+        self._model.setup(use_gpu=self._use_gpu)
+
+        # Define input spike pattern for the synapse:
+        spikes = [(5, 1), (10, 1), (25, 1)]  # (time_tick, spike_value)
+
+        # Stimulate the model with input spikes:
+        for spike in spikes:
+            self._model.add_spike(synapse_id=inp_synapse, tick=spike[0], value=spike[1])
+
+        # Run simulation for 50 time steps, recording every tick
+        self._model.simulate(ticks=50, update_data_ticks=1)
+
+        # Extract simulation results for analysis
+        internal_states_history_soma0 = np.array(
+            self._model.get_internal_states_history(agent_id=soma_0)
+        )
+        internal_states_history_syn = np.array(
+            self._model.get_internal_states_history(agent_id=inp_synapse)
+        )
+
+        # Print debug information
+        print(f"Soma spike times: {self._model.get_spike_times(soma_id=soma_0)}")
+
+        print(f"Synapse internal states: {internal_states_history_syn[:10]}")  # First 10 timesteps
+        
+        # plot the results:
+        plt.figure(figsize=(12, 6))
+
+        # Plot membrane potential
+        plt.subplot(2, 1, 1)
+        plt.plot(internal_states_history_soma0[:, 0], "b-", label="Soma Membrane Potential")
+        plt.axhline(y=vthr, color="r", linestyle="--", label="Threshold")
+        plt.ylabel("Membrane Pot. (mV)")
+        plt.title("Soma Membrane Potential")
+        plt.legend()
+
+        # Plot synaptic current
+        plt.subplot(2, 1, 2)
+        plt.plot(internal_states_history_syn[:, 0], "g-", label="Synaptic Current")
+        plt.xlabel("Time (ticks)")
+        plt.ylabel("Synaptic Current (A)")
+        plt.title("Synaptic Current")
+        plt.legend()
+
+        plt.tight_layout()
+        plt.savefig("logic_gates_test_lif_single_weighted_synapse.png", dpi=150, bbox_inches="tight")
+        plt.close()
+
+
 import unittest
-
-
 class LogicGatesTestGPU(LogicGatesTestLIF):
     """
     GPU-accelerated version of the LIF logic gates test.

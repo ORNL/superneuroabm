@@ -14,6 +14,7 @@ from pathlib import Path
 from superneuroabm.step_functions.soma.izh import izh_soma_step_func
 from superneuroabm.step_functions.soma.lif import lif_soma_step_func
 from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
+from superneuroabm.step_functions.synapse.weighted_synapse import weighted_synapse_step_func
 from superneuroabm.step_functions.synapse.stdp.learning_rule_selector import (
     learning_rule_selector,
 )
@@ -46,6 +47,23 @@ class NeuromorphicModel(Model):
                     / "step_functions"
                     / "synapse"
                     / "single_exp.py",
+                ),
+                (
+                    learning_rule_selector,
+                    CURRENT_DIR_ABSPATH
+                    / "step_functions"
+                    / "synapse"
+                    / "stdp"
+                    / "learning_rule_selector.py",
+                ),
+            ],
+            "Weighted_Synapse": [
+                (
+                    weighted_synapse_step_func,
+                    CURRENT_DIR_ABSPATH
+                    / "step_functions"
+                    / "synapse"
+                    / "weighted_synapse.py",
                 ),
                 (
                     learning_rule_selector,
