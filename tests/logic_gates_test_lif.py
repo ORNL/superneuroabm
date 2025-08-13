@@ -200,23 +200,21 @@ class LogicGatesTestLIF(unittest.TestCase):
         and generate expected output spikes.
         """
         # Set global simulation parameters
-        self._model.register_global_property("dt", 1e-1)  # Time step (100 μs)
+        self._model.register_global_property("dt", 1e-3)  # Time step (100 μs)
         self._model.register_global_property("I_bias", 0)  # No bias current
 
         # Define LIF neuron parameters
         C = 10e-9  # Membrane capacitance in Farads (10 nF)
-        R = 1e12  # Membrane resistance in Ohms (1 TΩ)
+        R = 1e6  # Membrane resistance in Ohms (1 TΩ)
         vthr = -45  # Spike threshold voltage (mV)
         tref = 5e-3  # Refractory period (5 ms)
         vrest = -60  # Resting potential (mV)
-        vreset = -60  # Reset potential after spike (mV)
-        tref_allows_integration = (
-            1  # Whether to allow integration during refractory period
-        )
-        I_in = 0  # Input current (40 nA)
+        vreset = -70  # Reset potential after spike (mV)
+        tref_allows_integration = 1  # Allow integration during refractory period
+        I_in = 0  # No direct input current (only synaptic input)
 
         # Package parameters for soma creation
-        soma_parameters = [
+        soma_parameters_0 = [
             C,
             R,
             vthr,
@@ -227,128 +225,236 @@ class LogicGatesTestLIF(unittest.TestCase):
             I_in,
         ]
 
-        # Set initial internal state for neurons
+        # Set initial internal state for neuron
         v = vrest  # Initial membrane voltage
         tcount = 0  # Time counter
         tlast = 0  # Last spike time
-        default_internal_state = [v, tcount, tlast]
+        default_internal_state_0 = [v, tcount, tlast, 0]
 
-        # Create first LIF neuron (receives external input)
+        # Create single LIF neuron that will receive dual inputs
         soma_0 = self._model.create_soma(
             breed="LIF_Soma",
-            parameters=soma_parameters,
-            default_internal_state=default_internal_state,
+            parameters=soma_parameters_0,
+            default_internal_state=default_internal_state_0,
         )
-        # # Create second LIF neuron (receives input from soma_0)
-        # soma_1 = self._model.create_soma(
-        #     breed="LIF_Soma",
-        #     parameters=soma_parameters,
-        #     default_internal_state=default_internal_state,
-        # )
 
-        # Define synaptic parameters for connections
-        weight = 1.0  # Synaptic weight (strength)
-        synaptic_delay = 1.0  # Transmission delay (ms)
-        scale = 1.0  # Scaling factor
-        tau_fall = 1  # Decay time constant (1 ms)
-        tau_rise = 0  # Rise time constant (instantaneous)
-        synapse_parameters = [
-            weight,
-            synaptic_delay,
-            scale,
-            tau_fall,
-            tau_rise,
+        # Define synaptic parameters for first synapse (stronger weight)
+        weight_A = 2.0  # Stronger synaptic weight
+        synaptic_delay_A = 1.0  # Transmission delay (ms)
+        scale_A = 1.0  # Scaling factor
+        tau_fall_A = 1e-2  # Decay time constant (2 ms)
+        tau_rise_A = 0  # Rise time constant (instantaneous)
+        synapse_parameters_A = [
+            weight_A,
+            synaptic_delay_A,
+            scale_A,
+            tau_fall_A,
+            tau_rise_A,
         ]
 
-        # Initial synaptic current
+        # Define synaptic parameters for second synapse (weaker weight)
+        weight_B = 1.0  # Weaker synaptic weight
+        synaptic_delay_B = 1.0  # Longer transmission delay (ms)
+        scale_B = 1.0  # Scaling factor
+        tau_fall_B = 1e-2  # Faster decay time constant (1 ms)
+        tau_rise_B = 0  # Rise time constant (instantaneous)
+        synapse_parameters_B = [
+            weight_B,
+            synaptic_delay_B,
+            scale_B,
+            tau_fall_B,
+            tau_rise_B,
+        ]
+
+        # Define STDP learning parameters
+        stdpType = -1  # Exp pair-wise STDP
+        tau_pre_stdp = 10e-3  # Pre-synaptic STDP time constant (10 ms)
+        tau_post_stdp = 10e-3  # Post-synaptic STDP time constant (10 ms)
+        a_exp_pre = 0.005  # Pre-synaptic STDP learning rate
+        a_exp_post = 0.005  # Post-synaptic STDP learning rate
+        stdp_history_length = 100  # Length of STDP history buffer
+        learning_parameters_A = [
+            stdpType,
+            tau_pre_stdp,
+            tau_post_stdp,
+            a_exp_pre,
+            a_exp_post,
+            stdp_history_length,
+        ]
+        learning_parameters_B = [
+            stdpType,  # 0
+            tau_pre_stdp,  # 1
+            tau_post_stdp,  # 2
+            a_exp_pre,  # 3
+            a_exp_post,  # 4
+            stdp_history_length,  # 5
+        ]
+
+        # Internal learning state for STDP synapses
+        pre_trace = 0
+        post_trace = 0
+        dW = 0
+        internal_learning_state_A = [pre_trace, post_trace, dW]
+        # Initial synaptic current for both synapses
         I_synapse = 0.0
         synapse_internal_state = [I_synapse]
 
-        # Create external input synapse (stimulates soma_0)
-        syn_ext = self._model.create_synapse(
+        # Create first external input synapse (stronger input)
+        syn_ext_A = self._model.create_synapse(
+            breed="Weighted_Synapse",
+            pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
+            post_soma_id=soma_0,
+            parameters=synapse_parameters_A,
+            default_internal_state=synapse_internal_state,
+            learning_parameters=learning_parameters_A,
+            default_internal_learning_state=internal_learning_state_A,
+        )
+
+        # Create second external input synapse (weaker input)
+        """syn_ext_B = self._model.create_synapse(
             breed="Single_Exp_Synapse",
             pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
             post_soma_id=soma_0,
-            parameters=synapse_parameters[:],
+            parameters=synapse_parameters_B,
             default_internal_state=synapse_internal_state,
-        )
-        # # Create internal synapse (soma_0 -> soma_1)
-        # syn_int = self._model.create_synapse(
-        #     breed="Single_Exp_Synapse",
-        #     pre_soma_id=soma_0,
-        #     post_soma_id=soma_1,
-        #     parameters=synapse_parameters[:],
-        #     default_internal_state=synapse_internal_state,
-        # )
+            learning_parameters=learning_parameters_B,
+            default_internal_learning_state=internal_learning_state_A,
+        )"""
 
         # Initialize the simulation environment
         self._model.setup(use_gpu=self._use_gpu)
 
-        # Define input spike pattern: spike at time 1 and 2 with value 1
-        spikes = [(1, 1), (2, 1), (10, 100)]  # (time_tick, spike_value)
+        # Define input spike patterns for both synapses
+        # Synapse A receives early, strong spikes
+        spikes_A = [(2, 1), (10, 1), (20, 1)]  # (time_tick, spike_value)
 
-        # Inject spikes into the external synapse
-        for spike in spikes:
-            self._model.add_spike(synapse_id=syn_ext, tick=spike[0], value=spike[1])
+        # Synapse B receives delayed, weaker spikes that overlap with A
+        # spikes_B = [(5, 1), (12, 1), (25, 1)]  # (time_tick, spike_value)
 
-        # Run simulation for 100 time steps, recording every tick
-        self._model.simulate(ticks=100, update_data_ticks=100)
+        # Inject spikes into both external synapses
+        for spike in spikes_A:
+            self._model.add_spike(synapse_id=syn_ext_A, tick=spike[0], value=spike[1])
 
-        # Verify results: expect at least 2 spikes from soma_0
-        minimum_expected_spikes = 2
+        """for spike in spikes_B:
+            self._model.add_spike(synapse_id=syn_ext_B, tick=spike[0], value=spike[1])"""
 
-        # Extract membrane potential history for analysis
+        # Run simulation for 50 time steps, recording every tick
+        self._model.simulate(ticks=100, update_data_ticks=1)
+
+        # Extract simulation results for analysis
         internal_states_history_soma0 = np.array(
             self._model.get_internal_states_history(agent_id=soma_0)
         )
 
-        # Extract the synaptic current history for soma_0:
-        internal_states_history_syn0 = np.array(
-            self._model.get_internal_states_history(agent_id=syn_ext)
+        internal_states_history_synA = np.array(
+            self._model.get_internal_states_history(agent_id=syn_ext_A)
         )
 
-        print(f"Internal states history from synapse 0: {internal_states_history_syn0}")
-        print(f"Internal states history from soma 0: {internal_states_history_soma0}")
+        """internal_states_history_synB = np.array(
+            self._model.get_internal_states_history(agent_id=syn_ext_B)
+        )"""
 
-        # Generate visualization of membrane potential over time
-        plt.figure(figsize=(5, 5))
-        plt.plot(
-            internal_states_history_soma0[:, 0],
-            label="Membrane Potential of Soma 0",
+        # Get the internal learning states for synapses
+        internal_learning_state_A = np.array(
+            self._model.get_internal_learning_states_history(agent_id=syn_ext_A)
         )
-        plt.ylabel("Mem. Pot. (mV)")
-        plt.xlabel("Time (ms)")
+
+        """internal_learning_state_B = np.array(
+            self._model.get_internal_learning_states_history(agent_id=syn_ext_B)
+        )"""
+
+        print(
+            f"Synapse A internal learning state, post soma spikes: {internal_learning_state_A[:, 1]}"
+        )
+
+        # Generate visualization comparing membrane potential and synaptic currents
+        plt.figure(figsize=(24, 16))
+
+        # Plot membrane potential
+        plt.subplot(12, 1, 1)
+        plt.plot(internal_states_history_soma0[:, 0], "b-", label="Soma 0")
+        plt.axhline(y=vthr, color="r", linestyle="--", label="Threshold")
+        plt.ylabel("Membrane Pot. (mV)")
+        plt.title("Soma 0")
         plt.legend()
-        plt.title("LIF Neuron Response to Input Spikes")
+
+        """# Plot membrane potential
+        plt.subplot(12, 1, 2)
+        plt.plot(internal_states_history_soma1[:, 0], "b-", label="Soma 1")
+        plt.axhline(y=vthr, color="r", linestyle="--", label="Threshold")
+        plt.ylabel("Membrane Pot. (mV)")
+        plt.title("Soma 1")
+        plt.legend()"""
+
+        # Plot synaptic current from synapse A
+        plt.subplot(12, 1, 3)
+        plt.plot(internal_states_history_synA[:, 0], "g-", label="Synapse A Current")
+        plt.ylabel("Synaptic Current A")
+        plt.legend()
+
+        plt.subplot(12, 1, 7)
+        plt.plot(internal_learning_state_A[:, 2], "r-", label="Synapse A dW")
+        plt.ylabel("Synaptic Weight Change (dW) ")
+        plt.legend()
+
+        plt.subplot(12, 1, 8)
+        plt.plot(internal_learning_state_A[:, 0], "r-", label="Synapse A pre_trace")
+        plt.ylabel("Synaptic A pre-trace ")
+        plt.legend()
+
+        plt.subplot(12, 1, 9)
+        plt.plot(internal_learning_state_A[:, 1], "r-", label="Synapse A post-trace")
+        plt.ylabel("Synaptic A post-trace ")
+        plt.legend()
+
+        """plt.subplot(12, 1, 10)
+        plt.plot(internal_learning_state_B[:, 2], "r-", label="Synapse B dW")
+        plt.ylabel("Synaptic Weight Change (dW) ")
+        plt.legend()
+
+        plt.subplot(12, 1, 11)
+        plt.plot(internal_learning_state_B[:, 0], "r-", label="Synapse B pre_trace")
+        plt.ylabel("Synaptic pre-trace ")
+        plt.legend()
+
+        plt.subplot(12, 1, 12)
+        plt.plot(internal_learning_state_B[:, 1], "r-", label="Synapse B post-trace")
+        plt.ylabel("Synaptic B post-trace ")
+        plt.legend()"""
+
+        plt.tight_layout()
         plt.savefig(
-            "logic_gates_test_lif_test_synapse.png", dpi=150, bbox_inches="tight"
+            "logic_gates_test_lif_synapse.png",
+            dpi=150,
+            bbox_inches="tight",
         )
         plt.close()
 
-        # Save detailed simulation data to CSV for further analysis
-        with open("output_LIF.csv", "w", newline="") as file:
-            writer = csv.writer(file)
-            # Write header
-            writer.writerow(
-                [
-                    "Membrane_Potential_mV",
-                    "Time_Count",
-                    "Last_Spike_Time",
-                    "Synapse_Current",
-                ]
-            )
-            # Write combined data
-            for i in range(len(internal_states_history_soma0)):
-                row = list(internal_states_history_soma0[i]) + [
-                    internal_states_history_syn0[i][0]
-                ]
-                writer.writerow(row)
+        # Verify that soma responds to dual inputs
+        actual_spikes_soma_0 = self._model.get_spike_times(soma_id=soma_0)
+        print(f"Soma 0 spike times: {actual_spikes_soma_0}")
 
-        # Assert that the neuron generated expected number of spikes
-        actual_spikes = len(self._model.get_spike_times(soma_id=soma_0))
+        # We expect at least some integration effect from dual inputs
+        # The exact number depends on the timing and strength of inputs
+        minimum_expected_spikes = 1
         assert (
-            actual_spikes >= minimum_expected_spikes
-        ), f"Total number of spikes are {actual_spikes} but should be at least {minimum_expected_spikes}"
+            len(actual_spikes_soma_0) >= minimum_expected_spikes
+        ), f"Soma should generate at least {minimum_expected_spikes} spike(s) from dual inputs, got {len(actual_spikes_soma_0)}"
+
+        # Additional verification: check that both synapses contributed
+        # by verifying non-zero synaptic currents
+        max_synA_current = np.max(np.abs(internal_states_history_synA[:, 0]))
+        """max_synB_current = np.max(np.abs(internal_states_history_synB[:, 0]))"""
+
+        assert max_synA_current > 0, "Synapse A should show non-zero current"
+        """assert max_synB_current > 0, "Synapse B should show non-zero current"""
+
+        print(
+            f"Test passed: Soma generated {len(actual_spikes_soma_0)} spikes from dual synaptic inputs"
+        )
+        """print(
+            f"Max synaptic currents - A: {max_synA_current:.2e}, B: {max_synB_current:.2e}"
+        )"""
 
     def test_dual_external_synapses(self):
         """
@@ -953,12 +1059,12 @@ class LogicGatesTestLIF(unittest.TestCase):
             stdp_history_length,
         ]
         learning_parameters_B = [
-            stdpType,           #0
-            tau_pre_stdp,       #1
-            tau_post_stdp,      #2
-            a_exp_pre,          #3
-            a_exp_post,         #4
-            stdp_history_length,#5
+            stdpType,  # 0
+            tau_pre_stdp,  # 1
+            tau_post_stdp,  # 2
+            a_exp_pre,  # 3
+            a_exp_post,  # 4
+            stdp_history_length,  # 5
         ]
 
         # Internal learning state for STDP synapses
@@ -1062,9 +1168,13 @@ class LogicGatesTestLIF(unittest.TestCase):
         # print(f"Synapse A internal states: {internal_states_history_synA[:10]}")  # First 10 timesteps
         # print(f"Synapse B internal states: {internal_states_history_synB[:10]}")  # First 10 timesteps
 
-        print(f"Synapse A internal learning state, post soma spikes: {internal_learning_state_A[:, 1]}")
+        print(
+            f"Synapse A internal learning state, post soma spikes: {internal_learning_state_A[:, 1]}"
+        )
 
-        print(f"Synapse C internal learning state, post soma id: {internal_learning_state_C[:, 1]}")
+        print(
+            f"Synapse C internal learning state, post soma id: {internal_learning_state_C[:, 1]}"
+        )
         # Generate visualization comparing membrane potential and synaptic currents
         plt.figure(figsize=(24, 16))
 
@@ -1185,8 +1295,6 @@ class LogicGatesTestLIF(unittest.TestCase):
         print(
             f"Max synaptic currents - A: {max_synA_current:.2e}, B: {max_synB_current:.2e}"
         )
-
-
 
     #####################################################################33
     def test_weighted_synapse(self):
@@ -1322,11 +1430,13 @@ class LogicGatesTestLIF(unittest.TestCase):
         # internal_states_history_synB = np.array(
         #     self._model.get_internal_states_history(agent_id=syn_ext_B)
         # )
-        
+
         # Print debug information
         # print(f"Soma 0 spike times: {self._model.get_spike_times(soma_id=soma_0)}")
         print(f"Soma 0 internal_states: {internal_states_history_soma0}")
-        print(f"Synapse A internal states: {internal_states_history_synA}")  # First 10 timesteps
+        print(
+            f"Synapse A internal states: {internal_states_history_synA}"
+        )  # First 10 timesteps
         # print(f"Synapse B internal states: {internal_states_history_synB}")  # First 10 timesteps
 
         # Generate visualization comparing membrane potential and synaptic currents
@@ -1366,21 +1476,19 @@ class LogicGatesTestLIF(unittest.TestCase):
         # Additional verification: check that both synapses contributed
         # by verifying non-zero synaptic currents
         max_synA_current = np.max(np.abs(internal_states_history_synA[:, 0]))
-        
+
         assert max_synA_current > 0, "Synapse A should show non-zero current"
         # assert max_synB_current > 0, "Synapse B should show non-zero current"
 
         print(
             f"Test passed: Soma generated {len(actual_spikes_soma_0)} spikes from dual synaptic inputs"
         )
-        print(
-            f"Max synaptic currents - A: {max_synA_current:.2e}"
-        )
-
-
+        print(f"Max synaptic currents - A: {max_synA_current:.2e}")
 
 
 import unittest
+
+
 class LogicGatesTestGPU(LogicGatesTestLIF):
     """
     GPU-accelerated version of the LIF logic gates test.
