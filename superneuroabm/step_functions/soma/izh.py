@@ -15,11 +15,14 @@ def izh_soma_step_func(
     breeds,
     locations,
     neuron_params,  # k, vth, C, a, b,
+    learning_params,
     internal_state,  # v, u
+    internal_learning_state,
     synapse_history,  # Synapse delay
     input_spikes_tensor,  # input spikes
     output_spikes_tensor,
     internal_states_buffer,
+    internal_learning_states_buffer,
 ):
     synapse_ids = locations[agent_index]  # network location is defined by neighbors
 

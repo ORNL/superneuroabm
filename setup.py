@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="SuperNeuroABM",
-    version="1.0.0.dev01",
+    version="1.0.0.dev1",
     author="Chathika Gunaratne, Shruti Kulkarni, Ashish Gautam, Xi Zhang, Prasanna Date",
     author_email="gunaratnecs@ornl.gov",
     packages=[
