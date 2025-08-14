@@ -60,4 +60,3 @@ def synapse_single_exp_step_func(
     internal_states_buffer[agent_index][t_current][0] = I_synapse
     internal_states_buffer[agent_index][t_current][1] = spike
     internal_states_buffer[agent_index][t_current][2] = t_current
-    internal_states_buffer[agent_index][t_current][3] = pre_soma_id
