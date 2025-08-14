@@ -1,5 +1,5 @@
 soma:
-  LIF:
+  lif_soma:
     hyperparameters:
       C: 10e-9  # Membrane capacitance in Farads (10 nF)
       R: 1e12  # Membrane resistance in Ohms (1 TΩ)
@@ -13,7 +13,7 @@ soma:
       v: -60  # Initial membrane voltage
       tcount: 0  # Time counter
       tlast: 0  # Last spike time
-  IZH:
+  izh_soma:
     hyperparameters:
       k: 1.2
       vthr: -45
@@ -30,7 +30,7 @@ soma:
       u: 0  # Initial recovery variable
 
 synapse:
-  single_exp:
+  single_exp_synapse:
     hyperparameters:
       weight: 1.0  # Synaptic weight (strength)
       synaptic_delay: 1.0  # Transmission delay (ms)
