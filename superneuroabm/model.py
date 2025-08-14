@@ -2,6 +2,7 @@
 Model class for building an SNN
 """
 
+from collections import defaultdict
 from typing import Dict, Callable, List
 from pathlib import Path
 
@@ -129,6 +130,12 @@ class NeuromorphicModel(Model):
             self._synapse_breeds[breed_name] = synapse_breed
 
         self._synapse_index_map = {}
+        self.synapse2soma_map = defaultdict(
+            dict
+        )  # synapse_id -> "pre" or "post" -> soma_id
+        self.soma2synapse_map = defaultdict(
+            lambda: defaultdict(list)
+        )  # soma_id -> "pre" or "post" -> List[synapse_id]
 
     def set_global_property_value(name: str, value: float) -> None:
         if name in super().globals:
@@ -293,8 +300,12 @@ class NeuromorphicModel(Model):
         network_space: NetworkSpace = self.get_space()
         if not np.isnan(pre_soma_id):
             network_space.connect_agents(synapse_id, pre_soma_id, directed=True)
+            self.synapse2soma_map[synapse_id]["pre"] = pre_soma_id
+            self.soma2synapse_map[pre_soma_id]["post"].append(synapse_id)
         if not np.isnan(post_soma_id):
             network_space.connect_agents(post_soma_id, synapse_id, directed=True)
+            self.synapse2soma_map[synapse_id]["post"] = post_soma_id
+            self.soma2synapse_map[post_soma_id]["pre"].append(synapse_id)
         return synapse_id
 
     def update_synapse(
