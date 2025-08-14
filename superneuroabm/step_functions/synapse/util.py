@@ -4,7 +4,7 @@ from cupyx import jit
 
 
 @jit.rawkernel(device="cuda")
-def get_pre_soma_spike(
+def get_soma_spike(
     tick,
     agent_index,
     globals,
