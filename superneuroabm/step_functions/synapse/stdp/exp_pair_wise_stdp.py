@@ -6,7 +6,7 @@ Exponential STDP (Spike-Timing Dependent Plasticity) step function for spiking n
 import cupy as cp
 from cupyx import jit
 
-from superneuroabm.step_functions.synapse.util import get_pre_soma_spike
+from superneuroabm.step_functions.synapse.util import get_soma_spike
 
 
 @jit.rawkernel(device="cuda")
@@ -52,9 +52,8 @@ def exp_pair_wise_stdp(
     pre_soma_id = -1 if cp.isnan(location_data[1]) else location_data[0]
     post_soma_id = location_data[0] if cp.isnan(location_data[1]) else location_data[1]
 
-
     # Get the pre-soma spike
-    pre_soma_spike = get_pre_soma_spike(
+    pre_soma_spike = get_soma_spike(
         tick,
         agent_index,
         globals,
@@ -65,7 +64,7 @@ def exp_pair_wise_stdp(
         output_spikes_tensor,
     )
 
-    post_soma_spike = get_pre_soma_spike(
+    post_soma_spike = get_soma_spike(
         tick,
         agent_index,
         globals,
@@ -80,7 +79,6 @@ def exp_pair_wise_stdp(
     post_trace = post_trace * (1 - dt / tau_post_stdp) + post_soma_spike * a_exp_post
     dW = pre_trace * post_soma_spike - post_trace * pre_soma_spike
     # dW = 0
-
 
     weight += dW  # Update the weight
     synapse_params[agent_index][0] = weight  # Update the weight in synapse_params

@@ -1,6 +1,6 @@
 from cupyx import jit
 
-from superneuroabm.step_functions.synapse.util import get_pre_soma_spike
+from superneuroabm.step_functions.synapse.util import get_soma_spike
 from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp import (
     exp_pair_wise_stdp,
 )
@@ -24,7 +24,6 @@ def learning_rule_selector(
     internal_states_buffer,
     internal_learning_states_buffer,
 ):
-
 
     stdpType = learning_params[agent_index][0]  # 0 for None, 1 for exp_pair_wise_stdp
     # Wmax, Wmin

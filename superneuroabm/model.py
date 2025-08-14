@@ -442,12 +442,6 @@ class NeuromorphicModel(Model):
         self.set_agent_property_value(
             synapse_id, "input_spikes_tensor", spikes  # , [len(spikes), 2]
         )
-        print(
-            self.get_agent_property_value(
-                id=synapse_id,
-                property_name="input_spikes_tensor",
-            )
-        )
 
     def get_spike_times(self, soma_id: int) -> np.array:
         spike_train = super().get_agent_property_value(
