@@ -1,10 +1,11 @@
+from pathlib import Path
+
 from matplotlib import pyplot as plt
 import numpy as np
-import inspect
 from superneuroabm.model import NeuromorphicModel
 
 
-def vizualize_responses(model: NeuromorphicModel, vthr) -> None:
+def vizualize_responses(model: NeuromorphicModel, vthr: int, fig_name: str) -> None:
 
     soma_ids = model.soma2synapse_map.keys()
     synapse_ids = model.synapse2soma_map.keys()
@@ -70,11 +71,13 @@ def vizualize_responses(model: NeuromorphicModel, vthr) -> None:
             plt.ylabel(f"Synaptic {synapse_id} post-trace ")
             plt.legend()
 
-        plt.tight_layout()
-        func_name = inspect.currentframe().f_back.f_code.co_name
-        plt.savefig(
-            f"{func_name}.png",
-            dpi=150,
-            bbox_inches="tight",
-        )
-        plt.close()
+    plt.tight_layout()
+    dir_path = Path(__file__).resolve().parent / "output"
+    dir_path.mkdir(parents=True, exist_ok=True)
+    fig_path = dir_path / fig_name
+    plt.savefig(
+        fig_path,
+        dpi=150,
+        bbox_inches="tight",
+    )
+    plt.close()

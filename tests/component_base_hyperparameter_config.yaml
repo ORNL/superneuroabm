@@ -13,6 +13,8 @@ soma:
       v: -60  # Initial membrane voltage
       tcount: 0  # Time counter
       tlast: 0  # Last spike time
+      empty1: 10  # Time counter
+      empty2: 11  # Last spike time
   izh_soma:
     hyperparameters:
       k: 1.2
@@ -24,7 +26,7 @@ soma:
       vrest: -75
       d: 130
       vreset: -56
-      I_in: 350
+      I_in: 250
     default_internal_state:
       v: -75  # Initial membrane voltage
       u: 0  # Initial recovery variable
@@ -35,7 +37,7 @@ synapse:
       weight: 1.0  # Synaptic weight (strength)
       synaptic_delay: 1.0  # Transmission delay (ms)
       scale: 1.0  # Scaling factor
-      tau_fall: 1  # Decay time constant (1 ms)
+      tau_fall: 1e-2  # Decay time constant (1 ms)
       tau_rise: 0  # Rise time constant (instantaneous)
     default_internal_state:
       I_synapse: 0.0  # Initial synaptic current
