@@ -14,6 +14,7 @@ def izh_soma_step_func(
     agent_ids,
     breeds,
     locations,
+    connectivity,
     neuron_params,  # k, vth, C, a, b,
     learning_params,
     internal_state,  # v, u
@@ -39,8 +40,8 @@ def izh_soma_step_func(
 
     # Get the current time step value:
     t_current = int(tick)
-
     dt = globals[0]  # time step size
+    I_bias = globals[1]  # bias current
 
     # NOTE: neuron_params would need to be as long as the max number of params in any spiking neuron model
     k = neuron_params[agent_index][0]
@@ -66,14 +67,12 @@ def izh_soma_step_func(
     v = internal_state[agent_index][0]
     u = internal_state[agent_index][1]
 
-    I_bias = globals[1]  # bias current
-
     dv = (k * (v - vrest) * (v - vthr) - u + I_synapse + I_bias + I_in) / C
-    v = v + dt * dv *1e3
+    v = v + dt * dv * 1e3
 
     u += dt * 1e3 * (a * (b * (v - vrest) - u))
     s = 1 * (v >= vthr)  # output spike
-    u = u + d * s   # If spiked, update recovery variable
+    u = u + d * s  # If spiked, update recovery variable
     v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
 
     internal_state[agent_index][0] = v

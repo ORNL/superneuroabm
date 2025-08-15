@@ -26,13 +26,13 @@ class NeuromorphicModel(Model):
     def __init__(
         self,
         soma_breed_info: Dict[str, List[Callable]] = {
-            "IZH_Soma": [
+            "izh_soma": [
                 (
                     izh_soma_step_func,
                     CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "izh.py",
                 )
             ],
-            "LIF_Soma": [
+            "lif_soma": [
                 (
                     lif_soma_step_func,
                     CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif.py",
@@ -40,7 +40,7 @@ class NeuromorphicModel(Model):
             ],
         },
         synapse_breed_info: Dict[str, List[Callable]] = {
-            "Single_Exp_Synapse": [
+            "single_exp_synapse": [
                 (
                     synapse_single_exp_step_func,
                     CURRENT_DIR_ABSPATH
@@ -76,6 +76,7 @@ class NeuromorphicModel(Model):
         super().__init__(space=NetworkSpace())
 
         soma_properties = {
+            "connectivity": [],  # placeholder for connectivity info
             "parameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
             "learning_parameters": [
                 0.0 for _ in range(5)
@@ -91,6 +92,7 @@ class NeuromorphicModel(Model):
             "internal_learning_states_buffer": [],  # learning states buffer
         }
         synapse_properties = {
+            "connectivity": [],  # hold pre and post soma ids, needed since locations is unordered
             "parameters": [
                 0.0 for _ in range(10)
             ],  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
@@ -362,19 +364,29 @@ class NeuromorphicModel(Model):
         network_space: NetworkSpace = self.get_space()
         if not np.isnan(pre_soma_id):
             network_space.connect_agents(synapse_id, pre_soma_id, directed=True)
+            self._synapse_index_map.setdefault(pre_soma_id, {})[
+                post_soma_id
+            ] = synapse_id
+            self.soma2synapse_map[pre_soma_id]["post"].append(synapse_id)
             self.synapse2soma_map[synapse_id]["pre"] = pre_soma_id
             self.soma2synapse_map[pre_soma_id]["post"].append(synapse_id)
         if not np.isnan(post_soma_id):
             network_space.connect_agents(
                 synapse_id, post_soma_id, directed=True
             )  # Necessary due to STDP
-
             network_space.connect_agents(
                 post_soma_id, synapse_id, directed=True
             )  # Necessary due to STDP
             self.synapse2soma_map[synapse_id]["post"] = post_soma_id
             self.soma2synapse_map[post_soma_id]["pre"].append(synapse_id)
 
+        # Locations is unordered so we need to store pre and post soma ids
+        # in an ordered manner using a property
+        self.set_agent_property_value(
+            id=synapse_id,
+            property_name="connectivity",
+            value=[pre_soma_id if pre_soma_id else -1, post_soma_id],
+        )
         return synapse_id
 
     def update_synapse(
