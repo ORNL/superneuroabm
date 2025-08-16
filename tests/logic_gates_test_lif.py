@@ -239,7 +239,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         )
 
         # Define synaptic parameters for first synapse (stronger weight)
-        weight_A = 2.0  # Stronger synaptic weight
+        weight_A = 20.0  # Stronger synaptic weight
         synaptic_delay_A = 1.0  # Transmission delay (ms)
         scale_A = 1.0  # Scaling factor
         tau_fall_A = 1e-2  # Decay time constant (2 ms)
@@ -253,7 +253,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         ]
 
         # Define synaptic parameters for second synapse (weaker weight)
-        weight_B = 1.0  # Weaker synaptic weight
+        weight_B = 10.0  # Weaker synaptic weight
         synaptic_delay_B = 1.0  # Longer transmission delay (ms)
         scale_B = 1.0  # Scaling factor
         tau_fall_B = 1e-2  # Faster decay time constant (1 ms)
@@ -311,15 +311,15 @@ class LogicGatesTestLIF(unittest.TestCase):
         )
 
         # Create second external input synapse (weaker input)
-        """syn_ext_B = self._model.create_synapse(
-            breed="Single_Exp_Synapse",
-            pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
-            post_soma_id=soma_0,
-            parameters=synapse_parameters_B,
-            default_internal_state=synapse_internal_state,
-            learning_parameters=learning_parameters_B,
-            default_internal_learning_state=internal_learning_state_A,
-        )"""
+        # syn_ext_B = self._model.create_synapse(
+        #     breed="Single_Exp_Synapse",
+        #     pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
+        #     post_soma_id=soma_0,
+        #     parameters=synapse_parameters_B,
+        #     default_internal_state=synapse_internal_state,
+        #     learning_parameters=learning_parameters_B,
+        #     default_internal_learning_state=internal_learning_state_A,
+        # )
 
         # Initialize the simulation environment
         self._model.setup(use_gpu=self._use_gpu)

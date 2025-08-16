@@ -7,7 +7,7 @@ Weighted synapse step functions for spiking neural networks
 import cupy as cp
 from cupyx import jit
 
-from superneuroabm.step_functions.synapse.util import get_pre_soma_spike
+from superneuroabm.step_functions.synapse.util import get_soma_spike
 
 
 @jit.rawkernel(device="cuda")
@@ -40,7 +40,7 @@ def weighted_synapse_step_func(
     
     pre_soma_id = -1 if cp.isnan(location_data[1]) else location_data[0]
         
-    spike = get_pre_soma_spike(
+    spike = get_soma_spike(
         tick,
         agent_index,
         globals,
