@@ -7,6 +7,7 @@ from typing import Dict, Callable, List
 from pathlib import Path
 
 import numpy as np
+import cupy as cp
 from sagesim.space import NetworkSpace
 from sagesim.model import Model
 from sagesim.breed import Breed
@@ -385,7 +386,7 @@ class NeuromorphicModel(Model):
         self.set_agent_property_value(
             id=synapse_id,
             property_name="connectivity",
-            value=[pre_soma_id if pre_soma_id else -1, post_soma_id],
+            value=[pre_soma_id if not np.isnan(pre_soma_id) else -1, post_soma_id],
         )
         return synapse_id
 

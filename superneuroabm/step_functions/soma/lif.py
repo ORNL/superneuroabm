@@ -55,6 +55,9 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
         6
     ]  # whether to allow integration during refractory period
     I_in = neuron_params[agent_index][7]  # input current
+    scaling_factor = neuron_params[agent_index][
+        8
+    ]  # scaling factor for synaptic current
     # vreset = neuron_params[agent_index][8]
     # I_in = neuron_params[agent_index][9]
 
@@ -67,7 +70,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     tlast = internal_state[agent_index][2]  # last spike time
 
     # Calculate the membrane potential update
-    dv = (vrest - v) / (R * C) + (I_synapse + I_bias + I_in) / C
+    dv = (vrest - v) / (R * C) + (I_synapse * scaling_factor + I_bias + I_in) / C
 
     v += (
         (dv * dt)
