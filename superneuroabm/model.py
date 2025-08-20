@@ -159,7 +159,7 @@ class NeuromorphicModel(Model):
             dict
         )  # synapse_id -> "pre" or "post" -> soma_id
         self.soma2synapse_map = defaultdict(
-            lambda: defaultdict(list)
+            lambda: defaultdict(set)
         )  # soma_id -> "pre" or "post" -> List[synapse_id]
         self._synapse2defaultparameters: Dict[int, List[float]] = {}
         self._synapse2defaultlearningparameters: Dict[int, List[float]] = {}
@@ -368,9 +368,8 @@ class NeuromorphicModel(Model):
             self._synapse_index_map.setdefault(pre_soma_id, {})[
                 post_soma_id
             ] = synapse_id
-            self.soma2synapse_map[pre_soma_id]["post"].append(synapse_id)
+            self.soma2synapse_map[pre_soma_id]["post"].add(synapse_id)
             self.synapse2soma_map[synapse_id]["pre"] = pre_soma_id
-            self.soma2synapse_map[pre_soma_id]["post"].append(synapse_id)
         if not np.isnan(post_soma_id):
             network_space.connect_agents(
                 synapse_id, post_soma_id, directed=True
@@ -379,7 +378,7 @@ class NeuromorphicModel(Model):
                 post_soma_id, synapse_id, directed=True
             )  # Necessary due to STDP
             self.synapse2soma_map[synapse_id]["post"] = post_soma_id
-            self.soma2synapse_map[post_soma_id]["pre"].append(synapse_id)
+            self.soma2synapse_map[post_soma_id]["pre"].add(synapse_id)
 
         # Locations is unordered so we need to store pre and post soma ids
         # in an ordered manner using a property
