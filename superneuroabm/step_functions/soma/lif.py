@@ -14,6 +14,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     agent_ids,
     breeds,
     locations,
+    connectivity,
     neuron_params,  # k, vth, C, a, b,
     learning_params,
     internal_state,  # v, u
@@ -54,19 +55,28 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
         6
     ]  # whether to allow integration during refractory period
     I_in = neuron_params[agent_index][7]  # input current
+    scaling_factor = neuron_params[agent_index][
+        8
+    ]  # scaling factor for synaptic current
     # vreset = neuron_params[agent_index][8]
     # I_in = neuron_params[agent_index][9]
 
     # NOTE: size of internal_state would need to be set as the maximum possible state varaibles of any spiking neuron
     # Internal state variables
     v = internal_state[agent_index][0]  # membrane potential
-    tcount = internal_state[agent_index][1]  # time count from the start of the simulation
+    tcount = internal_state[agent_index][
+        1
+    ]  # time count from the start of the simulation
     tlast = internal_state[agent_index][2]  # last spike time
 
     # Calculate the membrane potential update
-    dv = (vrest - v) / (R * C) + (I_synapse*1e-5 + I_bias + I_in) / C
+    dv = (vrest - v) / (R * C) + (I_synapse * scaling_factor + I_bias + I_in) / C
 
-    v +=  (dv*dt) if ((dt * tcount) > (tlast + tref)) or tref_allows_integration else 0.0
+    v += (
+        (dv * dt)
+        if ((dt * tcount) > (tlast + tref)) or tref_allows_integration
+        else 0.0
+    )
 
     s = 1 * (v >= vthr) and (
         dt * tcount > tlast + tref
@@ -77,10 +87,8 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     internal_state[agent_index][0] = v
     internal_state[agent_index][1] += 1
     internal_state[agent_index][2] = tlast
-    internal_state[agent_index][3] = I_synapse  # Update time count
 
     output_spikes_tensor[agent_index][t_current] = s
     internal_states_buffer[agent_index][t_current][0] = internal_state[agent_index][0]
     internal_states_buffer[agent_index][t_current][1] = internal_state[agent_index][1]
     internal_states_buffer[agent_index][t_current][2] = internal_state[agent_index][2]
-    internal_states_buffer[agent_index][t_current][3] = internal_state[agent_index][3]

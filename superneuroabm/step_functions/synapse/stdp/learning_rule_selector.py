@@ -14,6 +14,7 @@ def learning_rule_selector(
     agent_ids,
     breeds,
     locations,
+    connectivity,
     synapse_params,
     learning_params,  # STDP_function name,
     internal_state,  #
@@ -38,6 +39,7 @@ def learning_rule_selector(
             agent_ids,
             breeds,
             locations,
+            connectivity,
             synapse_params,  # scale, time constant (tau_rise and tau_fall)
             learning_params,
             internal_state,  #

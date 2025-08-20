@@ -17,6 +17,7 @@ def exp_pair_wise_stdp(
     agent_ids,
     breeds,
     locations,
+    connectivity,
     synapse_params,  # scale, time constant (tau_rise and tau_fall)
     learning_params,
     internal_state,  #

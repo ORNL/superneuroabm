@@ -4,6 +4,7 @@ Single exponential synapse step functions for spiking neural networks
 """
 
 import cupy as cp
+import numpy as np
 from cupyx import jit
 
 from superneuroabm.step_functions.synapse.util import get_soma_spike
@@ -18,6 +19,7 @@ def synapse_single_exp_step_func(
     agent_ids,
     breeds,
     locations,
+    connectivity,
     synapse_params,  # scale, time constant (tau_rise and tau_fall)
     learning_params,
     internal_state,  #
@@ -38,9 +40,10 @@ def synapse_single_exp_step_func(
     tau_fall = synapse_params[agent_index][3]
     tau_rise = synapse_params[agent_index][4]
 
-    location_data = locations[agent_index]
-    pre_soma_id = -1 if cp.isnan(location_data[1]) else location_data[0]
-    post_soma_id = location_data[0] if cp.isnan(location_data[1]) else location_data[1]
+    pre_soma_id, post_soma_id = (
+        connectivity[agent_index][0],
+        connectivity[agent_index][1],
+    )
     spike = get_soma_spike(
         tick,
         agent_index,
