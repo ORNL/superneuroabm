@@ -186,7 +186,7 @@ class NeuromorphicModel(Model):
 
     def setup(
         self,
-        use_gpu: bool = False,
+        use_gpu: bool = True,
         retain_parameters=True,
     ) -> None:
         """
@@ -195,6 +195,10 @@ class NeuromorphicModel(Model):
         :param retain_parameters: False by default. If True, parameters are
             reset to their default values upon setup.
         """
+
+        self.register_global_property("dt", 1e-3)  # Time step (100 μs)
+        self.register_global_property("I_bias", 0)  # No bias current
+
         synapse_ids = self._synapse_ids
         soma_ids = self._soma_ids
         for synapse_id in synapse_ids:
@@ -315,7 +319,7 @@ class NeuromorphicModel(Model):
         breed: str,
         parameters: List[float],
         default_internal_state: List[float],
-        tags: Set[str] = set(),
+        tags: Set[str] = None,
     ) -> int:
         """
         Creates and soma agent.
@@ -323,6 +327,8 @@ class NeuromorphicModel(Model):
         :return: SAGESim agent id of soma
 
         """
+        tags = tags if tags else set()
+
         soma_id = super().create_agent_of_breed(
             breed=self._soma_breeds[breed],  # TODO fix
             parameters=parameters,
@@ -330,7 +336,7 @@ class NeuromorphicModel(Model):
         )
         self._soma_ids.append(soma_id)
         self._soma_reset_states[soma_id] = default_internal_state
-        tags.extend({"soma", breed})
+        tags.update({"soma", breed})
         for tag in tags:
             self.tag2component[tag].add(soma_id)
         return soma_id
@@ -342,9 +348,9 @@ class NeuromorphicModel(Model):
         post_soma_id: int,
         parameters: List[float],
         default_internal_state: List[float],
-        learning_parameters: List[float] = [-1],
-        default_internal_learning_state: List[float] = [],
-        tags: Set[str] = set(),
+        learning_parameters: List[float] = None,
+        default_internal_learning_state: List[float] = None,
+        tags: Set[str] = None,
     ) -> int:
         """
         Creates and adds Synapse agent.
@@ -357,6 +363,12 @@ class NeuromorphicModel(Model):
             enabled step function. Must be specified in order of use
             in step function.
         """
+        learning_parameters = learning_parameters if learning_parameters else [-1]
+        # Default internal learning state is empty list if not specified
+        default_internal_learning_state = (
+            default_internal_learning_state if default_internal_learning_state else []
+        )
+        tags = tags if tags else set()
 
         synaptic_delay = int(parameters[1])
         delay_reg = [0 for _ in range(synaptic_delay)]
@@ -379,14 +391,11 @@ class NeuromorphicModel(Model):
         network_space: NetworkSpace = self.get_space()
         if not np.isnan(pre_soma_id):
             network_space.connect_agents(synapse_id, pre_soma_id, directed=True)
-            self._synapse_index_map.setdefault(pre_soma_id, {})[
-                post_soma_id
-            ] = synapse_id
             self.soma2synapse_map[pre_soma_id]["post"].add(synapse_id)
             self.synapse2soma_map[synapse_id]["pre"] = pre_soma_id
         else:
             self.synapse2soma_map[synapse_id]["pre"] = float("nan")  # External input
-            self.tags.add("input_synapse")
+            tags.add("input_synapse")
         if not np.isnan(post_soma_id):
             network_space.connect_agents(
                 synapse_id, post_soma_id, directed=True
@@ -407,7 +416,7 @@ class NeuromorphicModel(Model):
             value=[pre_soma_id if not np.isnan(pre_soma_id) else -1, post_soma_id],
         )
 
-        tags.extend({"synapse", breed})
+        tags.update({"synapse", breed})
         for tag in tags:
             self.tag2component[tag].add(synapse_id)
         return synapse_id
