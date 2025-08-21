@@ -45,6 +45,8 @@ synapse:
         tau_rise: 0  # Rise time constant (instantaneous)
       default_internal_state:
         I_synapse: 0.0  # Initial synaptic current  
+      learning_hyperparameters: 
+        stdp_type: -1  # No learning
     exp_pair_wise_stdp_config_0:
       hyperparameters:
         weight: 14.0  # Synaptic weight (strength)
@@ -61,7 +63,7 @@ synapse:
         a_exp_pre: 0.005  # Pre-synaptic STDP learning rate
         a_exp_post: 0.005  # Post-synaptic STDP learning rate
         stdp_history_length: 100  # Length of STDP history buffer
-      default_learning_state:
+      default_internal_learning_state:
         pre_trace: 0 # Pre-synaptic trace
         post_trace: 0 # Post-synaptic trace
         dW: 0 # Weight change accumulator
