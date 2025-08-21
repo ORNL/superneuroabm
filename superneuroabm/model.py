@@ -3,7 +3,7 @@ Model class for building an SNN
 """
 
 from collections import defaultdict
-from typing import Dict, Callable, List
+from typing import Dict, Callable, List, Set
 from pathlib import Path
 
 import numpy as np
@@ -154,7 +154,7 @@ class NeuromorphicModel(Model):
             self.register_breed(synapse_breed)
             self._synapse_breeds[breed_name] = synapse_breed
 
-        self._synapse_index_map = {}
+        self.tag2component = defaultdict(set)  # tag -> agent_id
         self.synapse2soma_map = defaultdict(
             dict
         )  # synapse_id -> "pre" or "post" -> soma_id
@@ -175,9 +175,18 @@ class NeuromorphicModel(Model):
     def get_global_property_value(name: str) -> float:
         return super().get_global_property_value(name)
 
+    def get_agents_with_tag(self, tag: str) -> Set[int]:
+        """
+        Returns a list of agent IDs associated with the given tag.
+
+        :param tag: The tag to filter agents by.
+        :return: List of agent IDs that have the specified tag.
+        """
+        return self.tag2component.get(tag, set())
+
     def setup(
         self,
-        use_gpu: bool = False,
+        use_gpu: bool = True,
         retain_parameters=True,
     ) -> None:
         """
@@ -186,6 +195,10 @@ class NeuromorphicModel(Model):
         :param retain_parameters: False by default. If True, parameters are
             reset to their default values upon setup.
         """
+
+        self.register_global_property("dt", 1e-3)  # Time step (100 μs)
+        self.register_global_property("I_bias", 0)  # No bias current
+
         synapse_ids = self._synapse_ids
         soma_ids = self._soma_ids
         for synapse_id in synapse_ids:
@@ -306,6 +319,7 @@ class NeuromorphicModel(Model):
         breed: str,
         parameters: List[float],
         default_internal_state: List[float],
+        tags: Set[str] = None,
     ) -> int:
         """
         Creates and soma agent.
@@ -313,6 +327,8 @@ class NeuromorphicModel(Model):
         :return: SAGESim agent id of soma
 
         """
+        tags = tags if tags else set()
+
         soma_id = super().create_agent_of_breed(
             breed=self._soma_breeds[breed],  # TODO fix
             parameters=parameters,
@@ -320,6 +336,9 @@ class NeuromorphicModel(Model):
         )
         self._soma_ids.append(soma_id)
         self._soma_reset_states[soma_id] = default_internal_state
+        tags.update({"soma", breed})
+        for tag in tags:
+            self.tag2component[tag].add(soma_id)
         return soma_id
 
     def create_synapse(
@@ -329,8 +348,9 @@ class NeuromorphicModel(Model):
         post_soma_id: int,
         parameters: List[float],
         default_internal_state: List[float],
-        learning_parameters: List[float] = [-1],
-        default_internal_learning_state: List[float] = [],
+        learning_parameters: List[float] = None,
+        default_internal_learning_state: List[float] = None,
+        tags: Set[str] = None,
     ) -> int:
         """
         Creates and adds Synapse agent.
@@ -343,6 +363,12 @@ class NeuromorphicModel(Model):
             enabled step function. Must be specified in order of use
             in step function.
         """
+        learning_parameters = learning_parameters if learning_parameters else [-1]
+        # Default internal learning state is empty list if not specified
+        default_internal_learning_state = (
+            default_internal_learning_state if default_internal_learning_state else []
+        )
+        tags = tags if tags else set()
 
         synaptic_delay = int(parameters[1])
         delay_reg = [0 for _ in range(synaptic_delay)]
@@ -365,11 +391,11 @@ class NeuromorphicModel(Model):
         network_space: NetworkSpace = self.get_space()
         if not np.isnan(pre_soma_id):
             network_space.connect_agents(synapse_id, pre_soma_id, directed=True)
-            self._synapse_index_map.setdefault(pre_soma_id, {})[
-                post_soma_id
-            ] = synapse_id
             self.soma2synapse_map[pre_soma_id]["post"].add(synapse_id)
             self.synapse2soma_map[synapse_id]["pre"] = pre_soma_id
+        else:
+            self.synapse2soma_map[synapse_id]["pre"] = float("nan")  # External input
+            tags.add("input_synapse")
         if not np.isnan(post_soma_id):
             network_space.connect_agents(
                 synapse_id, post_soma_id, directed=True
@@ -379,6 +405,8 @@ class NeuromorphicModel(Model):
             )  # Necessary due to STDP
             self.synapse2soma_map[synapse_id]["post"] = post_soma_id
             self.soma2synapse_map[post_soma_id]["pre"].add(synapse_id)
+        else:
+            self.synapse2soma_map[synapse_id]["post"] = float("nan")
 
         # Locations is unordered so we need to store pre and post soma ids
         # in an ordered manner using a property
@@ -387,6 +415,10 @@ class NeuromorphicModel(Model):
             property_name="connectivity",
             value=[pre_soma_id if not np.isnan(pre_soma_id) else -1, post_soma_id],
         )
+
+        tags.update({"synapse", breed})
+        for tag in tags:
+            self.tag2component[tag].add(synapse_id)
         return synapse_id
 
     def update_synapse(
