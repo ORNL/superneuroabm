@@ -36,32 +36,13 @@ def model_from_nx_graph(graph: nx.DiGraph) -> NeuromorphicModel:
             continue
         soma_breed = data.get("soma_breed")
         config_name = data.get("config", "config_0")
-        config = component_configurations["soma"][soma_breed][config_name]
         overrides = data.get("overrides", {})
 
-        if not soma_breed:
-            raise ValueError(f"Node {node} is missing 'soma_breed' attribute.")
-
-        # Apply overrides to soma configuration
-        for override_category in overrides:
-            if override_category in config:
-                category_defaults = config[override_category]
-                for parameter_name, parameter_value in overrides[
-                    override_category
-                ].items():
-                    if parameter_name in category_defaults:
-                        category_defaults[parameter_name] = parameter_value
-                    else:
-                        warnings.warn(
-                            f"Parameter '{parameter_name}' not found in '{override_category}' for node {node}.",
-                            UserWarning,
-                        )
         soma_id = model.create_soma(
             breed=soma_breed,
-            parameters=[float(val) for val in config["hyperparameters"].values()],
-            default_internal_state=[
-                float(val) for val in config["default_internal_state"].values()
-            ],
+            config_name=config_name,
+            hyperparameters_overrides=overrides.get("hyperparameters"),
+            default_internal_state_overrides=overrides.get("internal_state"),
         )
         name2id[node] = soma_id
         id2name[soma_id] = node
@@ -70,26 +51,7 @@ def model_from_nx_graph(graph: nx.DiGraph) -> NeuromorphicModel:
     for u, v, data in graph.edges(data=True):
         synapse_breed = data.get("synapse_breed")
         config_name = data.get("config", "config_0")
-        config = component_configurations["synapse"][synapse_breed][config_name]
         overrides = data.get("overrides", {})
-
-        if not synapse_breed:
-            raise ValueError(f"Edge ({u}, {v}) is missing 'synapse_breed' attribute.")
-
-        # Apply overrides to soma configuration
-        for override_category in overrides:
-            if override_category in config:
-                category_defaults = config[override_category]
-                for parameter_name, parameter_value in overrides[
-                    override_category
-                ].items():
-                    if parameter_name in category_defaults:
-                        category_defaults[parameter_name] = parameter_value
-                    else:
-                        warnings.warn(
-                            f"Parameter '{parameter_name}' not found in '{override_category}' for edge {u} -> {v}.",
-                            UserWarning,
-                        )
 
         pre_soma_id = name2id.get(u, np.nan)  # External input if not found
         post_soma_id = name2id[v]
@@ -97,19 +59,61 @@ def model_from_nx_graph(graph: nx.DiGraph) -> NeuromorphicModel:
             breed=synapse_breed,
             pre_soma_id=pre_soma_id,
             post_soma_id=post_soma_id,
-            parameters=[float(val) for val in config["hyperparameters"].values()],
-            default_internal_state=[
-                float(val) for val in config["default_internal_state"].values()
-            ],
-            learning_parameters=[
-                float(val) for val in config["learning_hyperparameters"].values()
-            ],
-            default_internal_learning_state=[
-                float(val) for val in config.get("default_learning_state", {}).values()
-            ],
+            config_name=config_name,
+            hyperparameters_overrides=overrides.get("hyperparameters"),
+            default_internal_state_overrides=overrides.get("internal_state"),
+            learning_hyperparameters_overrides=overrides.get(
+                "learning_hyperparameters"
+            ),
+            default_internal_learning_state_overrides=overrides.get(
+                "default_internal_learning_state"
+            ),
         )
 
     return model
+
+
+def nx_graph_from_model(model: NeuromorphicModel) -> nx.DiGraph:
+    """
+    Convert a NeuromorphicModel to a NetworkX graph.
+
+    Args:
+        model: A NeuromorphicModel object.
+
+    Returns:
+        A NetworkX DiGraph representing the model.
+    """
+    graph = nx.DiGraph()
+
+    # Add nodes for somas
+    for soma_id in model.get_agents_with_tag("soma"):
+        soma_breed = model.get_agent_breed(soma_id).name
+        config = model.get_agent_config_name(soma_id)
+        overrides = model.get_agent_config_diff(soma_id)
+
+        graph.add_node(
+            soma_id,
+            soma_breed=soma_breed,
+            config=config,
+            overrides=overrides,
+        )
+
+    # Add edges for synapses
+    for synapse_id in model.get_agents_with_tag("synapse"):
+        pre_soma_id, post_soma_id = model.get_synapse_connectivity(synapse_id)
+        synapse_breed = model.get_agent_breed(synapse_id).name
+        config = model.get_agent_config_name(synapse_id)
+        overrides = model.get_agent_config_diff(synapse_id)
+
+        graph.add_edge(
+            pre_soma_id,
+            post_soma_id,
+            synapse_breed=synapse_breed,
+            config=config,
+            overrides=overrides,
+        )
+
+    return graph
 
 
 if __name__ == "__main__":
@@ -121,7 +125,7 @@ if __name__ == "__main__":
         config="config_0",
         overrides={
             "hyperparameters": {"R": 1.1e6},
-            "default_internal_state": {"v": -60.01},
+            "internal_state": {"v": -60.01},
         },
     )
     graph.add_node(
@@ -130,7 +134,7 @@ if __name__ == "__main__":
         config="config_0",
         overrides={
             "hyperparameters": {"a": 0.0102, "b": 5.001},
-            "default_internal_state": {"v": -75.002},
+            "internal_state": {"v": -75.002},
         },
     )
     # np.nan indicates external synapse
@@ -162,3 +166,10 @@ if __name__ == "__main__":
     for soma_id in model.get_agents_with_tag("soma"):
         spikes = model.get_spike_times(soma_id)
         print(f"Soma {soma_id} spikes: {spikes}")
+
+    # Print the graph structure with all attributes
+    graph_out = nx_graph_from_model(model)
+    for node, data in graph_out.nodes(data=True):
+        print(f"Node {node}: {data}")
+    for u, v, data in graph_out.edges(data=True):
+        print(f"Edge {u} -> {v}: {data}")
