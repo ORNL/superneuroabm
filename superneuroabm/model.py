@@ -19,6 +19,8 @@ from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_s
 from superneuroabm.step_functions.synapse.stdp.learning_rule_selector import (
     learning_rule_selector,
 )
+from superneuroabm.util import load_component_configurations
+import copy
 
 CURRENT_DIR_ABSPATH = Path(__file__).resolve().parent
 
@@ -78,8 +80,8 @@ class NeuromorphicModel(Model):
 
         soma_properties = {
             "connectivity": [],  # placeholder for connectivity info
-            "parameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
-            "learning_parameters": [
+            "hyperparameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
+            "learning_hyperparameters": [
                 0.0 for _ in range(5)
             ],  # STDP_function name, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, Wmax, Wmin
             "internal_state": [0.0, 0.0, 0.0, 0.0],  # v, u
@@ -94,10 +96,10 @@ class NeuromorphicModel(Model):
         }
         synapse_properties = {
             "connectivity": [],  # hold pre and post soma ids, needed since locations is unordered
-            "parameters": [
+            "hyperparameters": [
                 0.0 for _ in range(10)
             ],  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
-            "learning_parameters": [
+            "learning_hyperparameters": [
                 0.0 for _ in range(5)
             ],  # STDP_function name, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, Wmax, Wmin
             "internal_state": [
@@ -155,6 +157,11 @@ class NeuromorphicModel(Model):
             self._synapse_breeds[breed_name] = synapse_breed
 
         self.tag2component = defaultdict(set)  # tag -> agent_id
+
+        # Load and hold configurations
+        self.agentid2config = {}
+        self._component_configurations = load_component_configurations()
+
         self.synapse2soma_map = defaultdict(
             dict
         )  # synapse_id -> "pre" or "post" -> soma_id
@@ -174,6 +181,67 @@ class NeuromorphicModel(Model):
 
     def get_global_property_value(name: str) -> float:
         return super().get_global_property_value(name)
+
+    def get_agent_config_name(self, agent_id: int) -> Dict[str, any]:
+        """
+        Returns the configuration of the agent with the given ID.
+        """
+        return self.agentid2config.get(agent_id, None)
+
+    def get_agent_breed(self, agent_id: int) -> str:
+        """
+        Returns the breed of the agent with the given ID.
+        """
+        breed_idx = int(
+            self.get_agent_property_value(id=agent_id, property_name="breed")
+        )
+        return list(self._agent_factory.breeds)[breed_idx]
+
+    def get_synapse_connectivity(self, synapse_id: int) -> List[int]:
+        """
+        Returns the connectivity of the synapse with the given ID.
+        The connectivity is a list of length 2 containing pre and post soma IDs.
+        """
+        return self.get_agent_property_value(
+            id=synapse_id, property_name="connectivity"
+        )
+
+    def get_agent_config_diff(self, agent_id: int) -> Dict[str, any]:
+        """
+        Returns the configuration overrides for the agent with the given ID.
+        """
+        component_class = (
+            "soma" if agent_id in self.get_agents_with_tag("soma") else "synapse"
+        )
+        breed_name = self.get_agent_breed(agent_id).name
+        config_name = self.get_agent_config_name(agent_id)
+        config = self._component_configurations[component_class][breed_name][
+            config_name
+        ]
+        overrides = {}
+        # Must use Python 3.7+ dict comprehension syntax for ordered dicts
+        property_names = config.keys()
+        for property_name in property_names:
+            config_property_key_values = config.get(property_name, {})
+            current_property_key_values = self.get_agent_property_value(
+                id=agent_id, property_name=property_name
+            )
+            diffs = {
+                k: (
+                    v,
+                    current_property_key_values[i],
+                    v - current_property_key_values[i],
+                )
+                for i, (k, v) in enumerate(config_property_key_values.items())
+                if v != current_property_key_values[i]
+            }
+
+            overrides[property_name] = {
+                k: current_property_key_values[i]
+                for i, (k, v) in enumerate(config_property_key_values.items())
+                if v != current_property_key_values[i]
+            }
+        return overrides
 
     def get_agents_with_tag(self, tag: str) -> Set[int]:
         """
@@ -229,16 +297,16 @@ class NeuromorphicModel(Model):
                 ]  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
                 super().set_agent_property_value(
                     id=synapse_id,
-                    property_name="parameters",
+                    property_name="hyperparameters",
                     value=default_synapse_parameters,
                 )
-                default_synapse_learning_parameters = (
+                default_synapse_learning_hyperparameters = (
                     self._synapse2defaultlearningparameters[synapse_id]
                 )
                 super().set_agent_property_value(
                     id=synapse_id,
-                    property_name="learning_parameters",
-                    value=default_synapse_learning_parameters,
+                    property_name="learning_hyperparameters",
+                    value=default_synapse_learning_hyperparameters,
                 )
             # Clear internal states
 
@@ -317,8 +385,9 @@ class NeuromorphicModel(Model):
     def create_soma(
         self,
         breed: str,
-        parameters: List[float],
-        default_internal_state: List[float],
+        config_name: str,
+        hyperparameters_overrides: Dict[str, float] = None,
+        default_internal_state_overrides: Dict[str, float] = None,
         tags: Set[str] = None,
     ) -> int:
         """
@@ -329,13 +398,34 @@ class NeuromorphicModel(Model):
         """
         tags = tags if tags else set()
 
+        # Get relevant configuration
+        config = copy.deepcopy(
+            self._component_configurations["soma"][breed][config_name]
+        )
+        # Apply overrides to hyperparameters and default internal state
+        if hyperparameters_overrides:
+            for parameter_name, parameter_value in hyperparameters_overrides.items():
+                config["hyperparameters"][parameter_name] = parameter_value
+        if default_internal_state_overrides:
+            for state_name, state_value in default_internal_state_overrides.items():
+                config["internal_state"][state_name] = state_value
+
+        hyperparameters = [float(val) for val in config["hyperparameters"].values()]
+        default_internal_state = [
+            float(val) for val in config["internal_state"].values()
+        ]
+
         soma_id = super().create_agent_of_breed(
             breed=self._soma_breeds[breed],  # TODO fix
-            parameters=parameters,
+            hyperparameters=hyperparameters,
             internal_state=default_internal_state,
         )
+
         self._soma_ids.append(soma_id)
         self._soma_reset_states[soma_id] = default_internal_state
+
+        self.agentid2config[soma_id] = config_name
+
         tags.update({"soma", breed})
         for tag in tags:
             self.tag2component[tag].add(soma_id)
@@ -346,10 +436,11 @@ class NeuromorphicModel(Model):
         breed: str,
         pre_soma_id: int,  # TODO edit
         post_soma_id: int,
-        parameters: List[float],
-        default_internal_state: List[float],
-        learning_parameters: List[float] = None,
-        default_internal_learning_state: List[float] = None,
+        config_name: str,
+        hyperparameters_overrides: List[float] = None,
+        default_internal_state_overrides: List[float] = None,
+        learning_hyperparameters_overrides: List[float] = None,
+        default_internal_learning_state_overrides: List[float] = None,
         tags: Set[str] = None,
     ) -> int:
         """
@@ -363,25 +454,57 @@ class NeuromorphicModel(Model):
             enabled step function. Must be specified in order of use
             in step function.
         """
-        learning_parameters = learning_parameters if learning_parameters else [-1]
-        # Default internal learning state is empty list if not specified
-        default_internal_learning_state = (
-            default_internal_learning_state if default_internal_learning_state else []
-        )
         tags = tags if tags else set()
 
-        synaptic_delay = int(parameters[1])
+        # Get relevant configuration
+        config = copy.deepcopy(
+            self._component_configurations["synapse"][breed][config_name]
+        )
+        # Apply overrides to hyperparameters and default internal state
+        if hyperparameters_overrides:
+            for parameter_name, parameter_value in hyperparameters_overrides.items():
+                config["hyperparameters"][parameter_name] = parameter_value
+        if default_internal_state_overrides:
+            for state_name, state_value in default_internal_state_overrides.items():
+                config["internal_state"][state_name] = state_value
+        if learning_hyperparameters_overrides:
+            for (
+                parameter_name,
+                parameter_value,
+            ) in learning_hyperparameters_overrides.items():
+                config["learning_hyperparameters"][parameter_name] = parameter_value
+        if default_internal_learning_state_overrides:
+            for (
+                state_name,
+                state_value,
+            ) in default_internal_learning_state_overrides.items():
+                config["internal_learning_state"][state_name] = state_value
+        hyperparameters = [float(val) for val in config["hyperparameters"].values()]
+        default_internal_state = [
+            float(val) for val in config["internal_state"].values()
+        ]
+        learning_hyperparameters = [
+            float(val)
+            for val in config.get(
+                "learning_hyperparameters", {"stdp_type": -1}
+            ).values()
+        ]
+        default_internal_learning_state = [
+            float(val) for val in config.get("internal_learning_state", {}).values()
+        ]
+
+        synaptic_delay = int(hyperparameters[1])
         delay_reg = [0 for _ in range(synaptic_delay)]
         synapse_id = self.create_agent_of_breed(
             breed=self._synapse_breeds[breed],
-            parameters=parameters,
-            learning_parameters=learning_parameters,
+            hyperparameters=hyperparameters,
+            learning_hyperparameters=learning_hyperparameters,
             internal_state=default_internal_state,
             internal_learning_state=default_internal_learning_state,
             synapse_delay_reg=delay_reg,
         )
-        self._synapse2defaultparameters[synapse_id] = parameters
-        self._synapse2defaultlearningparameters[synapse_id] = learning_parameters
+        self._synapse2defaultparameters[synapse_id] = hyperparameters
+        self._synapse2defaultlearningparameters[synapse_id] = learning_hyperparameters
         self._synapse2defaultinternalstate[synapse_id] = default_internal_state
         self._synapse2defaultinternallearningstate[synapse_id] = (
             default_internal_learning_state
@@ -416,6 +539,7 @@ class NeuromorphicModel(Model):
             value=[pre_soma_id if not np.isnan(pre_soma_id) else -1, post_soma_id],
         )
 
+        self.agentid2config[synapse_id] = config_name
         tags.update({"synapse", breed})
         for tag in tags:
             self.tag2component[tag].add(synapse_id)

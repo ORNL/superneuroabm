@@ -11,12 +11,10 @@ soma:
         tref_allows_integration: 1  # Whether to allow integration during refractory period
         I_in: 0  # Input current (40 nA)
         scaling_factor: 1e-5  # Scaling factor for synaptic current
-      default_internal_state:
-        v: -60  # Initial membrane voltage
-        tcount: 0  # Time counter
-        tlast: 0  # Last spike time
-        empty1: 10  # Time counter
-        empty2: 11  # Last spike time
+      internal_state:
+        v: -60.0  # Initial membrane voltage
+        tcount: 0.0  # Time counter
+        tlast: 0.0  # Last spike time
   izh_soma:
     config_0:
       hyperparameters:
@@ -30,7 +28,7 @@ soma:
         d: 130
         vreset: -56
         I_in: 300
-      default_internal_state:
+      internal_state:
         v: -75  # Initial membrane voltage
         u: 0  # Initial recovery variable
 
@@ -43,7 +41,7 @@ synapse:
         scale: 1.0  # Scaling factor
         tau_fall: 1e-2  # Decay time constant (1 ms)
         tau_rise: 0  # Rise time constant (instantaneous)
-      default_internal_state:
+      internal_state:
         I_synapse: 0.0  # Initial synaptic current  
       learning_hyperparameters: 
         stdp_type: -1  # No learning
@@ -54,7 +52,7 @@ synapse:
         scale: 1.0  # Scaling factor
         tau_fall: 1e-2  # Decay time constant (1 ms)
         tau_rise: 0  # Rise time constant (instantaneous)
-      default_internal_state:
+      internal_state:
         I_synapse: 0.0  # Initial synaptic current  
       learning_hyperparameters:
         stdp_type: 0  # Exp pair-wise STDP
@@ -63,7 +61,7 @@ synapse:
         a_exp_pre: 0.005  # Pre-synaptic STDP learning rate
         a_exp_post: 0.005  # Post-synaptic STDP learning rate
         stdp_history_length: 100  # Length of STDP history buffer
-      default_internal_learning_state:
+      internal_learning_state:
         pre_trace: 0 # Pre-synaptic trace
         post_trace: 0 # Post-synaptic trace
         dW: 0 # Weight change accumulator
