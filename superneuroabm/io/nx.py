@@ -73,12 +73,17 @@ def model_from_nx_graph(graph: nx.DiGraph) -> NeuromorphicModel:
     return model
 
 
-def nx_graph_from_model(model: NeuromorphicModel) -> nx.DiGraph:
+def nx_graph_from_model(
+    model: NeuromorphicModel, override_internal_state: bool = True
+) -> nx.DiGraph:
     """
     Convert a NeuromorphicModel to a NetworkX graph.
 
     Args:
         model: A NeuromorphicModel object.
+        override_internal_state: If True, adds overrides of internal_state
+        and internal_learning_state with post simulation internal_state
+        and internal_learning_state.
 
     Returns:
         A NetworkX DiGraph representing the model.
@@ -90,6 +95,10 @@ def nx_graph_from_model(model: NeuromorphicModel) -> nx.DiGraph:
         soma_breed = model.get_agent_breed(soma_id).name
         config = model.get_agent_config_name(soma_id)
         overrides = model.get_agent_config_diff(soma_id)
+        if not override_internal_state:
+            # Remove internal state overrides if not needed
+            overrides.pop("internal_state", None)
+            overrides.pop("internal_learning_state", None)
 
         graph.add_node(
             soma_id,
@@ -104,6 +113,11 @@ def nx_graph_from_model(model: NeuromorphicModel) -> nx.DiGraph:
         synapse_breed = model.get_agent_breed(synapse_id).name
         config = model.get_agent_config_name(synapse_id)
         overrides = model.get_agent_config_diff(synapse_id)
+
+        if not override_internal_state:
+            # Remove internal state overrides if not needed
+            overrides.pop("internal_state", None)
+            overrides.pop("internal_learning_state", None)
 
         graph.add_edge(
             pre_soma_id,
@@ -169,7 +183,21 @@ if __name__ == "__main__":
 
     # Print the graph structure with all attributes
     graph_out = nx_graph_from_model(model)
+    print("---------------------------------------------------------------")
+    print("Graph structure (override internal states):")
     for node, data in graph_out.nodes(data=True):
         print(f"Node {node}: {data}")
     for u, v, data in graph_out.edges(data=True):
         print(f"Edge {u} -> {v}: {data}")
+
+    print("---------------------------------------------------------------")
+    print("\n")
+    print("---------------------------------------------------------------")
+    # Print the graph structure with all attributes
+    graph_out = nx_graph_from_model(model, override_internal_state=False)
+    print("Graph structure (do not override internal states):")
+    for node, data in graph_out.nodes(data=True):
+        print(f"Node {node}: {data}")
+    for u, v, data in graph_out.edges(data=True):
+        print(f"Edge {u} -> {v}: {data}")
+    print("---------------------------------------------------------------")
