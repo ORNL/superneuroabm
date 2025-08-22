@@ -235,7 +235,6 @@ class NeuromorphicModel(Model):
                 for i, (k, v) in enumerate(config_property_key_values.items())
                 if v != current_property_key_values[i]
             }
-            print("Differences:", diffs)
 
             overrides[property_name] = {
                 k: current_property_key_values[i]
