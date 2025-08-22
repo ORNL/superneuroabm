@@ -16,7 +16,7 @@ def get_soma_spike(
 ):
     t_current = int(tick)
 
-    if not pre_soma_id == -1:
+    if not cp.isnan(pre_soma_id):
         i = 0
         while i < len(agent_ids) and agent_ids[i] != pre_soma_id:
             i += 1

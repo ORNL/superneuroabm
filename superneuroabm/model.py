@@ -536,7 +536,7 @@ class NeuromorphicModel(Model):
         self.set_agent_property_value(
             id=synapse_id,
             property_name="connectivity",
-            value=[pre_soma_id if not np.isnan(pre_soma_id) else -1, post_soma_id],
+            value=[pre_soma_id, post_soma_id],
         )
 
         self.agentid2config[synapse_id] = config_name
