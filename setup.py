@@ -14,7 +14,7 @@ setup(
     ],
     package_data={
         "superneuroabm": [
-            "superneuroabm/*.yaml"
+            "*.yaml"
         ],  # Include all .yaml files in the 'data' subdirectory
     },
     include_package_data=True,
