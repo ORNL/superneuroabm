@@ -13,9 +13,7 @@ setup(
         "superneuroabm.step_functions.synapse.stdp",
     ],
     package_data={
-        "superneuroabm": [
-            "*.yaml"
-        ],  # Include all .yaml files in the 'data' subdirectory
+        "superneuroabm": ["*.yaml"],
     },
     include_package_data=True,
     url="https://code.ornl.gov/superneuro/superneuroabm",
