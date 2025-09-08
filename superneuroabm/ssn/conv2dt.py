@@ -28,25 +28,43 @@ class Conv2dT(nn.Module):
 
         self.model = model
         self.ticks = ticks
-        self.model.register_global_property("dt", 1e-1)
+        # Global properties from tests/logic_gates_test_lif.py:test_dual_external_synapses_dual_somas
+        self.model.register_global_property("dt", 1e-3)  # Updated from test file (was 1e-1)
         self.model.register_global_property("I_bias", 0)
 
         self.kernel_size = kernel_size
         self.out_channels = out_channels
         self.num_synapses_per_soma = kernel_size[0] * kernel_size[1]
 
-        # Default soma parameters
+        # Default Izhikevich soma parameters from tests/logic_gates_test_lif.py:test_dual_external_synapses_dual_somas
         if soma_parameters is None:
-            soma_parameters = [
-                1.2, -45, 150, 0.01, 5, 50, -75, 130, -56, 450
-            ]
-        default_internal_state = [-75, 0]
+            # IZH soma parameters: [k, vthr, C, a, b, vpeak, vrest, d, vreset, I_in]
+            k = 1.2
+            vthr = -45
+            C = 150
+            a = 0.01
+            b = 5
+            vpeak = 50
+            vrest = -75
+            d = 130
+            vreset = -56
+            I_in = 350  # Updated from test file
+            soma_parameters = [k, vthr, C, a, b, vpeak, vrest, d, vreset, I_in]
+        
+        # Initial state: [v, u] for Izhikevich model
+        v = -75  # vrest
+        u = 0
+        default_internal_state = [v, u]
 
-        # Default synapse parameters
+        # Default synapse parameters from tests/logic_gates_test_lif.py:test_dual_external_synapses_dual_somas
         if synapse_parameters is None:
-            synapse_parameters = [
-                1.0, 1.0, 1.0, 1e-3, 1e-4
-            ]
+            # Single_Exp_Synapse parameters: [weight, synaptic_delay, scale, tau_fall, tau_rise]
+            weight = 1.0
+            synaptic_delay = 1.0
+            scale = 1.0
+            tau_fall = 1e-2  # Updated from test file (was 1e-3)
+            tau_rise = 0     # Updated from test file (was 1e-4)
+            synapse_parameters = [weight, synaptic_delay, scale, tau_fall, tau_rise]
         synapse_internal_state = [0.0]
 
         # Create multiple somas and synapses
@@ -72,6 +90,8 @@ class Conv2dT(nn.Module):
                 )
                 channel_synapses.append(synapse)
             self.synapses.append(channel_synapses)
+
+        self.model.setup(use_gpu=True)
 
     def forward(self, input_spikes, stride=1):
         """
