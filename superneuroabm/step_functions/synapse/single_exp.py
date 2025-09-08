@@ -3,10 +3,12 @@ Single exponential synapse step functions for spiking neural networks
 
 """
 
+import cupy as cp
 import numpy as np
 from cupyx import jit
 
-from superneuroabm.step_functions.synapse.util import get_pre_soma_spike
+from superneuroabm.step_functions.synapse.util import get_soma_spike
+from sagesim.utils import get_neighbor_data_from_tensor
 
 
 @jit.rawkernel(device="cuda")
@@ -17,16 +19,20 @@ def synapse_single_exp_step_func(
     agent_ids,
     breeds,
     locations,
+    connectivity,
     synapse_params,  # scale, time constant (tau_rise and tau_fall)
+    learning_params,
     internal_state,  #
+    internal_learning_state,
     synapse_history,  # delay
     input_spikes_tensor,  # input spikes
     output_spikes_tensor,
     internal_states_buffer,
+    internal_learning_states_buffer,
 ):
     t_current = int(tick)
 
-    dt = globals[1]  # time step size
+    dt = globals[0]  # time step size
 
     weight = synapse_params[agent_index][0]
     synaptic_delay = synapse_params[agent_index][1]
@@ -34,12 +40,11 @@ def synapse_single_exp_step_func(
     tau_fall = synapse_params[agent_index][3]
     tau_rise = synapse_params[agent_index][4]
 
-    location_data = locations[agent_index]
-    if len(location_data) == 0:
-        pre_soma_id = np.nan
-    else:
-        pre_soma_id = location_data[0]
-    spike = get_pre_soma_spike(
+    pre_soma_id, post_soma_id = (
+        connectivity[agent_index][0],
+        connectivity[agent_index][1],
+    )
+    spike = get_soma_spike(
         tick,
         agent_index,
         globals,
