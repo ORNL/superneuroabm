@@ -11,6 +11,7 @@ setup(
         "superneuroabm.step_functions.soma",
         "superneuroabm.step_functions.synapse",
         "superneuroabm.step_functions.synapse.stdp",
+        "superneuroabm.io",
     ],
     package_data={
         "superneuroabm": ["*.yaml"],
