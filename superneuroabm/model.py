@@ -437,22 +437,28 @@ class NeuromorphicModel(Model):
         pre_soma_id: int,  # TODO edit
         post_soma_id: int,
         config_name: str,
-        hyperparameters_overrides: List[float] = None,
-        default_internal_state_overrides: List[float] = None,
-        learning_hyperparameters_overrides: List[float] = None,
-        default_internal_learning_state_overrides: List[float] = None,
+        hyperparameters_overrides: Dict[str, float] = None,
+        default_internal_state_overrides: Dict[str, float] = None,
+        learning_hyperparameters_overrides: Dict[str, float] = None,
+        default_internal_learning_state_overrides: Dict[str, float] = None,
         tags: Set[str] = None,
     ) -> int:
         """
-        Creates and adds Synapse agent.
+        Creates and adds a Synapse agent.
 
-        :param pre_soma_id: int presynaptic soma id
-        :param post_soma_id: int postsynaptic soma id
-        :param weight: weight of synapse
-        :param synaptic delay: number of timesteps to delay synapse by
-        :param synapse_learning_params: Optional. Any parameters used in a learning
-            enabled step function. Must be specified in order of use
-            in step function.
+        Parameters:
+            breed (str): Synapse breed name (e.g., 'single_exp_synapse').
+            pre_soma_id (int): Presynaptic soma agent ID (or np.nan for external input).
+            post_soma_id (int): Postsynaptic soma agent ID (or np.nan for external output).
+            config_name (str): Name of the configuration to use for this synapse.
+            hyperparameters_overrides (dict, optional): Dict of hyperparameter overrides.
+            default_internal_state_overrides (dict, optional): Dict of internal state overrides.
+            learning_hyperparameters_overrides (dict, optional): Dict of learning hyperparameter overrides.
+            default_internal_learning_state_overrides (dict, optional): Dict of internal learning state overrides.
+            tags (set of str, optional): Tags to associate with this synapse.
+
+        Returns:
+            int: SAGESim agent ID of the created synapse.
         """
         tags = tags if tags else set()
 
