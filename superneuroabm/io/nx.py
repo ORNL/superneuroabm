@@ -18,8 +18,10 @@ def model_from_nx_graph(graph: nx.DiGraph) -> NeuromorphicModel:
 
     Args:
         graph: A NetworkX DiGraph object.
-        Vertices should have 'soma_breed', 'config', and 'overrides' attributes.
-        Edges should have 'synapse_breed', 'config', and 'overrides' attributes.
+        Vertices should have 'soma_breed' and 'config' attributes, and optionally
+            'overrides' and 'tags attributes.
+        Edges should have 'synapse_breed' and 'config' attributes, and optionally
+            'overrides' and 'tags attributes.
 
     Returns:
         A NeuromorphicModel object constructed from the graph.
@@ -37,12 +39,14 @@ def model_from_nx_graph(graph: nx.DiGraph) -> NeuromorphicModel:
         soma_breed = data.get("soma_breed")
         config_name = data.get("config", "config_0")
         overrides = data.get("overrides", {})
+        tags = set(data.get("tags", []))
 
         soma_id = model.create_soma(
             breed=soma_breed,
             config_name=config_name,
             hyperparameters_overrides=overrides.get("hyperparameters"),
             default_internal_state_overrides=overrides.get("internal_state"),
+            tags=tags,
         )
         name2id[node] = soma_id
         id2name[soma_id] = node
@@ -52,6 +56,7 @@ def model_from_nx_graph(graph: nx.DiGraph) -> NeuromorphicModel:
         synapse_breed = data.get("synapse_breed")
         config_name = data.get("config", "config_0")
         overrides = data.get("overrides", {})
+        tags = set(data.get("tags", []))
 
         pre_soma_id = name2id.get(u, np.nan)  # External input if not found
         post_soma_id = name2id[v]
@@ -68,6 +73,7 @@ def model_from_nx_graph(graph: nx.DiGraph) -> NeuromorphicModel:
             default_internal_learning_state_overrides=overrides.get(
                 "default_internal_learning_state"
             ),
+            tags=tags,
         )
 
     return model
@@ -95,6 +101,9 @@ def nx_graph_from_model(
         soma_breed = model.get_agent_breed(soma_id).name
         config = model.get_agent_config_name(soma_id)
         overrides = model.get_agent_config_diff(soma_id)
+        # TODO: implement tags writing
+        tags = model.get_agent_tags(soma_id)
+
         if not override_internal_state:
             # Remove internal state overrides if not needed
             overrides.pop("internal_state", None)
