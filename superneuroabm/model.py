@@ -518,14 +518,14 @@ class NeuromorphicModel(Model):
         self._synapse_ids.append(synapse_id)
 
         network_space: NetworkSpace = self.get_space()
-        if not np.isnan(pre_soma_id):
+        if not np.isnan(float(pre_soma_id)):
             network_space.connect_agents(synapse_id, pre_soma_id, directed=True)
             self.soma2synapse_map[pre_soma_id]["post"].add(synapse_id)
             self.synapse2soma_map[synapse_id]["pre"] = pre_soma_id
         else:
             self.synapse2soma_map[synapse_id]["pre"] = float("nan")  # External input
             tags.add("input_synapse")
-        if not np.isnan(post_soma_id):
+        if not np.isnan(float(post_soma_id)):
             network_space.connect_agents(
                 synapse_id, post_soma_id, directed=True
             )  # Necessary due to STDP
