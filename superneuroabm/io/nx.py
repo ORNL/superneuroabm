@@ -40,6 +40,7 @@ def model_from_nx_graph(graph: nx.DiGraph) -> NeuromorphicModel:
         config_name = data.get("config", "config_0")
         overrides = data.get("overrides", {})
         tags = set(data.get("tags", []))
+        tags.add(f"nx_node:{node}")
 
         soma_id = model.create_soma(
             breed=soma_breed,
@@ -57,6 +58,7 @@ def model_from_nx_graph(graph: nx.DiGraph) -> NeuromorphicModel:
         config_name = data.get("config", "config_0")
         overrides = data.get("overrides", {})
         tags = set(data.get("tags", []))
+        tags.add(f"nx_edge:{u}_to_{v}")
 
         pre_soma_id = name2id.get(u, np.nan)  # External input if not found
         post_soma_id = name2id[v]
