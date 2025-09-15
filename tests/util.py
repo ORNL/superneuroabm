@@ -5,13 +5,13 @@ import numpy as np
 from superneuroabm.model import NeuromorphicModel
 
 
-def vizualize_responses(model: NeuromorphicModel, vthr: int, fig_name: str) -> None:
+def vizualize_responses(model: NeuromorphicModel, vthr: int, fig_name: str, figsize=(12,8)) -> None:
 
     soma_ids = model.soma2synapse_map.keys()
     synapse_ids = model.synapse2soma_map.keys()
 
     # Generate visualization comparing membrane potential and synaptic currents
-    plt.figure(figsize=(12, 8))
+    plt.figure(figsize=figsize)
 
     total_plot_count = len(soma_ids) + len(synapse_ids) * 3
 
