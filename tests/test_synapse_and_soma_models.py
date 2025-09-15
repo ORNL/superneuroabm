@@ -13,7 +13,7 @@ from superneuroabm.model import NeuromorphicModel
 from tests.util import vizualize_responses
 
 CURRENT_DIR = Path(__file__).resolve().parent
-COMPONENT_CONFIG_FPATH = CURRENT_DIR / "component_base_hyperparameter_config.yaml"
+COMPONENT_CONFIG_FPATH = CURRENT_DIR / ".." / "superneuroabm" / "component_base_config.yaml"
 
 
 class TestSynapseAndSomaModels(unittest.TestCase):
