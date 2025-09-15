@@ -1,6 +1,5 @@
 
 import numpy as np
-import torch.nn as nn
 import os
 import sys
 # Add paths after ensuring correct working directory
@@ -23,7 +22,7 @@ if superneuroabm_path not in sys.path:
 from superneuroabm.model import NeuromorphicModel
 
 
-class Conv2dT(nn.Module):
+class Conv2dT():
     """
     Neuromorphic Convolution Layer supporting multiple output channels.
     """
@@ -40,7 +39,6 @@ class Conv2dT(nn.Module):
         output_padding=0,
         bias=True,
     ):
-        super().__init__()
 
         if not isinstance(kernel_size, tuple):
             kernel_size = (kernel_size, kernel_size)
@@ -187,13 +185,10 @@ class Conv2dT(nn.Module):
 
 
 if __name__ == "__main__":
-    # IMPORTANT: Change to tutorials directory first to ensure all code runs from the correct location
     import os
     import sys
     import numpy as np
     import matplotlib.pyplot as plt
-
-
 
 
     from superneuroabm.model import NeuromorphicModel
