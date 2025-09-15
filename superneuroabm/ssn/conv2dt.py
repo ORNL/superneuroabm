@@ -2,22 +2,22 @@
 import numpy as np
 import os
 import sys
-# Add paths after ensuring correct working directory
-sagesim_path = '/home/xxz/SAGESim'
-if sagesim_path not in sys.path:
-    sys.path.insert(0, sagesim_path)
+# # Add paths after ensuring correct working directory
+# sagesim_path = '/home/xxz/SAGESim'
+# if sagesim_path not in sys.path:
+#     sys.path.insert(0, sagesim_path)
 
-# Set up path for SuperNeuroABM
-superneuroabm_path = '/home/xxz/superneuroabm'
+# # Set up path for SuperNeuroABM
+# superneuroabm_path = '/home/xxz/superneuroabm'
 
-working_dir = '/home/xxz/superneuroabm/superneuroabm/ssn'
-if os.getcwd() != working_dir:
-    os.chdir(working_dir)
+# working_dir = '/home/xxz/superneuroabm/superneuroabm/ssn'
+# if os.getcwd() != working_dir:
+#     os.chdir(working_dir)
 
 
-# Add SuperNeuroABM path to sys.path
-if superneuroabm_path not in sys.path:
-    sys.path.insert(0, superneuroabm_path)
+# # Add SuperNeuroABM path to sys.path
+# if superneuroabm_path not in sys.path:
+#     sys.path.insert(0, superneuroabm_path)
 
 from superneuroabm.model import NeuromorphicModel
 
@@ -189,7 +189,6 @@ if __name__ == "__main__":
     import sys
     import numpy as np
     import matplotlib.pyplot as plt
-
 
     from superneuroabm.model import NeuromorphicModel
     from superneuroabm.ssn.conv2dt import Conv2dT
