@@ -42,14 +42,21 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         with open(COMPONENT_CONFIG_FPATH, "r") as f:
             self._component_configurations = yaml.safe_load(f)
 
+        # # Define input spike patterns for synapses
+        # self._spike_times = [
+        #     # Synapse 0 receives early, strong spikes
+        #     [(2, 1), (10, 1), (20, 1)],  # (time_tick, spike_value)
+        #     # Additional spike pattern for future multi-synapse tests
+        #     [(5, 1), (12, 1), (25, 1)],  # (time_tick, spike_value)
+        # ]
+
         # Define input spike patterns for synapses
         self._spike_times = [
             # Synapse 0 receives early, strong spikes
-            [(2, 1), (10, 1), (20, 1)],  # (time_tick, spike_value)
+            [(2, 1)],  # (time_tick, spike_value)
             # Additional spike pattern for future multi-synapse tests
-            [(5, 1), (12, 1), (25, 1)],  # (time_tick, spike_value)
+            [(100, 1)],  # (time_tick, spike_value)
         ]
-
         # Define simulation duration
         self._simulation_duration = 200  # Total simulation time in ticks
         self._sync_every_n_ticks = 200  # Synchronization interval for updates
@@ -108,16 +115,16 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             config_name="config_0",
         )
 
-        # Create synapse_0: external input -> soma_0
-        synapse_0 = self._model.create_synapse(
+        # Create synapse_2: external input -> soma_0
+        synapse_2 = self._model.create_synapse(
             breed="single_exp_synapse",
             pre_soma_id=np.nan,  # External input
             post_soma_id=soma_0,
             config_name="no_learning_config_0",
         )
 
-        # Create synapse_1: soma_0 -> soma_1
-        synapse_1 = self._model.create_synapse(
+        # Create synapse_3: soma_0 -> soma_1
+        synapse_3 = self._model.create_synapse(
             breed="single_exp_synapse",
             pre_soma_id=soma_0,
             post_soma_id=soma_1,
@@ -125,7 +132,95 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         )
 
         # Create synapse_2: external input -> soma_1
-        synapse_2 = self._model.create_synapse(
+        synapse_4= self._model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=np.nan,  # External input
+            post_soma_id=soma_1,
+            config_name="no_learning_config_0",
+        )
+
+    
+        # # Create synapse_3: soma_1 -> soma_0 (to test bidirectional connections)
+        # synapse_3 = self._model.create_synapse(
+        #     breed="single_exp_synapse",
+        #     pre_soma_id=soma_1,  # External input
+        #     post_soma_id=soma_0,
+        #     config_name="no_learning_config_0",
+        # )
+
+
+        # Initialize the simulation environment
+        self._model.setup(use_gpu=self._use_gpu)
+
+        # # Inject spikes into synapse_0 (external -> soma_0)
+        # for spike in self._spike_times[0]:
+        #     self._model.add_spike(synapse_id=synapse_2, tick=spike[0], value=spike[1])
+
+        # Inject spikes into synapse_2 (external -> soma_1) using second spike pattern
+        for spike in self._spike_times[1]:
+            self._model.add_spike(synapse_id=synapse_4, tick=spike[0], value=spike[1])
+
+        # Run simulation
+        self._model.simulate(
+            ticks=self._simulation_duration, update_data_ticks=self._sync_every_n_ticks
+        )
+
+        # Extract internal states for analysis
+        internal_states_syn2 = np.array(
+            self._model.get_internal_states_history(agent_id=synapse_2)
+        )
+        internal_states_syn3 = np.array(
+            self._model.get_internal_states_history(agent_id=synapse_3)
+        )
+        internal_states_syn4 = np.array(
+            self._model.get_internal_states_history(agent_id=synapse_4)
+        )
+        
+        # Debug: Check soma membrane potentials
+        internal_states_soma0 = np.array(
+            self._model.get_internal_states_history(agent_id=soma_0)
+        )
+        internal_states_soma1 = np.array(
+            self._model.get_internal_states_history(agent_id=soma_1)
+        )
+        
+        print(f"Soma 0 membrane potential range: {internal_states_soma0[:, 0].min():.3f} to {internal_states_soma0[:, 0].max():.3f}")
+        print(f"Soma 1 membrane potential range: {internal_states_soma1[:, 0].min():.3f} to {internal_states_soma1[:, 0].max():.3f}")
+        print(f"Synapse 4 current range: {internal_states_syn4[:, 0].min():.3f} to {internal_states_syn4[:, 0].max():.3f}")
+        
+        # Check around the spike time (tick 100)
+        if len(internal_states_soma1) > 105:
+            print(f"Soma 1 potential around spike time (95-105): {internal_states_soma1[95:105, 0]}")
+
+        # internal_states_syn3 = np.array(
+        #     self._model.get_internal_states_history(agent_id=synapse_3)
+        # )
+
+
+        # Generate visualization
+        caller_name = inspect.stack()[0].function
+        vizualize_responses(self._model, vthr=-45, fig_name=f"{caller_name}.png")
+
+        # Verify that soma_1 received inputs from both synapses
+        # soma_1 should have activity from both internal (synapse_1) and external (synapse_2) inputs
+        assert internal_states_syn3.size > 0, "Synapse 1 (soma_0->soma_1) should have activity"
+        assert internal_states_syn4.size > 0, "Synapse 2 (ext->soma_1) should have activity"
+        # assert internal_states_syn3.size > 0, "Synapse 3 (soma_1->soma_0) should have activity"
+
+    def test_simple_single_soma_external_synapse(self) -> None:
+        """
+        Tests a simple case: one external synapse feeding one LIF soma.
+        This isolates the issue to see if the soma responds to external input.
+        """
+        
+        # Create soma_1 (LIF)
+        soma_1 = self._model.create_soma(
+            breed="lif_soma",
+            config_name="config_0",
+        )
+
+        # Create synapse_4: external input -> soma_1 (same as in multi-synapse test)
+        synapse_4 = self._model.create_synapse(
             breed="single_exp_synapse",
             pre_soma_id=np.nan,  # External input
             post_soma_id=soma_1,
@@ -135,13 +230,9 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         # Initialize the simulation environment
         self._model.setup(use_gpu=self._use_gpu)
 
-        # Inject spikes into synapse_0 (external -> soma_0)
-        for spike in self._spike_times[0]:
-            self._model.add_spike(synapse_id=synapse_0, tick=spike[0], value=spike[1])
-
-        # Inject spikes into synapse_2 (external -> soma_1) using second spike pattern
-        for spike in self._spike_times[1]:
-            self._model.add_spike(synapse_id=synapse_2, tick=spike[0], value=spike[1])
+        # Inject spike at tick 100 (same as multi-synapse test)
+        for spike in self._spike_times[1]:  # [(100, 1)]
+            self._model.add_spike(synapse_id=synapse_4, tick=spike[0], value=spike[1])
 
         # Run simulation
         self._model.simulate(
@@ -149,24 +240,93 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         )
 
         # Extract internal states for analysis
-        internal_states_syn0 = np.array(
-            self._model.get_internal_states_history(agent_id=synapse_0)
+        internal_states_syn4 = np.array(
+            self._model.get_internal_states_history(agent_id=synapse_4)
         )
-        internal_states_syn1 = np.array(
-            self._model.get_internal_states_history(agent_id=synapse_1)
+        internal_states_soma1 = np.array(
+            self._model.get_internal_states_history(agent_id=soma_1)
         )
-        internal_states_syn2 = np.array(
-            self._model.get_internal_states_history(agent_id=synapse_2)
-        )
-
+        
+        print(f"Simple test - Soma 1 membrane potential range: {internal_states_soma1[:, 0].min():.6f} to {internal_states_soma1[:, 0].max():.6f}")
+        print(f"Simple test - Synapse 4 current range: {internal_states_syn4[:, 0].min():.3f} to {internal_states_syn4[:, 0].max():.3f}")
+        
+        # Check around the spike time (tick 100) with more precision
+        if len(internal_states_soma1) > 105:
+            print(f"Simple test - Soma 1 potential around spike time (95-105): {internal_states_soma1[95:105, 0]}")
+        
         # Generate visualization
         caller_name = inspect.stack()[0].function
-        vizualize_responses(self._model, vthr=0, fig_name=f"{caller_name}.png")
+        vizualize_responses(self._model, vthr=-45, fig_name=f"{caller_name}.png")
 
-        # Verify that soma_1 received inputs from both synapses
-        # soma_1 should have activity from both internal (synapse_1) and external (synapse_2) inputs
-        assert internal_states_syn1.size > 0, "Synapse 1 (soma_0->soma_1) should have activity"
-        assert internal_states_syn2.size > 0, "Synapse 2 (ext->soma_1) should have activity"
+        # Verify synapse has activity
+        assert internal_states_syn4.size > 0, "Synapse 4 should have activity"
+
+    def test_one_soma_two_external_synapses(self) -> None:
+        """
+        Tests one soma with two external synapses, but only spike to one of them.
+        This tests if multiple synapses to the same soma interfere with each other.
+        """
+        
+        # Create soma_1 (LIF)
+        soma_1 = self._model.create_soma(
+            breed="lif_soma",
+            config_name="config_0",
+        )
+
+        # Create synapse_3: external input -> soma_1 (no spikes to this one)
+        synapse_3 = self._model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=np.nan,  # External input
+            post_soma_id=soma_1,
+            config_name="no_learning_config_0",
+        )
+
+        # Create synapse_4: external input -> soma_1 (spike to this one)
+        synapse_4 = self._model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=np.nan,  # External input
+            post_soma_id=soma_1,
+            config_name="no_learning_config_0",
+        )
+
+        # Initialize the simulation environment
+        self._model.setup(use_gpu=self._use_gpu)
+
+        # Inject spike ONLY to synapse_4 at tick 100
+        for spike in self._spike_times[1]:  # [(100, 1)]
+            self._model.add_spike(synapse_id=synapse_4, tick=spike[0], value=spike[1])
+
+        # Run simulation
+        self._model.simulate(
+            ticks=self._simulation_duration, update_data_ticks=self._sync_every_n_ticks
+        )
+
+        # Extract internal states for analysis
+        internal_states_syn3 = np.array(
+            self._model.get_internal_states_history(agent_id=synapse_3)
+        )
+        internal_states_syn4 = np.array(
+            self._model.get_internal_states_history(agent_id=synapse_4)
+        )
+        internal_states_soma1 = np.array(
+            self._model.get_internal_states_history(agent_id=soma_1)
+        )
+        
+        print(f"Two synapses test - Soma 1 membrane potential range: {internal_states_soma1[:, 0].min():.6f} to {internal_states_soma1[:, 0].max():.6f}")
+        print(f"Two synapses test - Synapse 3 current range: {internal_states_syn3[:, 0].min():.3f} to {internal_states_syn3[:, 0].max():.3f}")
+        print(f"Two synapses test - Synapse 4 current range: {internal_states_syn4[:, 0].min():.3f} to {internal_states_syn4[:, 0].max():.3f}")
+        
+        # Check around the spike time (tick 100)
+        if len(internal_states_soma1) > 105:
+            print(f"Two synapses test - Soma 1 potential around spike time (95-105): {internal_states_soma1[95:105, 0]}")
+        
+        # Generate visualization
+        caller_name = inspect.stack()[0].function
+        vizualize_responses(self._model, vthr=-45, fig_name=f"{caller_name}.png")
+
+        # Verify synapses activity
+        assert internal_states_syn3.size > 0, "Synapse 3 should exist (even with no activity)"
+        assert internal_states_syn4.size > 0, "Synapse 4 should have activity"
 
     def micro_model_test_helper(
         self, soma_breed: str, soma_config: str, synapse_breed: str, synapse_config: str
@@ -223,7 +383,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
 
         # Generate visualization of responses over time
         caller_name = inspect.stack()[1].function
-        vizualize_responses(self._model, vthr=0, fig_name=f"{caller_name}.png", figsize=(8, 20))
+        vizualize_responses(self._model, vthr=0, fig_name=f"{caller_name}.png")
 
         # Assert that the neuron generated expected number of spikes
         '''actual_spikes = len(self._model.get_spike_times(soma_id=soma_0))
