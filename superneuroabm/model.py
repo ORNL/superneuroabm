@@ -271,7 +271,7 @@ class NeuromorphicModel(Model):
         soma_ids = self._soma_ids
         for synapse_id in synapse_ids:
             # Clear input spikes
-            new_input_spikes = []
+            new_input_spikes = [[-1, 0.0]]
             super().set_agent_property_value(
                 id=synapse_id,
                 property_name="input_spikes_tensor",
