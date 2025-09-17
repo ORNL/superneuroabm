@@ -31,11 +31,11 @@ def izh_soma_step_func(
     for i in range(len(synapse_ids)):
 
         synapse_index = -1  # synapse index local to the current mpi rank
-        i = 0
-        while i < len(agent_ids) and agent_ids[i] != synapse_ids[0]:
-            i += 1
-        if i < len(agent_ids):
-            synapse_index = i
+        j = 0
+        while j < len(agent_ids) and agent_ids[j] != synapse_ids[i]:
+            j += 1
+        if j < len(agent_ids):
+            synapse_index = j
             I_synapse += internal_state[synapse_index][0]
 
     # Get the current time step value:
