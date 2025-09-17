@@ -11,7 +11,11 @@ setup(
         "superneuroabm.step_functions.soma",
         "superneuroabm.step_functions.synapse",
         "superneuroabm.step_functions.synapse.stdp",
+        "superneuroabm.io",
     ],
+    package_data={
+        "superneuroabm": ["*.yaml"],
+    },
     include_package_data=True,
     url="https://code.ornl.gov/superneuro/superneuroabm",
     license="GPL",
@@ -19,7 +23,6 @@ setup(
     long_description="""A GPU-based multi-agent simulation framework for neuromorphic computing.""",
     long_description_content_type="text/markdown",
     project_urls={"Source": "https://github.com/ORNL/superneuroabm"},
-    install_requires=[
-        "sagesim",
-    ],
+    install_requires=["sagesim", "pyyaml", "networkx", "matplotlib"],
 )
+

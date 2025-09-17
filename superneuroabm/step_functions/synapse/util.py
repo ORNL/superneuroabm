@@ -2,8 +2,9 @@ import math
 import cupy as cp
 from cupyx import jit
 
+
 @jit.rawkernel(device="cuda")
-def get_pre_soma_spike(
+def get_soma_spike(
     tick,
     agent_index,
     globals,
@@ -32,6 +33,6 @@ def get_pre_soma_spike(
                     1
                 ]  # TODO: check if we need analog values for spikes
             i += 1
-    
+
     # print(f"Pre-soma spike for agent {agent_index} at time {t_current}: {spike}")
     return spike

@@ -189,6 +189,7 @@ class LogicGatesTestLIF(unittest.TestCase):
 
         default_internal_state = self.data['soma']['lif_soma']['config_0']['internal_state']
 
+
         # Create first LIF neuron (receives external input)
         soma_0 = self._model.create_soma(
             breed="lif_soma",
@@ -218,6 +219,7 @@ class LogicGatesTestLIF(unittest.TestCase):
 
 
         # Create first external input synapse (stronger input)
+
         syn_ext = self._model.create_synapse(
             breed="single_exp_synapse",
             pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
@@ -265,6 +267,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         plt.subplot(2, 1, 1)
         plt.plot(internal_states_history_soma0[:, 0], "b-", label="Soma 0")
         plt.axhline(y=soma_parameters['vthr'], color="r", linestyle="--", label="Threshold")
+
         plt.ylabel("Membrane Pot. (mV)")
         plt.title("Soma 0")
         plt.legend()
@@ -436,6 +439,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         plt.subplot(3, 1, 1)
         plt.plot(internal_states_history_soma0[:, 0], "b-", label="Membrane Potential")
         plt.axhline(y=soma_parameters['vthr'], color="r", linestyle="--", label="Threshold")
+
         plt.ylabel("Membrane Pot. (mV)")
         plt.title("Dual Synapse Input Integration")
         plt.legend()
@@ -600,6 +604,7 @@ class LogicGatesTestLIF(unittest.TestCase):
             default_internal_state_overrides=synapse_internal_state_A,
             learning_hyperparameters_overrides=learning_parameters_B,
             default_internal_learning_state_overrides=internal_learning_state_A,
+
         )
 
         # Initialize the simulation environment
@@ -655,6 +660,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         plt.subplot(5, 1, 1)
         plt.plot(internal_states_history_soma0[:, 0], "b-", label="Soma 0")
         plt.axhline(y=soma_parameters['vthr'], color="r", linestyle="--", label="Threshold")
+
         plt.ylabel("Membrane Pot. (mV)")
         plt.title("Soma 0")
         plt.legend()
@@ -663,6 +669,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         plt.subplot(5, 1, 2)
         plt.plot(internal_states_history_soma1[:, 0], "b-", label="Soma 1")
         plt.axhline(y=izh_soma_parameters['vthr'], color="r", linestyle="--", label="Threshold")
+
         plt.ylabel("Membrane Pot. (mV)")
         plt.title("Soma 1")
         plt.legend()
@@ -750,6 +757,7 @@ class LogicGatesTestLIF(unittest.TestCase):
             config_name='config_0',
             hyperparameters_overrides=soma_parameters,
             default_internal_state_overrides=default_internal_state,
+
         )
 
         # # Create single LIF neuron that will receive dual inputs
@@ -791,6 +799,7 @@ class LogicGatesTestLIF(unittest.TestCase):
             default_internal_state_overrides=synapse_internal_state_A,
             learning_hyperparameters_overrides=learning_parameters_A,
             default_internal_learning_state_overrides=internal_learning_state_A
+
         )
 
         # Create second external input synapse (weaker input)
@@ -803,6 +812,7 @@ class LogicGatesTestLIF(unittest.TestCase):
             default_internal_state_overrides=synapse_internal_state_B,
             learning_hyperparameters_overrides=learning_parameters_B,
             default_internal_learning_state_overrides=internal_learning_state_A
+
         )
 
         # Create second external input synapse (weaker input)
@@ -815,6 +825,7 @@ class LogicGatesTestLIF(unittest.TestCase):
             default_internal_state_overrides=synapse_internal_state_A,
             learning_hyperparameters_overrides=learning_parameters_B,
             default_internal_learning_state_overrides=internal_learning_state_A,
+
         )
 
         # Initialize the simulation environment
@@ -890,6 +901,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         plt.subplot(12, 1, 1)
         plt.plot(internal_states_history_soma0[:, 0], "b-", label="Soma 0")
         plt.axhline(y=soma_parameters['vthr'], color="r", linestyle="--", label="Threshold")
+
         plt.ylabel("Membrane Pot. (mV)")
         plt.title("Soma 0")
         plt.legend()
@@ -898,6 +910,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         plt.subplot(12, 1, 2)
         plt.plot(internal_states_history_soma1[:, 0], "b-", label="Soma 1")
         plt.axhline(y=izh_soma_parameters['vthr'], color="r", linestyle="--", label="Threshold")
+
         plt.ylabel("Membrane Pot. (mV)")
         plt.title("Soma 1")
         plt.legend()
