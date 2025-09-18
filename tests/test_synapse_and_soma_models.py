@@ -42,14 +42,6 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         with open(COMPONENT_CONFIG_FPATH, "r") as f:
             self._component_configurations = yaml.safe_load(f)
 
-        # # Define input spike patterns for synapses
-        # self._spike_times = [
-        #     # Synapse 0 receives early, strong spikes
-        #     [(2, 1), (10, 1), (20, 1)],  # (time_tick, spike_value)
-        #     # Additional spike pattern for future multi-synapse tests
-        #     [(5, 1), (12, 1), (25, 1)],  # (time_tick, spike_value)
-        # ]
-
         # Define input spike patterns for synapses
         self._spike_times = [
             # Synapse 0 receives early, strong spikes
