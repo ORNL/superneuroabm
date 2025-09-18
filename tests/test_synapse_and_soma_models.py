@@ -6,7 +6,8 @@ import yaml
 import inspect
 from pathlib import Path
 
-
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for headless environments
 from matplotlib import pyplot as plt
 
 from superneuroabm.model import NeuromorphicModel
@@ -35,9 +36,6 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         super().__init__(methodName)
         # Create NeuromorphicModel instance for testing
         self._model = NeuromorphicModel()
-        # Set global simulation parameters
-        self._model.register_global_property("dt", 1e-3)  # Time step (100 μs)
-        self._model.register_global_property("I_bias", 0)  # No bias current
         # Set to use CPU for base test (GPU variant in separate class)
         self._use_gpu = True
 
@@ -47,11 +45,10 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         # Define input spike patterns for synapses
         self._spike_times = [
             # Synapse 0 receives early, strong spikes
-            [(2, 1), (10, 1), (20, 1)],  # (time_tick, spike_value)
+            [(2, 1)],  # (time_tick, spike_value)
             # Additional spike pattern for future multi-synapse tests
-            [(5, 1), (12, 1), (25, 1)],  # (time_tick, spike_value)
+            [(100, 1)],  # (time_tick, spike_value)
         ]
-
         # Define simulation duration
         self._simulation_duration = 200  # Total simulation time in ticks
         self._sync_every_n_ticks = 200  # Synchronization interval for updates
@@ -86,6 +83,213 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             "izh_soma", "config_0", "single_exp_synapse", "no_learning_config_0"
         )
 
+
+    def test_lif_soma_two_external_synapses(self) -> None:
+        """
+        Tests one soma with two external synapses, but only spike to one of them.
+        This tests if multiple synapses to the same soma interfere with each other.
+        """
+        
+        # Create soma_1 (LIF)
+        soma_0 = self._model.create_soma(
+            breed="lif_soma",
+            config_name="config_0",
+        )
+
+        # Create synapse_3: external input -> soma_1 (no spikes to this one)
+        synapse_1 = self._model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=np.nan,  # External input
+            post_soma_id=soma_0,
+            config_name="no_learning_config_0",
+        )
+
+        # Create synapse_4: external input -> soma_1 (spike to this one)
+        synapse_2 = self._model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=np.nan,  # External input
+            post_soma_id=soma_0,
+            config_name="no_learning_config_0",
+        )
+
+        # Initialize the simulation environment
+        self._model.setup(use_gpu=self._use_gpu)
+
+        # Inject spikes
+        for spike in self._spike_times[0]:  # [(2, 1)]
+            self._model.add_spike(synapse_id=synapse_1, tick=spike[0], value=spike[1])
+        for spike in self._spike_times[1]:  # [(100, 1)]
+            self._model.add_spike(synapse_id=synapse_2, tick=spike[0], value=spike[1])
+
+        # Run simulation
+        self._model.simulate(
+            ticks=self._simulation_duration, update_data_ticks=self._sync_every_n_ticks
+        )
+
+        # Generate visualization
+        caller_name = inspect.stack()[0].function
+        vizualize_responses(self._model, vthr=-45, fig_name=f"{caller_name}.png")
+
+    def test_lif_soma_two_internal_synapses(self) -> None:
+        """
+        Tests structure: synapse_0 -> soma_0 -> synapse_2 -> soma_2
+                    AND: synapse_1 -> soma_1 -> synapse_3 -> soma_2
+        This tests if soma_2 can integrate inputs from two internal synapses.
+        """
+        
+        # Create three somas
+        soma_0 = self._model.create_soma(
+            breed="lif_soma",
+            config_name="config_0",
+        )
+        
+        soma_1 = self._model.create_soma(
+            breed="lif_soma",
+            config_name="config_0",
+        )
+        
+        soma_2 = self._model.create_soma(
+            breed="lif_soma",
+            config_name="config_0",
+        )
+
+        # Create synapse_0 -> soma_0
+        synapse_0 = self._model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=np.nan,
+            post_soma_id=soma_0,
+            config_name="no_learning_config_0",
+        )
+        
+        # Create synapse_1 -> soma_1
+        synapse_1 = self._model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=np.nan,
+            post_soma_id=soma_1,
+            config_name="no_learning_config_0",
+        )
+
+        # Create synapse_2: soma_0 -> soma_2
+        synapse_2 = self._model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=soma_0,
+            post_soma_id=soma_2,
+            config_name="no_learning_config_0",
+        )
+        
+        # Create synapse_3: soma_1 -> soma_2
+        synapse_3 = self._model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=soma_1,
+            post_soma_id=soma_2,
+            config_name="no_learning_config_0",
+        )
+
+        # Initialize the simulation environment
+        self._model.setup(use_gpu=self._use_gpu)
+
+        # Inject spike to synapse_0 at tick 2
+        for spike in self._spike_times[0]:  # [(2, 1)]
+            self._model.add_spike(synapse_id=synapse_0, tick=spike[0], value=spike[1])
+        
+        # Inject spike to synapse_1 at tick 100
+        for spike in self._spike_times[1]:  # [(100, 1)]
+            self._model.add_spike(synapse_id=synapse_1, tick=spike[0], value=spike[1])
+
+        # Run simulation
+        self._model.simulate(
+            ticks=self._simulation_duration, update_data_ticks=self._sync_every_n_ticks
+        )
+
+
+        # Generate visualization
+        caller_name = inspect.stack()[0].function
+        vizualize_responses(self._model, vthr=-45, fig_name=f"{caller_name}.png")
+
+
+
+    def test_lif_soma_mixed_synapses(self) -> None:
+        """
+        Tests multi-synapse integration with a two-soma network.
+
+        This test creates a neural circuit:
+        - External input (synapse_2) -> soma_0 -> synapse_3 -> soma_1
+        - External input (synapse_4) -> soma_1
+        - soma_1 -> synapse_5 -> soma_0 (to test bidirectional connections)
+
+        This verifies that soma_1 can integrate inputs from both an internal synapse
+        (from soma_0) and an external synapse (synapse_4) simultaneously.
+        """
+        
+        # Create soma_0 (LIF)
+        soma_0 = self._model.create_soma(
+            breed="lif_soma",
+            config_name="config_0",
+        )
+
+        # Create soma_1 (LIF) 
+        soma_1 = self._model.create_soma(
+            breed="lif_soma",
+            config_name="config_0",
+        )
+
+        # Create synapse_2: external input -> soma_0
+        synapse_2 = self._model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=np.nan,  # External input
+            post_soma_id=soma_0,
+            config_name="no_learning_config_0",
+        )
+
+        # Create synapse_3: soma_0 -> soma_1
+        synapse_3 = self._model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=soma_0,
+            post_soma_id=soma_1,
+            config_name="no_learning_config_0",
+        )
+
+        # Create synapse_2: external input -> soma_1
+        synapse_4= self._model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=np.nan,  # External input
+            post_soma_id=soma_1,
+            config_name="no_learning_config_0",
+        )
+
+    
+        # Create synapse_3: soma_1 -> soma_0 (to test bidirectional connections)
+        synapse_5 = self._model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=soma_1,  # External input
+            post_soma_id=soma_0,
+            config_name="no_learning_config_0",
+        )
+
+
+        # Initialize the simulation environment
+        self._model.setup(use_gpu=self._use_gpu)
+
+        # Inject spikes into synapse_0 (external -> soma_0)
+        for spike in self._spike_times[0]:
+            self._model.add_spike(synapse_id=synapse_2, tick=spike[0], value=spike[1])
+
+        # Inject spikes into synapse_2 (external -> soma_1) using second spike pattern
+        for spike in self._spike_times[1]:
+            self._model.add_spike(synapse_id=synapse_4, tick=spike[0], value=spike[1])
+
+        # Run simulation
+        self._model.simulate(
+            ticks=self._simulation_duration, update_data_ticks=self._sync_every_n_ticks
+        )
+
+        # Generate visualization
+        caller_name = inspect.stack()[0].function
+        vizualize_responses(self._model, vthr=-45, fig_name=f"{caller_name}.png")
+
+
+
+
     def micro_model_test_helper(
         self, soma_breed: str, soma_config: str, synapse_breed: str, synapse_config: str
     ) -> None:
@@ -103,34 +307,10 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         The test injects predefined spike patterns and verifies the soma's response.
         """
 
-        soma_parameters = self._component_configurations["soma"][soma_breed][
-            soma_config
-        ]["hyperparameters"]
-        soma_parameters = [float(val) for val in soma_parameters.values()]
-        soma_internal_state = self._component_configurations["soma"][soma_breed][
-            soma_config
-        ]["default_internal_state"]
-        soma_internal_state = [float(val) for val in soma_internal_state.values()]
-
-        # Create soma with specified breed and parameters
+        # Create soma with specified breed and config
         soma_0 = self._model.create_soma(
             breed=soma_breed,
-            parameters=soma_parameters,
-            default_internal_state=soma_internal_state,
-        )
-
-        # Package parameters for synapse creation
-        synapse_parameters = self._component_configurations["synapse"][synapse_breed][
-            synapse_config
-        ]["hyperparameters"]
-        synapse_parameters = [float(val) for val in synapse_parameters.values()]
-        synapse_internal_state = self._component_configurations["synapse"][
-            synapse_breed
-        ][synapse_config]["default_internal_state"]
-        synapse_internal_state = [float(val) for val in synapse_internal_state.values()]
-        print(
-            f"Soma parameters: {soma_parameters}"
-            f"\nSynapse parameters: {synapse_parameters}"
+            config_name=soma_config,
         )
 
         # Create synapse connecting external input to soma
@@ -138,8 +318,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             breed=synapse_breed,
             pre_soma_id=np.nan,  # External input
             post_soma_id=soma_0,  # Connected to the created soma
-            parameters=synapse_parameters,
-            default_internal_state=synapse_internal_state,
+            config_name=synapse_config,
         )
 
         # Initialize the simulation environment

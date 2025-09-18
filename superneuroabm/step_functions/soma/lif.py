@@ -31,11 +31,11 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     for i in range(len(synapse_ids)):
 
         synapse_index = -1  # synapse index local to the current mpi rank
-        i = 0
-        while i < len(agent_ids) and agent_ids[i] != synapse_ids[0]:
-            i += 1
-        if i < len(agent_ids):
-            synapse_index = i
+        j = 0
+        while j < len(agent_ids) and agent_ids[j] != synapse_ids[i]:
+            j += 1
+        if j < len(agent_ids):
+            synapse_index = j
             I_synapse += internal_state[synapse_index][0]
 
     # Get the current time step value:
@@ -78,9 +78,10 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
         else 0.0
     )
 
-    s = 1 * (v >= vthr) and (
-        dt * tcount > tlast + tref
-    )  # output spike only happens if the membrane potential exceeds the threshold and the neuron is not in refractory period.
+    #if tlast > 0 else 1 # output spike only happens if the membrane potential exceeds the threshold and the neuron is not in refractory period.
+    s = 1.0 * ((v >= vthr) and (( dt * tcount > tlast + tref) if tlast > 0 else True))
+
+
     tlast = tlast * (1 - s) + dt * tcount * s
     v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
 
@@ -92,3 +93,4 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     internal_states_buffer[agent_index][t_current][0] = internal_state[agent_index][0]
     internal_states_buffer[agent_index][t_current][1] = internal_state[agent_index][1]
     internal_states_buffer[agent_index][t_current][2] = internal_state[agent_index][2]
+ 
