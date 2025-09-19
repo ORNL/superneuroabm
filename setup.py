@@ -11,6 +11,7 @@ setup(
         "superneuroabm.step_functions.soma",
         "superneuroabm.step_functions.synapse",
         "superneuroabm.step_functions.synapse.stdp",
+        "superneuroabm.ssn",
     ],
     package_data={
         "superneuroabm": ["*.yaml"],
@@ -24,3 +25,4 @@ setup(
     project_urls={"Source": "https://github.com/ORNL/superneuroabm"},
     install_requires=["sagesim", "pyyaml", "networkx"],
 )
+
