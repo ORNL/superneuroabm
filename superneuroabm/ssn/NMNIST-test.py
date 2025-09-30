@@ -17,6 +17,7 @@ class Conv2dtSingleLayer:
         # filters and pooling organized by layer
         self.layers = {}           # {layer_idx: [(Kernel, Kernel_Neuron), ...]}
         self.pooling_layers = {}   # {layer_idx: {kernel_neuron: [outputs]}}
+        self.pooling_matrix = {}
 
     def HashSpikes(self, TimeStep):
         CurrentSpikeSet = {}
@@ -126,36 +127,59 @@ class Conv2dtSingleLayer:
                             value=CurrentSpikeSet[coor]
                         )
 
-    def MaxPooling(self, layer_idx):
-        Pooling_Neurons=[]
-        for output_channel in self.pooling_layers[layer_idx]:
-            Pooling_Neuron = self.model.create_soma(
-                    breed='lif_soma',
-                    config_name='config_0',
-                    hyperparameters_overrides={'C': 1e-8, 'R': 1e6, 'vthr': -45, 'tref': 5e-3,
-                                               'vrest': -60, 'vreset': -60, 'tref_allows_integration': 1,
-                                               'I_in': 0, 'scaling_factor': 1e-5},
-                    default_internal_state_overrides={'v': -60, 'tcount': 0.0, 'tlast': 0.0}
-                )
+    def MaxPooling(self, layer_idx, W, H):
+        pooling_neurons = []
+
+        # iterate over the output channel lists, not just the keys
+        for output_channel in self.pooling_layers[layer_idx].values():
+            pooling_neuron = self.model.create_soma(
+                breed='lif_soma',
+                config_name='config_0',
+                hyperparameters_overrides={'C': 1e-8, 'R': 1e6, 'vthr': -45, 'tref': 5e-3,
+                                        'vrest': -60, 'vreset': -60, 'tref_allows_integration': 1,
+                                        'I_in': 0, 'scaling_factor': 1e-5},
+                default_internal_state_overrides={'v': -60, 'tcount': 0.0, 'tlast': 0.0}
+            )
+
+            # connect all neurons in this channel to the pooling neuron
             for Output_Neuron in output_channel:
-                Synapse = self.model.create_synapse(
-                        breed='single_exp_synapse',
-                        pre_soma_id=output_neuron,
-                        post_soma_id=Pooling_Neuron,
-                        config_name='exp_pair_wise_stdp_config_0',
-                        hyperparameters_overrides={'weight': np.random.uniform(50.0, 100.0),
-                                                'synpatic_delay': 1.0, 'scale': 1.0,
-                                                'tau_fall': 1e-2, 'tau_rise': 0},
-                        default_internal_state_overrides={'internal_state': 0.0},
-                        learning_hyperparameters_overrides={'stdp_type': 10e-3, 'tau_pre_stdp': 10e-3,
-                                                            'tau_post_stdp': 10e-3, 'a_exp_pre': 0.005,
-                                                            'a_exp_post': 0.005, 'stdp_history_length': 100},
-                        default_internal_learning_state_overrides={'pre_trace': 0, 'post_trace': 0, 'dw': 0}
-                    )
-            Pooling_Neurons.append(Pooling_Neuron)
-        return Pooling_Neurons
+                self.model.create_synapse(
+                    breed='single_exp_synapse',
+                    pre_soma_id=Output_Neuron,
+                    post_soma_id=pooling_neuron,
+                    config_name='exp_pair_wise_stdp_config_0',
+                    hyperparameters_overrides={'weight': np.random.uniform(50.0, 100.0),
+                                            'synpatic_delay': 1.0, 'scale': 1.0,
+                                            'tau_fall': 1e-2, 'tau_rise': 0},
+                    default_internal_state_overrides={'internal_state': 0.0},
+                    learning_hyperparameters_overrides={'stdp_type': 10e-3, 'tau_pre_stdp': 10e-3,
+                                                        'tau_post_stdp': 10e-3, 'a_exp_pre': 0.005,
+                                                        'a_exp_post': 0.005, 'stdp_history_length': 100},
+                    default_internal_learning_state_overrides={'pre_trace': 0, 'post_trace': 0, 'dw': 0}
+                )
+            pooling_neurons.append(pooling_neuron)
+
+        # arrange them in a matrix
+        pooling_spikes = np.empty((W, H), dtype=object)
+        idx = 0
+        for x in range(W):
+            for y in range(H):
+                if idx < len(pooling_neurons):
+                    pooling_spikes[x][y] = pooling_neurons[idx]
+                    idx += 1
+
+        # store by layer index (not +1, unless you really want offset)
+        self.pooling_matrix[layer_idx] = pooling_spikes
+
+
+
         
     def ForwardPass(self, SpikeData):
+        #TODO 
+        #Collect Spikes at each layer and pass through
+        '''
+        We are going to process all the spikes through and they will be collected an reprocessed at each max pooling layer
+        '''
         return None
 
 
@@ -167,8 +191,10 @@ if __name__ == '__main__':
     Model.Conv_Kernel_Construction(4, 4, layer_idx=0)
     Model.Conv_Kernel_Construction(3, 3, layer_idx=1)
     Model.Add_Output_Channels(layer_idx=0, num_channels=5)
-    print(Model.pooling_layers[0])
+    Model.MaxPooling(0,2,1)
 
+    print(Model.pooling_matrix[0])
+'''
     Model.model.setup(use_gpu=True)
 
     # add outputs for each layer
@@ -186,9 +212,10 @@ if __name__ == '__main__':
     first_layer_outputs = Model.pooling_layers[0]
     first_kernel_neuron = list(first_layer_outputs.keys())[0]
     soma0 = first_layer_outputs[first_kernel_neuron][0]
-
+    internal_spike_times=Model.model.get_spike_times(soma_id=soma0)
+    print(f"Soma 0 internal spike times:' {internal_spike_times}")
     internal_states_history_soma0 = np.array(
         Model.model.get_internal_states_history(agent_id=soma0)
     )
     print(f"Soma 0 internal states: {internal_states_history_soma0}")
-'''
+    '''
