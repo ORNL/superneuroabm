@@ -171,18 +171,20 @@ class Conv2dtSingleLayer:
         # store by layer index (not +1, unless you really want offset)
         self.pooling_matrix[layer_idx] = pooling_spikes
 
-    def Collect_Spikes(self,Layer_Idx):
-        Pooling_Spike_Data={}
+    def Collect_Spikes(self, Layer_Idx):
+        Pooling_Spike_Data = {}
         Spiking_Neurons = self.pooling_matrix[Layer_Idx]
-        for x in len(Spiking_Neurons):
-            for y in len(Spiking_Neurons[0]):
+
+        for x in range(len(Spiking_Neurons)):
+            for y in range(len(Spiking_Neurons[0])):
                 if Spiking_Neurons[x][y]:
-                    Neuron_Spike_List=self.model.get_spike_times(soma_id=Spiking_Neurons[x][y])
+                    Neuron_Spike_List = self.model.get_spike_times(soma_id=Spiking_Neurons[x][y])
                     for Spike_Time in Neuron_Spike_List:
                         if Spike_Time not in Pooling_Spike_Data:
-                            Pooling_Spike_Data[Spike_Time]={(x,y):1}
+                            Pooling_Spike_Data[Spike_Time] = {(x, y): 1}
                         else:
-                            Pooling_Spike_Data[Spike_Time][(x,y)]=1
+                            Pooling_Spike_Data[Spike_Time][(x, y)] = 1
+
         return Pooling_Spike_Data
 
         
@@ -206,6 +208,8 @@ if __name__ == '__main__':
     Model.MaxPooling(0,2,1)
 
     Model.Conv_Kernel_Construction(1, 1, layer_idx=1)
+    Model.Add_Output_Channels(layer_idx=1, num_channels=2)
+
     Model.MaxPooling(1,1,1)
     
     #Initial Spiking Pattern
@@ -224,6 +228,7 @@ if __name__ == '__main__':
     Model.model.simulate(ticks=10, update_data_ticks=10)
 
     Spike_Data=Model.Collect_Spikes(0)
+    print(Spike_Data)
 '''
     # read from first layer output neuron 0
     first_layer_outputs = Model.pooling_layers[0]
