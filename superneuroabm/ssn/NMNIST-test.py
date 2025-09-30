@@ -171,7 +171,19 @@ class Conv2dtSingleLayer:
         # store by layer index (not +1, unless you really want offset)
         self.pooling_matrix[layer_idx] = pooling_spikes
 
-
+    def Collect_Spikes(self,Layer_Idx):
+        Pooling_Spike_Data={}
+        Spiking_Neurons = self.pooling_matrix[Layer_Idx]
+        for x in len(Spiking_Neurons):
+            for y in len(Spiking_Neurons[0]):
+                if Spiking_Neurons[x][y]:
+                    Neuron_Spike_List=self.model.get_spike_times(soma_id=Spiking_Neurons[x][y])
+                    for Spike_Time in Neuron_Spike_List:
+                        if Spike_Time not in Pooling_Spike_Data:
+                            Pooling_Spike_Data[Spike_Time]={(x,y):1}
+                        else:
+                            Pooling_Spike_Data[Spike_Time][(x,y)]=1
+        return Pooling_Spike_Data
 
         
     def ForwardPass(self, SpikeData):
@@ -187,27 +199,32 @@ if __name__ == '__main__':
     Model = Conv2dtSingleLayer(5, 5)
 
     # add conv filters to two different layers
+    #
     Model.Conv_Kernel_Construction(3, 3, layer_idx=0)
     Model.Conv_Kernel_Construction(4, 4, layer_idx=0)
-    Model.Conv_Kernel_Construction(3, 3, layer_idx=1)
     Model.Add_Output_Channels(layer_idx=0, num_channels=5)
     Model.MaxPooling(0,2,1)
 
+    Model.Conv_Kernel_Construction(1, 1, layer_idx=1)
+    Model.MaxPooling(1,1,1)
+    
+    #Initial Spiking Pattern
+    CurrentSpikes = {1:{(1, 5): 10, (3, 4): 10, (5, 5): 10, (2, 2): 10, (3, 1): 10},2:{(1, 4): 10, (3, 3): 10, (5, 4): 10, (2, 1): 10, (1, 1): 10},
+                    3:{(2, 4): 10, (1, 3): 10, (5, 5): 10, (1, 1): 10, (1, 3): 10}}
+
     print(Model.pooling_matrix[0])
-'''
     Model.model.setup(use_gpu=True)
 
-    # add outputs for each layer
     
-    Model.Add_Output_Channels(layer_idx=1, num_channels=3)
-
-    CurrentSpikes = {(1, 5): 10, (3, 4): 10, (5, 5): 10, (2, 2): 10, (3, 1): 10}
     for kernel_array, kernel_neuron in Model.layers[0]:
-        for key in CurrentSpikes:
-            Model.Convolve_Spike(key, kernel_array, CurrentSpikes, 1, 1)
-
+        for spike_time in CurrentSpikes:
+            for spike in CurrentSpikes[spike_time]:
+                Model.Convolve_Spike(spike, kernel_array, CurrentSpikes[spike_time], spike_time, 1)
+    
     Model.model.simulate(ticks=10, update_data_ticks=10)
 
+    Spike_Data=Model.Collect_Spikes(0)
+'''
     # read from first layer output neuron 0
     first_layer_outputs = Model.pooling_layers[0]
     first_kernel_neuron = list(first_layer_outputs.keys())[0]
