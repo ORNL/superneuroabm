@@ -78,6 +78,10 @@ class NeuromorphicModel(Model):
         """
         super().__init__(space=NetworkSpace())
 
+        
+        self.register_global_property("dt", 1e-3)  # Time step (100 μs)
+        self.register_global_property("I_bias", 0)  # No bias current
+
         soma_properties = {
             "connectivity": [],  # placeholder for connectivity info
             "hyperparameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
@@ -252,6 +256,66 @@ class NeuromorphicModel(Model):
         """
         return self.tag2component.get(tag, set())
 
+    def _reset_agents(self, retain_parameters: bool = True) -> None:
+        """
+        Internal method to reset all soma and synapse agents to their initial states.
+
+        :param retain_parameters: If True, keeps current learned parameters.
+            If False, resets parameters to their default values.
+        """
+        # Reset all synapses
+        for synapse_id in self._synapse_ids:
+            # Clear input spikes
+            super().set_agent_property_value(
+                id=synapse_id,
+                property_name="input_spikes_tensor",
+                value=[[-1, 0.0]],
+            )
+            # Reset synapse delay registers
+            synapse_delay = len(
+                super().get_agent_property_value(
+                    id=synapse_id, property_name="synapse_delay_reg"
+                )
+            )
+            synapse_delay_reg = [0 for _ in range(synapse_delay)]
+            super().set_agent_property_value(
+                id=synapse_id,
+                property_name="synapse_delay_reg",
+                value=synapse_delay_reg,
+            )
+            # Reset internal states
+            super().set_agent_property_value(
+                id=synapse_id,
+                property_name="internal_state",
+                value=self._synapse2defaultinternalstate[synapse_id].copy(),
+            )
+            super().set_agent_property_value(
+                id=synapse_id,
+                property_name="internal_learning_state",
+                value=self._synapse2defaultinternallearningstate[synapse_id].copy(),
+            )
+            # Reset parameters to defaults if retain_parameters is False
+            if not retain_parameters:
+                super().set_agent_property_value(
+                    id=synapse_id,
+                    property_name="hyperparameters",
+                    value=self._synapse2defaultparameters[synapse_id].copy(),
+                )
+                super().set_agent_property_value(
+                    id=synapse_id,
+                    property_name="learning_hyperparameters",
+                    value=self._synapse2defaultlearningparameters[synapse_id].copy(),
+                )
+
+        # Reset all somas
+        for soma_id in self._soma_ids:
+            # Reset internal states
+            super().set_agent_property_value(
+                id=soma_id,
+                property_name="internal_state",
+                value=self._soma_reset_states[soma_id].copy(),
+            )
+
     def setup(
         self,
         use_gpu: bool = True,
@@ -263,74 +327,8 @@ class NeuromorphicModel(Model):
         :param retain_parameters: False by default. If True, parameters are
             reset to their default values upon setup.
         """
-
-        self.register_global_property("dt", 1e-3)  # Time step (100 μs)
-        self.register_global_property("I_bias", 0)  # No bias current
-
-        synapse_ids = self._synapse_ids
-        soma_ids = self._soma_ids
-        for synapse_id in synapse_ids:
-            # Clear input spikes
-            new_input_spikes = [[-1, 0.0]]
-            super().set_agent_property_value(
-                id=synapse_id,
-                property_name="input_spikes_tensor",
-                value=new_input_spikes,
-            )
-            # Clear synapse delay registers
-            synapse_delay = len(
-                super().get_agent_property_value(
-                    id=synapse_id, property_name="synapse_delay_reg"
-                )
-            )
-            synapse_delay_reg = [0 for _ in range(synapse_delay)]
-            self.set_agent_property_value(
-                synapse_id,
-                "synapse_delay_reg",
-                synapse_delay_reg,
-            )
-            # Reset parameters to defaults if retain_parameters is True
-            if not retain_parameters:
-                # Reset all synapse parameters to their default values
-                default_synapse_parameters = self._synapse2defaultparameters[
-                    synapse_id
-                ]  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
-                super().set_agent_property_value(
-                    id=synapse_id,
-                    property_name="hyperparameters",
-                    value=default_synapse_parameters,
-                )
-                default_synapse_learning_hyperparameters = (
-                    self._synapse2defaultlearningparameters[synapse_id]
-                )
-                super().set_agent_property_value(
-                    id=synapse_id,
-                    property_name="learning_hyperparameters",
-                    value=default_synapse_learning_hyperparameters,
-                )
-            # Clear internal states
-
-            synapse_internal_state = self._synapse2defaultinternalstate[synapse_id]
-            super().set_agent_property_value(
-                id=synapse_id,
-                property_name="internal_state",
-                value=synapse_internal_state,
-            )
-            synapse_internal_learning_state = (
-                self._synapse2defaultinternallearningstate[synapse_id]
-            )
-            super().set_agent_property_value(
-                id=synapse_id,
-                property_name="internal_learning_state",
-                value=synapse_internal_learning_state,
-            )
-        for soma_id in soma_ids:
-            # Clear internal states
-            super().set_agent_property_value(
-                id=soma_id,
-                property_name="internal_state",
-                value=self._soma_reset_states[soma_id],
-            )
+        # Reset all agents using the shared helper function
+        self._reset_agents(retain_parameters=retain_parameters)
         super().setup(use_gpu=use_gpu)
 
     def simulate(
@@ -662,3 +660,4 @@ class NeuromorphicModel(Model):
 
     def load(self, fpath: str):
         self = super().load(fpath)
+
