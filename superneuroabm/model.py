@@ -78,6 +78,10 @@ class NeuromorphicModel(Model):
         """
         super().__init__(space=NetworkSpace())
 
+        
+        self.register_global_property("dt", 1e-3)  # Time step (100 μs)
+        self.register_global_property("I_bias", 0)  # No bias current
+
         soma_properties = {
             "connectivity": [],  # placeholder for connectivity info
             "hyperparameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
@@ -323,10 +327,6 @@ class NeuromorphicModel(Model):
         :param retain_parameters: False by default. If True, parameters are
             reset to their default values upon setup.
         """
-
-        self.register_global_property("dt", 1e-3)  # Time step (100 μs)
-        self.register_global_property("I_bias", 0)  # No bias current
-
         # Reset all agents using the shared helper function
         self._reset_agents(retain_parameters=retain_parameters)
         super().setup(use_gpu=use_gpu)
@@ -661,18 +661,3 @@ class NeuromorphicModel(Model):
     def load(self, fpath: str):
         self = super().load(fpath)
 
-    def reset(self, retain_parameters: bool = True) -> None:
-        """
-        Resets the network to its initial state.
-
-        Restores all network variables to their initial conditions
-        and sets the simulation tick counter back to 0.
-
-        :param retain_parameters: If True, keeps current learned parameters.
-            If False, resets parameters to their default values. Default is True.
-        """
-        # Reset simulation tick counter to 0
-        self.tick = 0
-
-        # Reset all agents using the shared helper function
-        self._reset_agents(retain_parameters=retain_parameters)
