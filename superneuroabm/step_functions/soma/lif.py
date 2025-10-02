@@ -4,6 +4,7 @@ LIF Neuron and weighted synapse step functions for spiking neural networks
 """
 
 from cupyx import jit
+import cupy as cp
 
 
 @jit.rawkernel(device="cuda")
@@ -28,15 +29,20 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     synapse_ids = locations[agent_index]  # network location is defined by neighbors
 
     I_synapse = 0.0
-    for i in range(len(synapse_ids)):
 
-        synapse_index = -1  # synapse index local to the current mpi rank
-        j = 0
-        while j < len(agent_ids) and agent_ids[j] != synapse_ids[i]:
-            j += 1
-        if j < len(agent_ids):
-            synapse_index = j
-            I_synapse += internal_state[synapse_index][0]
+    # for i in range(len(synapse_ids)):
+
+    #     synapse_index = -1  # synapse index local to the current mpi rank
+    #     j = 0
+    #     while j < len(agent_ids) and agent_ids[j] != synapse_ids[i]:
+    #         j += 1
+    #     if j < len(agent_ids):
+    #         synapse_index = j
+    #         I_synapse += internal_state[synapse_index][0]
+
+    for i in range(len(synapse_ids)):
+        if not cp.isnan(synapse_ids[i]):
+            I_synapse += internal_state[int(synapse_ids[i])][0]
 
     # Get the current time step value:
     t_current = int(tick)  # Check if tcount is needed or if we ca use this directly.
@@ -92,7 +98,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     output_spikes_tensor[agent_index][t_current] = s
 
     
-    internal_states_buffer[agent_index][t_current][0] = v
-    internal_states_buffer[agent_index][t_current][1] = internal_state[agent_index][1] + 1
-    internal_states_buffer[agent_index][t_current][2] = tlast
+    internal_states_buffer[agent_index][t_current][0] = internal_state[int(synapse_ids[-1])][0]
+    internal_states_buffer[agent_index][t_current][1] = agent_ids[agent_index]#internal_state[agent_index][1] + 1
+    internal_states_buffer[agent_index][t_current][2] = agent_index#tlast
  

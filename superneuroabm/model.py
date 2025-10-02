@@ -315,7 +315,17 @@ class NeuromorphicModel(Model):
                 property_name="internal_state",
                 value=self._soma_reset_states[soma_id].copy(),
             )
+        
+    def reset(self, retain_parameters: bool = True) -> None:
+        """
+        Resets all soma and synapse agents to their initial states.
 
+        :param retain_parameters: If True, keeps current learned parameters.
+            If False, resets parameters to their default values.
+        """
+        self._reset_agents(retain_parameters=retain_parameters)
+        super().reset()
+        
     def setup(
         self,
         use_gpu: bool = True,
