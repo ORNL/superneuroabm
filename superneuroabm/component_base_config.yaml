@@ -15,6 +15,7 @@ soma:
         v: -60.0  # Initial membrane voltage
         tcount: 0.0  # Time counter
         tlast: 0.0  # Last spike time
+        I_synapse: 0.0  # Initial synaptic current
   izh_soma:
     config_0:
       hyperparameters:

@@ -8,7 +8,7 @@ import numpy as np
 from cupyx import jit
 
 from superneuroabm.step_functions.synapse.util import get_soma_spike
-from sagesim.utils import get_neighbor_data_from_tensor
+from sagesim.utils import get_agent_idx
 
 
 @jit.rawkernel(device="cuda")
@@ -58,6 +58,10 @@ def synapse_single_exp_step_func(
     I_synapse = internal_state[agent_index][0]
 
     I_synapse = I_synapse * (1 - dt / tau_fall) + spike * scale * weight
+
+    post_soma_index = get_agent_idx(agent_ids, post_soma_id)
+
+    jit.atomic_add(internal_learning_state, (post_soma_index, 3), I_synapse)
 
     internal_state[agent_index][0] = I_synapse
     internal_states_buffer[agent_index][t_current][0] = I_synapse

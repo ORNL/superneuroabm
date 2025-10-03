@@ -28,7 +28,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
 ):
     synapse_ids = locations[agent_index]  # network location is defined by neighbors
 
-    I_synapse = 0.0
+    # I_synapse = 0.0
 
     # for i in range(len(synapse_ids)):
 
@@ -40,9 +40,9 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     #         synapse_index = j
     #         I_synapse += internal_state[synapse_index][0]
 
-    for i in range(len(synapse_ids)):
-        if not cp.isnan(synapse_ids[i]):
-            I_synapse += internal_state[int(synapse_ids[i])][0]
+    # for i in range(len(synapse_ids)):
+    #     if not cp.isnan(synapse_ids[i]):
+    #         I_synapse += internal_state[int(synapse_ids[i])][0]
 
     # Get the current time step value:
     t_current = int(tick)  # Check if tcount is needed or if we ca use this directly.
@@ -74,6 +74,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
         1
     ]  # time count from the start of the simulation
     tlast = internal_state[agent_index][2]  # last spike time
+    I_synapse = internal_state[agent_index][3]  # synaptic current
 
     # Calculate the membrane potential update
     dv = (vrest - v) / (R * C) + (I_synapse * scaling_factor + I_bias + I_in) / C
@@ -84,9 +85,8 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
         else 0.0
     )
 
-    #if tlast > 0 else 1 # output spike only happens if the membrane potential exceeds the threshold and the neuron is not in refractory period.
-    s = 1.0 * ((v >= vthr) and (( dt * tcount > tlast + tref) if tlast > 0 else True))
-
+    # if tlast > 0 else 1 # output spike only happens if the membrane potential exceeds the threshold and the neuron is not in refractory period.
+    s = 1.0 * ((v >= vthr) and ((dt * tcount > tlast + tref) if tlast > 0 else True))
 
     tlast = tlast * (1 - s) + dt * tcount * s
     v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
@@ -94,11 +94,14 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     internal_state[agent_index][0] = v
     internal_state[agent_index][1] += 1
     internal_state[agent_index][2] = tlast
+    internal_state[agent_index][3] = 0.0  # Reset synaptic current after spike
 
     output_spikes_tensor[agent_index][t_current] = s
 
-    
-    internal_states_buffer[agent_index][t_current][0] = internal_state[int(synapse_ids[-1])][0]
-    internal_states_buffer[agent_index][t_current][1] = agent_ids[agent_index]#internal_state[agent_index][1] + 1
-    internal_states_buffer[agent_index][t_current][2] = agent_index#tlast
- 
+    internal_states_buffer[agent_index][t_current][0] = internal_state[
+        int(synapse_ids[-1])
+    ][0]
+    internal_states_buffer[agent_index][t_current][1] = agent_ids[
+        agent_index
+    ]  # internal_state[agent_index][1] + 1
+    internal_states_buffer[agent_index][t_current][2] = agent_index  # tlast
