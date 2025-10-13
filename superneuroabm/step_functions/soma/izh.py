@@ -25,17 +25,15 @@ def izh_soma_step_func(
     internal_states_buffer,
     internal_learning_states_buffer,
 ):
-    synapse_ids = locations[agent_index]  # network location is defined by neighbors
+    synapse_indices = locations[agent_index]  # network location is defined by neighbors
 
     I_synapse = 0.0
-    for i in range(len(synapse_ids)):
 
-        synapse_index = -1  # synapse index local to the current mpi rank
-        j = 0
-        while j < len(agent_ids) and agent_ids[j] != synapse_ids[i]:
-            j += 1
-        if j < len(agent_ids):
-            synapse_index = j
+    # synapse_indices now contains pre-computed local indices (converted in SAGESim)
+    # No linear search needed!
+    for i in range(len(synapse_indices)):
+        synapse_index = int(synapse_indices[i])
+        if synapse_index >= 0 and not cp.isnan(synapse_indices[i]):
             I_synapse += internal_state[synapse_index][0]
 
     # Get the current time step value:
