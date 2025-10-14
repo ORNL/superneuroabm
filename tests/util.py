@@ -10,6 +10,18 @@ def vizualize_responses(model: NeuromorphicModel, vthr: int, fig_name: str, figs
     soma_ids = model.soma2synapse_map.keys()
     synapse_ids = model.synapse2soma_map.keys()
 
+    # Always print spike times first
+    print("\n=== Spike Times ===")
+    for soma_id in soma_ids:
+        spike_times = model.get_spike_times(soma_id=soma_id)
+        print(f"Soma {soma_id} spike times: {spike_times}")
+    print("===================\n")
+
+    # Check if internal state tracking is enabled
+    if not model.enable_internal_state_tracking:
+        # When tracking is disabled, only print spike times (already done above)
+        return
+
     # Calculate total number of plots needed
     total_plot_count = len(soma_ids)
     for synapse_id in synapse_ids:

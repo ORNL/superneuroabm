@@ -26,16 +26,18 @@ class TestSynapseAndSomaModels(unittest.TestCase):
     their response to input stimulation.
     """
 
-    def __init__(self, methodName: str = ...) -> None:
+    def __init__(self, methodName: str = ..., enable_internal_state_tracking: bool = True) -> None:
         """
         Initialize the test case with a NeuromorphicModel instance.
 
         Args:
             methodName: Name of the test method to run
+            enable_internal_state_tracking: If True, tracks internal states for visualization.
+                If False, only spike times are printed (useful for performance testing).
         """
         super().__init__(methodName)
         # Create NeuromorphicModel instance for testing
-        self._model = NeuromorphicModel()
+        self._model = NeuromorphicModel(enable_internal_state_tracking=enable_internal_state_tracking)
         # Set to use CPU for base test (GPU variant in separate class)
         self._use_gpu = True
 
@@ -336,14 +338,14 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         # Verify results: expect at least 2 spikes from the soma
         minimum_expected_spikes = 2
 
-        # Extract the synaptic current history from synapse_0
-        internal_states_history_syn0 = np.array(
-            self._model.get_internal_states_history(agent_id=synapse_0)
-        )
+        # Extract the synaptic current history from synapse_0 (if tracking is enabled)
+        if self._model.enable_internal_state_tracking:
+            internal_states_history_syn0 = np.array(
+                self._model.get_internal_states_history(agent_id=synapse_0)
+            )
+            print(f"Internal states history from synapse 0: {internal_states_history_syn0}")
 
-        print(f"Internal states history from synapse 0: {internal_states_history_syn0}")
-
-        # Generate visualization of responses over time
+        # Generate visualization of responses over time (or print spikes if tracking disabled)
         caller_name = inspect.stack()[1].function
         vizualize_responses(self._model, vthr=0, fig_name=f"{caller_name}.png")
 
@@ -356,4 +358,16 @@ class TestSynapseAndSomaModels(unittest.TestCase):
 
 if __name__ == "__main__":
     # Run all test cases when script is executed directly
+    #
+    # To run with internal state tracking enabled (default - generates plots):
+    #   python test_synapse_and_soma_models.py
+    #
+    # To run a specific test with tracking disabled (prints spike times only):
+    #   test = TestSynapseAndSomaModels('test_lif_soma_single_exp_synapse', enable_internal_state_tracking=False)
+    #   test.test_lif_soma_single_exp_synapse()
+    #
+    # Example: Quick test with tracking disabled for performance
+    # test = TestSynapseAndSomaModels('test_lif_soma_single_exp_synapse', enable_internal_state_tracking=False)
+    # test.test_lif_soma_single_exp_synapse()
+
     unittest.main()
