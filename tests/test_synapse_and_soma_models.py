@@ -203,6 +203,18 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             ticks=self._simulation_duration, update_data_ticks=self._sync_every_n_ticks
         )
 
+        # Debug: Check internal states history
+        soma_ids = self._model.soma2synapse_map.keys()
+        for soma_id in soma_ids:
+            states = self._model.get_internal_states_history(agent_id=soma_id)
+            print(f"Soma {soma_id}: max voltage = {max([s[0] for s in states]) if states else 'no data'}")
+            print(f"Soma {soma_id}: first 10 voltages = {[s[0] for s in states[:10]] if states else 'no data'}")
+
+        synapse_ids = self._model.synapse2soma_map.keys()
+        for synapse_id in synapse_ids:
+            states = self._model.get_internal_states_history(agent_id=synapse_id)
+            print(f"Synapse {synapse_id}: max current = {max([s[0] for s in states]) if states else 'no data'}")
+            print(f"Synapse {synapse_id}: first 10 currents = {[s[0] for s in states[:10]] if states else 'no data'}")
 
         # Generate visualization
         caller_name = inspect.stack()[0].function
