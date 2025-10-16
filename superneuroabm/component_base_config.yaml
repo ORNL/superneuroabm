@@ -55,9 +55,9 @@ synapse:
         tau_fall: 1e-2  # Decay time constant (1 ms)
         tau_rise: 0  # Rise time constant (instantaneous)
       internal_state:
-        I_synapse: 1.0  # Initial synaptic current
+        I_synapse: 0.0  # Initial synaptic current
       learning_hyperparameters:
-        stdp_type: 10e-3   # Exp pair-wise STDP
+        stdp_type: 0.0   # Exp pair-wise STDP
 
         tau_pre_stdp: 10e-3  # Pre-synaptic STDP time constant (10 ms)
         tau_post_stdp: 10e-3  # Post-synaptic STDP time constant (10 ms)
