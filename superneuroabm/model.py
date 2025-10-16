@@ -497,6 +497,7 @@ class NeuromorphicModel(Model):
         config = copy.deepcopy(
             self._component_configurations["synapse"][breed][config_name]
         )
+
         # Apply overrides to hyperparameters and default internal state
         if hyperparameters_overrides:
             for parameter_name, parameter_value in hyperparameters_overrides.items():

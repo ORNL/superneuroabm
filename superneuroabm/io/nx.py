@@ -55,6 +55,7 @@ def model_from_nx_graph(graph: nx.DiGraph, enable_internal_state_tracking: bool 
         id2name[soma_id] = node
 
     # Create synapses from graph edges
+    synapse_count = 0
     for u, v, data in graph.edges(data=True):
         synapse_breed = data.get("synapse_breed")
         config_name = data.get("config", "config_0")
@@ -79,6 +80,7 @@ def model_from_nx_graph(graph: nx.DiGraph, enable_internal_state_tracking: bool 
             ),
             tags=tags,
         )
+        synapse_count += 1
 
     return model
 
