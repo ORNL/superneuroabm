@@ -143,79 +143,28 @@ class Conv2dtSingleLayer:
         if Density not in ['1-Many','1-1','Many-1']:
             raise ValueError("Density argument must be 1-Many, 1-1, or Many-1")
         if Density =="1-Many":
-            kernel_pairs = self.layers[layer_idx]  # [(kernel, output_channel), ...]
-            n_kernels = len(kernel_pairs)
-            n_pool = W * H
+            output_channels=len(self.layers[layer_idx])
+            output_channels_list=[kernel[1] for kernel in self.layers[layer_idx]]
+            combos=[]
+            for all r in range(1, output_channels+1):
+                combos.extend(list(c) for c in itertools.combinations(output_channels_list,r))
+            pooling_spikes = np.array([self.CreateSoma() for _ in range(len(combos))],dtype=object)
+            pooling_spikes = pooling_spikes.reshape(W, H)
+            current_combo_connection=0
+            for index_i in range(len(pooling_spikes)):
+                for index_j in range(len(pooling_spikes[0])):
+                    if pooling_spikes[index_i][index_j]:
+                        for soma in combos[current_combo_connection]:
+                            
+                    else:
+                        continue
+            
 
-            # --- 1. Generate all output-channel combinations ---
-            all_combos = []
-            for r in range(1, n_kernels + 1):
-                all_combos.extend(itertools.combinations([oc for _, oc in kernel_pairs], r))
-            # You could restrict r to smaller subset sizes if desired
+            
 
-            # --- 2. Limit combos to n_pool ---
-            all_combos = all_combos[:n_pool]
-
-            # --- 3. Create pooling neurons ---
-            pooling_neurons = []
-            for _ in range(len(all_combos)):
-                pooling_neuron = self.model.create_soma(
-                    breed='lif_soma',
-                    config_name='config_0',
-                    hyperparameters_overrides={
-                        'C': 1e-8, 'R': 1e6, 'vthr': -45, 'tref': 5e-3,
-                        'vrest': -60, 'vreset': -60, 'tref_allows_integration': 1,
-                        'I_in': 0, 'scaling_factor': 1e-5
-                    },
-                    default_internal_state_overrides={'v': -60, 'tcount': 0.0, 'tlast': 0.0}
-                )
-                pooling_neurons.append(pooling_neuron)
-
-            # --- 4. Connect each combo to its pooling neuron ---
-            for pool_idx, combo in enumerate(all_combos):
-                pooling_neuron = pooling_neurons[pool_idx]
-
-                for oc in combo:
-                    self.model.create_synapse(
-                        breed='single_exp_synapse',
-                        pre_soma_id=oc,
-                        post_soma_id=pooling_neuron,
-                        config_name='exp_pair_wise_stdp_config_0',
-                        hyperparameters_overrides={
-                            'weight': np.random.uniform(50.0, 100.0),
-                            'synpatic_delay': 1.0, 'scale': 1.0,
-                            'tau_fall': 1e-2, 'tau_rise': 0
-                        },
-                        default_internal_state_overrides={'internal_state': 0.0},
-                        learning_hyperparameters_overrides={
-                            'stdp_type': 10e-3, 'tau_pre_stdp': 10e-3,
-                            'tau_post_stdp': 10e-3, 'a_exp_pre': 0.005,
-                            'a_exp_post': 0.005, 'stdp_history_length': 100
-                        },
-                        default_internal_learning_state_overrides={
-                            'pre_trace': 0, 'post_trace': 0, 'dw': 0
-                        }
-                    )
-
-            # --- 5. Reshape into spatial grid for later reference ---
-            pooling_grid = np.array(pooling_neurons)
-            if len(pooling_grid) < n_pool:
-                # pad with dummy neurons if fewer combos than W*H
-                pad_count = n_pool - len(pooling_grid)
-                pooling_grid = np.concatenate([pooling_grid, np.array([None] * pad_count)])
-            pooling_grid = pooling_grid.reshape(W, H)
-
-            self.pooling_layers[layer_idx] = pooling_grid
-
-    def MaxPooling(self, layer_idx, W, H):
-
-        n_kernels = len(self.layers[layer_idx])
-        n_pool = W * H
-
-        # --- Create pooling neurons ---
-        pooling_neurons = []
-        for _ in range(n_pool):
-            pooling_neuron = self.model.create_soma(
+            
+    def CreateSoma(self):
+        Soma=self.model.create_soma(
                 breed='lif_soma',
                 config_name='config_0',
                 hyperparameters_overrides={'C': 1e-8, 'R': 1e6, 'vthr': -45, 'tref': 5e-3,
@@ -223,137 +172,7 @@ class Conv2dtSingleLayer:
                                         'I_in': 0, 'scaling_factor': 1e-5},
                 default_internal_state_overrides={'v': -60, 'tcount': 0.0, 'tlast': 0.0}
             )
-            pooling_neurons.append(pooling_neuron)
-
-        # --- Reshape into spatial grid for reference ---
-        pooling_grid = np.array(pooling_neurons).reshape(W, H)
-
-        # --- CASE 1: More pooling neurons (fan-out)
-        if n_pool > n_kernels:
-            fan_out = math.ceil(n_pool / n_kernels)
-            pool_idx = 0
-
-            for i in range(n_kernels):
-                kernel_neuron = self.layers[layer_idx][i][1]
-                for _ in range(fan_out):
-                    if pool_idx >= n_pool:
-                        break
-                    pooling_neuron = pooling_neurons[pool_idx]
-
-                    self.model.create_synapse(
-                        breed='single_exp_synapse',
-                        pre_soma_id=kernel_neuron,
-                        post_soma_id=pooling_neuron,
-                        config_name='exp_pair_wise_stdp_config_0',
-                        hyperparameters_overrides={
-                            'weight': np.random.uniform(50.0, 100.0),
-                            'synpatic_delay': 1.0, 'scale': 1.0,
-                            'tau_fall': 1e-2, 'tau_rise': 0
-                        },
-                        default_internal_state_overrides={'internal_state': 0.0},
-                        learning_hyperparameters_overrides={
-                            'stdp_type': 10e-3, 'tau_pre_stdp': 10e-3,
-                            'tau_post_stdp': 10e-3, 'a_exp_pre': 0.005,
-                            'a_exp_post': 0.005, 'stdp_history_length': 100
-                        },
-                        default_internal_learning_state_overrides={
-                            'pre_trace': 0, 'post_trace': 0, 'dw': 0
-                        }
-                    )
-
-                    # ✅ Update this layer entry to reflect fan-out mapping (optional)
-                    self.layers[layer_idx][i] = (
-                        self.layers[layer_idx][i][0], kernel_neuron
-                    )
-
-                    pool_idx += 1
-
-        # --- CASE 2: One-to-one mapping
-        elif n_pool == n_kernels:
-            for i in range(n_kernels):
-                kernel_neuron = self.layers[layer_idx][i][1]
-                pooling_neuron = pooling_neurons[i]
-
-                self.model.create_synapse(
-                    breed='single_exp_synapse',
-                    pre_soma_id=kernel_neuron,
-                    post_soma_id=pooling_neuron,
-                    config_name='exp_pair_wise_stdp_config_0',
-                    hyperparameters_overrides={
-                        'weight': np.random.uniform(50.0, 100.0),
-                        'synpatic_delay': 1.0, 'scale': 1.0,
-                        'tau_fall': 1e-2, 'tau_rise': 0
-                    },
-                    default_internal_state_overrides={'internal_state': 0.0},
-                    learning_hyperparameters_overrides={
-                        'stdp_type': 10e-3, 'tau_pre_stdp': 10e-3,
-                        'tau_post_stdp': 10e-3, 'a_exp_pre': 0.005,
-                        'a_exp_post': 0.005, 'stdp_history_length': 100
-                    },
-                    default_internal_learning_state_overrides={
-                        'pre_trace': 0, 'post_trace': 0, 'dw': 0
-                    }
-                )
-
-                # ✅ Preserve neuron mapping explicitly
-                self.layers[layer_idx][i] = (
-                    self.layers[layer_idx][i][0], kernel_neuron
-                )
-
-        # --- CASE 3: More kernel neurons (fan-in)
-        else:
-            fan_in = math.ceil(n_kernels / n_pool)
-            kernel_idx = 0
-
-            for pooling_neuron in pooling_neurons:
-                for _ in range(fan_in):
-                    if kernel_idx >= n_kernels:
-                        break
-
-                    kernel_neuron = self.layers[layer_idx][kernel_idx][1]
-
-                    self.model.create_synapse(
-                        breed='single_exp_synapse',
-                        pre_soma_id=kernel_neuron,
-                        post_soma_id=pooling_neuron,
-                        config_name='exp_pair_wise_stdp_config_0',
-                        hyperparameters_overrides={
-                            'weight': np.random.uniform(50.0, 100.0),
-                            'synpatic_delay': 1.0, 'scale': 1.0,
-                            'tau_fall': 1e-2, 'tau_rise': 0
-                        },
-                        default_internal_state_overrides={'internal_state': 0.0},
-                        learning_hyperparameters_overrides={
-                            'stdp_type': 10e-3, 'tau_pre_stdp': 10e-3,
-                            'tau_post_stdp': 10e-3, 'a_exp_pre': 0.005,
-                            'a_exp_post': 0.005, 'stdp_history_length': 100
-                        },
-                        default_internal_learning_state_overrides={
-                            'pre_trace': 0, 'post_trace': 0, 'dw': 0
-                        }
-                    )
-
-                    # ✅ Keep neuron entry reference consistent
-                    self.layers[layer_idx][kernel_idx] = (
-                        self.layers[layer_idx][kernel_idx][0], kernel_neuron
-                    )
-
-                    kernel_idx += 1
-
-        # --- Store in spatial matrix form ---
-        pooling_spikes = np.empty((W, H), dtype=object)
-        idx = 0
-        for x in range(W):
-            for y in range(H):
-                if idx < len(pooling_neurons):
-                    pooling_spikes[x][y] = pooling_neurons[idx]
-                    idx += 1
-
-        self.pooling_matrix[layer_idx] = pooling_spikes
-        self.pooling_layers[layer_idx] = pooling_neurons
-        return pooling_neurons
-    
-
+        return Soma
         
     def ForwardPass(self, SpikeData):
         #TODO 
