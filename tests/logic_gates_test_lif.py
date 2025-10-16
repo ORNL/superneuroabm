@@ -5,7 +5,7 @@ import csv
 
 from superneuroabm.model import NeuromorphicModel
 from matplotlib import pyplot as plt
-
+import yaml
 
 class LogicGatesTestLIF(unittest.TestCase):
     """
@@ -17,6 +17,8 @@ class LogicGatesTestLIF(unittest.TestCase):
     """
 
     def __init__(self, methodName: str = ...) -> None:
+        with open("superneuroabm/component_base_config.yaml", "r") as f:
+            self.data = yaml.safe_load(f)
         """
         Initialize the test case with a NeuromorphicModel instance.
 
@@ -27,7 +29,7 @@ class LogicGatesTestLIF(unittest.TestCase):
         # Create NeuromorphicModel instance for testing
         self._model = NeuromorphicModel()
         # Set to use CPU for base test (GPU variant in separate class)
-        self._use_gpu = False
+        self._use_gpu = True
 
     def test_two_somas(self):
         """
@@ -44,82 +46,61 @@ class LogicGatesTestLIF(unittest.TestCase):
         self._model.register_global_property("dt", 1e-1)  # Time step (100 μs)
         self._model.register_global_property("I_bias", 0)  # No bias current
 
-        # Define LIF neuron parameters
-        C = 10e-9  # Membrane capacitance in Farads (10 nF)
-        R = 1e12  # Membrane resistance in Ohms (1 TΩ)
-        vthr = -45  # Spike threshold voltage (mV)
-        tref = 5e-3  # Refractory period (5 ms)
-        vrest = -60  # Resting potential (mV)
-        vreset = -60  # Reset potential after spike (mV)
-        tref_allows_integration = (
-            1  # Whether to allow integration during refractory period
-        )
-        I_in = 4e-8  # Input current (40 nA)
 
         # Package parameters for soma creation
-        soma_parameters = [
-            C,
-            R,
-            vthr,
-            tref,
-            vrest,
-            vreset,
-            tref_allows_integration,
-            I_in,
-        ]
+        soma_parameters = self.data['soma']['lif_soma']['config_0']['hyperparameters']
 
-        # Set initial internal state for neurons
-        v = vrest  # Initial membrane voltage
-        tcount = 0  # Time counter
-        tlast = 0  # Last spike time
-        default_internal_state = [v, tcount, tlast]
+        default_internal_state = self.data['soma']['lif_soma']['config_0']['internal_state']
 
         # Create first LIF neuron (receives external input)
         soma_0 = self._model.create_soma(
-            breed="LIF_Soma",
-            parameters=soma_parameters,
-            default_internal_state=default_internal_state,
+            breed="lif_soma",
+            config_name='config_0',
+            hyperparameters_overrides= soma_parameters,
+            default_internal_state_overrides=default_internal_state,
         )
         # Create second LIF neuron (receives input from soma_0)
         soma_1 = self._model.create_soma(
-            breed="LIF_Soma",
-            parameters=soma_parameters,
-            default_internal_state=default_internal_state,
+            breed="lif_soma",
+            config_name='config_0',
+            hyperparameters_overrides=soma_parameters,
+            default_internal_state_overrides=default_internal_state,
         )
 
-        # Define synaptic parameters for connections
-        weight = 1.0  # Synaptic weight (strength)
-        synaptic_delay = 1.0  # Transmission delay (ms)
-        scale = 1.0  # Scaling factor
-        tau_fall = 1e-3  # Decay time constant (1 ms)
-        tau_rise = 0  # Rise time constant (instantaneous)
-        synapse_parameters = [
-            weight,
-            synaptic_delay,
-            scale,
-            tau_fall,
-            tau_rise,
-        ]
+        #LEARNING PARAMETERS A
+        synapse_parameters_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['hyperparameters']
+        synapse_internal_state_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['internal_state']
+        learning_parameters_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['learning_hyperparameters']
+        internal_learning_state_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['internal_learning_state']
+        #LEARNING PARAMETERS B
+        synapse_parameters_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['hyperparameters']
+        synapse_internal_state_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['internal_state']
+        learning_parameters_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['learning_hyperparameters']
 
-        # Initial synaptic current
-        I_synapse = 0.0
-        synapse_internal_state = [I_synapse]
 
-        # Create external input synapse (stimulates soma_0)
+
+        # Create first external input synapse (stronger input)
         syn_ext = self._model.create_synapse(
-            breed="Single_Exp_Synapse",
+            breed="single_exp_synapse",
             pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
             post_soma_id=soma_0,
-            parameters=synapse_parameters,
-            default_internal_state=synapse_internal_state,
+            config_name='exp_pair_wise_stdp_config_0',
+            hyperparameters_overrides=synapse_parameters_A,
+            default_internal_state_overrides=synapse_internal_state_A,
+            learning_hyperparameters_overrides=learning_parameters_A,
+            default_internal_learning_state_overrides=internal_learning_state_A
         )
+
         # Create internal synapse (soma_0 -> soma_1)
         syn_int = self._model.create_synapse(
-            breed="Single_Exp_Synapse",
+            breed="single_exp_synapse",
             pre_soma_id=soma_0,
             post_soma_id=soma_1,
-            parameters=synapse_parameters,
-            default_internal_state=synapse_internal_state,
+            config_name='exp_pair_wise_stdp_config_0',
+            hyperparameters_overrides=synapse_parameters_B,
+            default_internal_state_overrides=synapse_internal_state_B,
+            learning_hyperparameters_overrides=learning_parameters_B,
+            default_internal_learning_state_overrides=internal_learning_state_A
         )
 
         # Initialize the simulation environment
@@ -202,41 +183,19 @@ class LogicGatesTestLIF(unittest.TestCase):
         self._model.register_global_property("dt", 1e-3)  # Time step (100 μs)
         self._model.register_global_property("I_bias", 0)  # No bias current
 
-        # Define LIF neuron parameters
-        C = 10e-9  # Membrane capacitance in Farads (10 nF)
-        R = 1e6  # Membrane resistance in Ohms (1 TΩ)
-        vthr = -45  # Spike threshold voltage (mV)
-        tref = 5e-3  # Refractory period (5 ms)
-        vrest = -60  # Resting potential (mV)
-        vreset = -70  # Reset potential after spike (mV)
-        tref_allows_integration = (
-            1  # Whether to allow integration during refractory period
-        )
-        I_in = 0  # Input current (40 nA)
 
         # Package parameters for soma creation
-        soma_parameters = [
-            C,
-            R,
-            vthr,
-            tref,
-            vrest,
-            vreset,
-            tref_allows_integration,
-            I_in,
-        ]
+        soma_parameters = self.data['soma']['lif_soma']['config_0']['hyperparameters']
 
-        # Set initial internal state for neurons
-        v = vrest  # Initial membrane voltage
-        tcount = 0  # Time counter
-        tlast = 0  # Last spike time
-        default_internal_state = [v, tcount, tlast, 0]
+        default_internal_state = self.data['soma']['lif_soma']['config_0']['internal_state']
+
 
         # Create first LIF neuron (receives external input)
         soma_0 = self._model.create_soma(
-            breed="LIF_Soma",
-            parameters=soma_parameters,
-            default_internal_state=default_internal_state,
+            breed="lif_soma",
+            config_name='config_0',
+            hyperparameters_overrides=soma_parameters,
+            default_internal_state_overrides=default_internal_state,
         )
         # # Create second LIF neuron (receives input from soma_0)
         # soma_1 = self._model.create_soma(
@@ -246,53 +205,30 @@ class LogicGatesTestLIF(unittest.TestCase):
         # )
 
         # Define synaptic parameters for connections
-        weight = 2.0  # Synaptic weight (strength)
-        synaptic_delay = 1.0  # Transmission delay (ms)
-        scale = 1.0  # Scaling factor
-        tau_fall = 1e-2  # Decay time constant (1 ms)
-        tau_rise = 0  # Rise time constant (instantaneous)
-        synapse_parameters = [
-            weight,
-            synaptic_delay,
-            scale,
-            tau_fall,
-            tau_rise,
-        ]
 
-        # Initial synaptic current
-        I_synapse = 0.0
-        synapse_internal_state = [I_synapse]
+        #LEARNING PARAMETERS A
+        synapse_parameters_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['hyperparameters']
+        synapse_internal_state_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['internal_state']
+        learning_parameters_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['learning_hyperparameters']
+        internal_learning_state_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['internal_learning_state']
+        #LEARNING PARAMETERS B
+        synapse_parameters_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['hyperparameters']
+        synapse_internal_state_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['internal_state']
+        learning_parameters_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['learning_hyperparameters']
 
-        # Define STDP learning parameters
-        stdpType = -1  # Exp pair-wise STDP
-        tau_pre_stdp = 10e-3  # Pre-synaptic STDP time constant (10 ms)
-        tau_post_stdp = 10e-3  # Post-synaptic STDP time constant (10 ms)
-        a_exp_pre = 0.005  # Pre-synaptic STDP learning rate
-        a_exp_post = 0.005  # Post-synaptic STDP learning rate
-        stdp_history_length = 100  # Length of STDP history buffer
-        learning_parameters_0 = [
-            stdpType,
-            tau_pre_stdp,
-            tau_post_stdp,
-            a_exp_pre,
-            a_exp_post,
-            stdp_history_length,
-        ]
-        # Internal learning state for STDP synapses
-        pre_trace = 0
-        post_trace = 0
-        dW = 0
-        internal_learning_state_0 = [pre_trace, post_trace, dW]
 
-        # Create external input synapse (stimulates soma_0)
+
+        # Create first external input synapse (stronger input)
+
         syn_ext = self._model.create_synapse(
-            breed="Single_Exp_Synapse",
+            breed="single_exp_synapse",
             pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
             post_soma_id=soma_0,
-            parameters=synapse_parameters,
-            default_internal_state=synapse_internal_state,
-            learning_parameters=learning_parameters_0,
-            default_internal_learning_state=internal_learning_state_0,
+            config_name = 'exp_pair_wise_stdp_config_0',
+            hyperparameters_overrides=synapse_parameters_A,
+            default_internal_state_overrides=synapse_internal_state_A,
+            learning_hyperparameters_overrides=learning_parameters_A,
+            default_internal_learning_state_overrides=internal_learning_state_A
         )
 
         # Initialize the simulation environment
@@ -330,7 +266,8 @@ class LogicGatesTestLIF(unittest.TestCase):
         # Plot membrane potential
         plt.subplot(2, 1, 1)
         plt.plot(internal_states_history_soma0[:, 0], "b-", label="Soma 0")
-        plt.axhline(y=vthr, color="r", linestyle="--", label="Threshold")
+        plt.axhline(y=soma_parameters['vthr'], color="r", linestyle="--", label="Threshold")
+
         plt.ylabel("Membrane Pot. (mV)")
         plt.title("Soma 0")
         plt.legend()
@@ -405,97 +342,63 @@ class LogicGatesTestLIF(unittest.TestCase):
         self._model.register_global_property("dt", 1e-1)  # Time step (100 μs)
         self._model.register_global_property("I_bias", 0)  # No bias current
 
-        # Define LIF neuron parameters
-        C = 10e-9  # Membrane capacitance in Farads (10 nF)
-        R = 1e12  # Membrane resistance in Ohms (1 TΩ)
-        vthr = -45  # Spike threshold voltage (mV)
-        tref = 5e-3  # Refractory period (5 ms)
-        vrest = -60  # Resting potential (mV)
-        vreset = -60  # Reset potential after spike (mV)
-        tref_allows_integration = 1  # Allow integration during refractory period
-        I_in = 0  # No direct input current (only synaptic input)
 
         # Package parameters for soma creation
-        soma_parameters = [
-            C,
-            R,
-            vthr,
-            tref,
-            vrest,
-            vreset,
-            tref_allows_integration,
-            I_in,
-        ]
+        soma_parameters = self.data['soma']['lif_soma']['config_0']['hyperparameters']
 
-        # Set initial internal state for neuron
-        v = vrest  # Initial membrane voltage
-        tcount = 0  # Time counter
-        tlast = 0  # Last spike time
-        default_internal_state = [v, tcount, tlast, 0]
+        default_internal_state = self.data['soma']['lif_soma']['config_0']['internal_state']
 
         # Create single LIF neuron that will receive dual inputs
         soma_0 = self._model.create_soma(
-            breed="LIF_Soma",
-            parameters=soma_parameters,
-            default_internal_state=default_internal_state,
+            breed="lif_soma",
+            config_name='config_0',
+            hyperparameters_overrides=soma_parameters,
+            default_internal_state_overrides=default_internal_state,
         )
 
-        # Define synaptic parameters for first synapse (stronger weight)
-        weight_A = 2.0  # Stronger synaptic weight
-        synaptic_delay_A = 1.0  # Transmission delay (ms)
-        scale_A = 1.0  # Scaling factor
-        tau_fall_A = 1  # Decay time constant (2 ms)
-        tau_rise_A = 0  # Rise time constant (instantaneous)
-        synapse_parameters_A = [
-            weight_A,
-            synaptic_delay_A,
-            scale_A,
-            tau_fall_A,
-            tau_rise_A,
-        ]
+        #LEARNING PARAMETERS A
+        synapse_parameters_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['hyperparameters']
+        synapse_internal_state_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['internal_state']
+        learning_parameters_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['learning_hyperparameters']
+        internal_learning_state_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['internal_learning_state']
+        #LEARNING PARAMETERS B
+        synapse_parameters_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['hyperparameters']
+        synapse_internal_state_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['internal_state']
+        learning_parameters_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['learning_hyperparameters']
 
-        # Define synaptic parameters for second synapse (weaker weight)
-        weight_B = 1.0  # Weaker synaptic weight
-        synaptic_delay_B = 1.0  # Longer transmission delay (ms)
-        scale_B = 1.0  # Scaling factor
-        tau_fall_B = 1  # Faster decay time constant (1 ms)
-        tau_rise_B = 0  # Rise time constant (instantaneous)
-        synapse_parameters_B = [
-            weight_B,
-            synaptic_delay_B,
-            scale_B,
-            tau_fall_B,
-            tau_rise_B,
-        ]
 
-        # Initial synaptic current for both synapses
-        I_synapse = 0.0
-        synapse_internal_state = [I_synapse]
 
         # Create first external input synapse (stronger input)
         syn_ext_A = self._model.create_synapse(
-            breed="Single_Exp_Synapse",
+            breed="single_exp_synapse",
             pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
             post_soma_id=soma_0,
-            parameters=synapse_parameters_A,
-            default_internal_state=synapse_internal_state,
+            config_name = 'exp_pair_wise_stdp_config_0',
+            hyperparameters_overrides=synapse_parameters_A,
+            default_internal_state_overrides=synapse_internal_state_A,
+            learning_hyperparameters_overrides=learning_parameters_A,
+            default_internal_learning_state_overrides=internal_learning_state_A
         )
 
         # Create second external input synapse (weaker input)
         syn_ext_B = self._model.create_synapse(
-            breed="Single_Exp_Synapse",
+            breed="single_exp_synapse",
             pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
             post_soma_id=soma_0,
-            parameters=synapse_parameters_B,
-            default_internal_state=synapse_internal_state,
+            config_name = 'exp_pair_wise_stdp_config_0',
+            hyperparameters_overrides=synapse_parameters_B,
+            default_internal_state_overrides=synapse_internal_state_B,
+            learning_hyperparameters_overrides=learning_parameters_B,
+            default_internal_learning_state_overrides=internal_learning_state_A
         )
+
 
         # Initialize the simulation environment
         self._model.setup(use_gpu=self._use_gpu)
 
         # Define input spike patterns for both synapses
         # Synapse A receives early, strong spikes
-        spikes_A = [(2, 1), (10, 1), (20, 1)]  # (time_tick, spike_value)
+        spikes_A = [(2, 1), (3,1), (6,1) ,(10, 1), (20, 1)]  # (time_tick, spike_value)
 
         # Synapse B receives delayed, weaker spikes that overlap with A
         spikes_B = [(5, 1), (12, 1), (25, 1)]  # (time_tick, spike_value)
@@ -535,7 +438,8 @@ class LogicGatesTestLIF(unittest.TestCase):
         # Plot membrane potential
         plt.subplot(3, 1, 1)
         plt.plot(internal_states_history_soma0[:, 0], "b-", label="Membrane Potential")
-        plt.axhline(y=vthr, color="r", linestyle="--", label="Threshold")
+        plt.axhline(y=soma_parameters['vthr'], color="r", linestyle="--", label="Threshold")
+
         plt.ylabel("Membrane Pot. (mV)")
         plt.title("Dual Synapse Input Integration")
         plt.legend()
@@ -589,7 +493,6 @@ class LogicGatesTestLIF(unittest.TestCase):
             )
             # Write complete soma internal states
             writer.writerows(internal_states_history_soma0)
-
         # Verify that soma responds to dual inputs
         actual_spikes = len(self._model.get_spike_times(soma_id=soma_0))
 
@@ -631,120 +534,77 @@ class LogicGatesTestLIF(unittest.TestCase):
         self._model.register_global_property("dt", 1e-3)  # Time step (100 μs)
         self._model.register_global_property("I_bias", 0)  # No bias current
 
-        # Define LIF neuron parameters
-        C = 10e-9  # Membrane capacitance in Farads (10 nF)
-        R = 1e6  # Membrane resistance in Ohms (1 TΩ)
-        vthr = -45  # Spike threshold voltage (mV)
-        tref = 5e-3  # Refractory period (5 ms)
-        vrest = -60  # Resting potential (mV)
-        vreset = -70  # Reset potential after spike (mV)
-        tref_allows_integration = 1  # Allow integration during refractory period
-        I_in = 0  # No direct input current (only synaptic input)
-
         # Package parameters for soma creation
-        soma_parameters_0 = [
-            C,
-            R,
-            vthr,
-            tref,
-            vrest,
-            vreset,
-            tref_allows_integration,
-            I_in,
-        ]
+        soma_parameters = self.data['soma']['lif_soma']['config_0']['hyperparameters']
 
-        # Set initial internal state for neuron
-        v = vrest  # Initial membrane voltage
-        tcount = 0  # Time counter
-        tlast = 0  # Last spike time
-        default_internal_state_0 = [v, tcount, tlast, 0]
+        default_internal_state = self.data['soma']['lif_soma']['config_0']['internal_state']
 
         # Create single LIF neuron that will receive dual inputs
         soma_0 = self._model.create_soma(
-            breed="LIF_Soma",
-            parameters=soma_parameters_0,
-            default_internal_state=default_internal_state_0,
+            breed="lif_soma",
+            config_name='config_0',
+            hyperparameters_overrides=soma_parameters,
+            default_internal_state_overrides=default_internal_state,
         )
 
         # Create IZH soma
-        k = 1.2
-        vthr = -45
-        C = 150
-        a = 0.01
-        b = 5
-        vpeak = 50
-        vrest = -75
-        d = 130
-        vreset = -56
-        I_in = 350
-        soma_parameters_1 = [k, vthr, C, a, b, vpeak, vrest, d, vreset, I_in]
-        v = vrest
-        u = 0
-        default_internal_state_1 = [v, u]
 
+        izh_soma_parameters = self.data['soma']['izh_soma']['config_0']['hyperparameters']
+        izh_default_internal_state = self.data['soma']['izh_soma']['config_0']['internal_state']
         soma_1 = self._model.create_soma(
-            breed="IZH_Soma",
-            parameters=soma_parameters_1,
-            default_internal_state=default_internal_state_1,
+            breed="izh_soma",
+            config_name='config_0',
+            hyperparameters_overrides=izh_soma_parameters,
+            default_internal_state_overrides=izh_default_internal_state,
         )
 
-        # Define synaptic parameters for first synapse (stronger weight)
-        weight_A = 2.0  # Stronger synaptic weight
-        synaptic_delay_A = 1.0  # Transmission delay (ms)
-        scale_A = 1.0  # Scaling factor
-        tau_fall_A = 1e-2  # Decay time constant (2 ms)
-        tau_rise_A = 0  # Rise time constant (instantaneous)
-        synapse_parameters_A = [
-            weight_A,
-            synaptic_delay_A,
-            scale_A,
-            tau_fall_A,
-            tau_rise_A,
-        ]
+        #LEARNING PARAMETERS A
+        synapse_parameters_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['hyperparameters']
+        synapse_internal_state_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['internal_state']
+        learning_parameters_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['learning_hyperparameters']
+        internal_learning_state_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['internal_learning_state']
+        #LEARNING PARAMETERS B
+        synapse_parameters_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['hyperparameters']
+        synapse_internal_state_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['internal_state']
+        learning_parameters_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['learning_hyperparameters']
 
-        # Define synaptic parameters for second synapse (weaker weight)
-        weight_B = 1.0  # Weaker synaptic weight
-        synaptic_delay_B = 1.0  # Longer transmission delay (ms)
-        scale_B = 1.0  # Scaling factor
-        tau_fall_B = 1e-2  # Faster decay time constant (1 ms)
-        tau_rise_B = 0  # Rise time constant (instantaneous)
-        synapse_parameters_B = [
-            weight_B,
-            synaptic_delay_B,
-            scale_B,
-            tau_fall_B,
-            tau_rise_B,
-        ]
 
-        # Initial synaptic current for both synapses
-        I_synapse = 0.0
-        synapse_internal_state = [I_synapse]
 
         # Create first external input synapse (stronger input)
         syn_ext_A = self._model.create_synapse(
-            breed="Single_Exp_Synapse",
+            breed="single_exp_synapse",
             pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
             post_soma_id=soma_0,
-            parameters=synapse_parameters_A,
-            default_internal_state=synapse_internal_state,
+            config_name = 'exp_pair_wise_stdp_config_0',
+            hyperparameters_overrides=synapse_parameters_A,
+            default_internal_state_overrides=synapse_internal_state_A,
+            learning_hyperparameters_overrides=learning_parameters_A,
+            default_internal_learning_state_overrides=internal_learning_state_A
         )
 
         # Create second external input synapse (weaker input)
         syn_ext_B = self._model.create_synapse(
-            breed="Single_Exp_Synapse",
+            breed="single_exp_synapse",
             pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
             post_soma_id=soma_0,
-            parameters=synapse_parameters_B,
-            default_internal_state=synapse_internal_state,
+            config_name = 'exp_pair_wise_stdp_config_0',
+            hyperparameters_overrides=synapse_parameters_B,
+            default_internal_state_overrides=synapse_internal_state_B,
+            learning_hyperparameters_overrides=learning_parameters_B,
+            default_internal_learning_state_overrides=internal_learning_state_A
         )
 
         # Create second external input synapse (weaker input)
         syn_int_C = self._model.create_synapse(
-            breed="Single_Exp_Synapse",
+            breed="single_exp_synapse",
             pre_soma_id=soma_0,  # External input (no pre-synaptic neuron)
             post_soma_id=soma_1,
-            parameters=synapse_parameters_B,
-            default_internal_state=synapse_internal_state,
+            config_name = 'exp_pair_wise_stdp_config_0',
+            hyperparameters_overrides=synapse_parameters_B,
+            default_internal_state_overrides=synapse_internal_state_A,
+            learning_hyperparameters_overrides=learning_parameters_B,
+            default_internal_learning_state_overrides=internal_learning_state_A,
+
         )
 
         # Initialize the simulation environment
@@ -799,7 +659,8 @@ class LogicGatesTestLIF(unittest.TestCase):
         # Plot membrane potential
         plt.subplot(5, 1, 1)
         plt.plot(internal_states_history_soma0[:, 0], "b-", label="Soma 0")
-        plt.axhline(y=vthr, color="r", linestyle="--", label="Threshold")
+        plt.axhline(y=soma_parameters['vthr'], color="r", linestyle="--", label="Threshold")
+
         plt.ylabel("Membrane Pot. (mV)")
         plt.title("Soma 0")
         plt.legend()
@@ -807,7 +668,8 @@ class LogicGatesTestLIF(unittest.TestCase):
         # Plot membrane potential
         plt.subplot(5, 1, 2)
         plt.plot(internal_states_history_soma1[:, 0], "b-", label="Soma 1")
-        plt.axhline(y=vthr, color="r", linestyle="--", label="Threshold")
+        plt.axhline(y=izh_soma_parameters['vthr'], color="r", linestyle="--", label="Threshold")
+
         plt.ylabel("Membrane Pot. (mV)")
         plt.title("Soma 1")
         plt.legend()
@@ -885,39 +747,17 @@ class LogicGatesTestLIF(unittest.TestCase):
         self._model.register_global_property("dt", 1e-3)  # Time step (100 μs)
         self._model.register_global_property("I_bias", 0)  # No bias current
 
-        # Define LIF neuron parameters
-        C = 10e-9  # Membrane capacitance in Farads (10 nF)
-        R = 1e6  # Membrane resistance in Ohms (1 TΩ)
-        vthr = -45  # Spike threshold voltage (mV)
-        tref = 5e-3  # Refractory period (5 ms)
-        vrest = -60  # Resting potential (mV)
-        vreset = -70  # Reset potential after spike (mV)
-        tref_allows_integration = 1  # Allow integration during refractory period
-        I_in = 0  # No direct input current (only synaptic input)
+        soma_parameters = self.data['soma']['lif_soma']['config_0']['hyperparameters']
 
-        # Package parameters for soma creation
-        soma_parameters_0 = [
-            C,
-            R,
-            vthr,
-            tref,
-            vrest,
-            vreset,
-            tref_allows_integration,
-            I_in,
-        ]
-
-        # Set initial internal state for neuron
-        v = vrest  # Initial membrane voltage
-        tcount = 0  # Time counter
-        tlast = 0  # Last spike time
-        default_internal_state_0 = [v, tcount, tlast, 0]
+        default_internal_state = self.data['soma']['lif_soma']['config_0']['internal_state']
 
         # Create single LIF neuron that will receive dual inputs
         soma_0 = self._model.create_soma(
-            breed="LIF_Soma",
-            parameters=soma_parameters_0,
-            default_internal_state=default_internal_state_0,
+            breed="lif_soma",
+            config_name='config_0',
+            hyperparameters_overrides=soma_parameters,
+            default_internal_state_overrides=default_internal_state,
+
         )
 
         # # Create single LIF neuron that will receive dual inputs
@@ -928,118 +768,64 @@ class LogicGatesTestLIF(unittest.TestCase):
         # )
 
         # Create IZH soma
-        k = 1.2
-        vthr = -45
-        C = 150
-        a = 0.01
-        b = 5
-        vpeak = 50
-        vrest = -75
-        d = 130
-        vreset = -56
-        I_in = 350
-        soma_parameters_1 = [k, vthr, C, a, b, vpeak, vrest, d, vreset, I_in]
-        v = vrest
-        u = 0
-        default_internal_state_1 = [v, u]
+        izh_soma_parameters = self.data['soma']['izh_soma']['config_0']['hyperparameters']
+        izh_default_internal_state = self.data['soma']['izh_soma']['config_0']['internal_state']
+  
         soma_1 = self._model.create_soma(
-            breed="IZH_Soma",
-            parameters=soma_parameters_1,
-            default_internal_state=default_internal_state_1,
+            breed="izh_soma",
+            config_name='config_0',
+            hyperparameters_overrides=izh_soma_parameters,
+            default_internal_state_overrides=izh_default_internal_state,
         )
+        #LEARNING PARAMETERS A
+        synapse_parameters_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['hyperparameters']
+        synapse_internal_state_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['internal_state']
+        learning_parameters_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['learning_hyperparameters']
+        internal_learning_state_A=self.data['synapse']['single_exp_synapse']['exp_pair_wise_stdp_config_0']['internal_learning_state']
+        #LEARNING PARAMETERS B
+        synapse_parameters_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['hyperparameters']
+        synapse_internal_state_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['internal_state']
+        learning_parameters_B=self.data['synapse']['single_exp_synapse']['no_learning_config_0']['learning_hyperparameters']
 
-        # Define synaptic parameters for first synapse (stronger weight)
-        weight_A = 2.0  # Stronger synaptic weight
-        synaptic_delay_A = 1.0  # Transmission delay (ms)
-        scale_A = 1.0  # Scaling factor
-        tau_fall_A = 1e-2  # Decay time constant (2 ms)
-        tau_rise_A = 0  # Rise time constant (instantaneous)
-        synapse_parameters_A = [
-            weight_A,
-            synaptic_delay_A,
-            scale_A,
-            tau_fall_A,
-            tau_rise_A,
-        ]
 
-        # Define synaptic parameters for second synapse (weaker weight)
-        weight_B = 1.0  # Weaker synaptic weight
-        synaptic_delay_B = 1.0  # Longer transmission delay (ms)
-        scale_B = 1.0  # Scaling factor
-        tau_fall_B = 1e-2  # Faster decay time constant (1 ms)
-        tau_rise_B = 0  # Rise time constant (instantaneous)
-        synapse_parameters_B = [
-            weight_B,
-            synaptic_delay_B,
-            scale_B,
-            tau_fall_B,
-            tau_rise_B,
-        ]
-
-        # Define STDP learning parameters
-        stdpType = 0  # Exp pair-wise STDP
-        tau_pre_stdp = 10e-3  # Pre-synaptic STDP time constant (10 ms)
-        tau_post_stdp = 10e-3  # Post-synaptic STDP time constant (10 ms)
-        a_exp_pre = 0.005  # Pre-synaptic STDP learning rate
-        a_exp_post = 0.005  # Post-synaptic STDP learning rate
-        stdp_history_length = 100  # Length of STDP history buffer
-        learning_parameters_A = [
-            stdpType,
-            tau_pre_stdp,
-            tau_post_stdp,
-            a_exp_pre,
-            a_exp_post,
-            stdp_history_length,
-        ]
-        learning_parameters_B = [
-            stdpType,  # 0
-            tau_pre_stdp,  # 1
-            tau_post_stdp,  # 2
-            a_exp_pre,  # 3
-            a_exp_post,  # 4
-            stdp_history_length,  # 5
-        ]
-
-        # Internal learning state for STDP synapses
-        pre_trace = 0
-        post_trace = 0
-        dW = 0
-        internal_learning_state_A = [pre_trace, post_trace, dW]
-        # Initial synaptic current for both synapses
-        I_synapse = 0.0
-        synapse_internal_state = [I_synapse]
 
         # Create first external input synapse (stronger input)
         syn_ext_A = self._model.create_synapse(
-            breed="Single_Exp_Synapse",
+            breed="single_exp_synapse",
             pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
             post_soma_id=soma_0,
-            parameters=synapse_parameters_A,
-            default_internal_state=synapse_internal_state,
-            learning_parameters=learning_parameters_A,
-            default_internal_learning_state=internal_learning_state_A,
+            config_name = 'exp_pair_wise_stdp_config_0',
+            hyperparameters_overrides=synapse_parameters_A,
+            default_internal_state_overrides=synapse_internal_state_A,
+            learning_hyperparameters_overrides=learning_parameters_A,
+            default_internal_learning_state_overrides=internal_learning_state_A
+
         )
 
         # Create second external input synapse (weaker input)
         syn_ext_B = self._model.create_synapse(
-            breed="Single_Exp_Synapse",
+            breed="single_exp_synapse",
             pre_soma_id=np.nan,  # External input (no pre-synaptic neuron)
             post_soma_id=soma_0,
-            parameters=synapse_parameters_B,
-            default_internal_state=synapse_internal_state,
-            learning_parameters=learning_parameters_B,
-            default_internal_learning_state=internal_learning_state_A,
+            config_name = 'exp_pair_wise_stdp_config_0',
+            hyperparameters_overrides=synapse_parameters_B,
+            default_internal_state_overrides=synapse_internal_state_B,
+            learning_hyperparameters_overrides=learning_parameters_B,
+            default_internal_learning_state_overrides=internal_learning_state_A
+
         )
 
         # Create second external input synapse (weaker input)
         syn_int_C = self._model.create_synapse(
-            breed="Single_Exp_Synapse",
+            breed="single_exp_synapse",
             pre_soma_id=soma_0,  # External input (no pre-synaptic neuron)
             post_soma_id=soma_1,
-            parameters=synapse_parameters_B,
-            default_internal_state=synapse_internal_state,
-            learning_parameters=learning_parameters_B,
-            default_internal_learning_state=internal_learning_state_A,
+            config_name = 'exp_pair_wise_stdp_config_0',
+            hyperparameters_overrides=synapse_parameters_B,
+            default_internal_state_overrides=synapse_internal_state_A,
+            learning_hyperparameters_overrides=learning_parameters_B,
+            default_internal_learning_state_overrides=internal_learning_state_A,
+
         )
 
         # Initialize the simulation environment
@@ -1114,7 +900,8 @@ class LogicGatesTestLIF(unittest.TestCase):
         # Plot membrane potential
         plt.subplot(12, 1, 1)
         plt.plot(internal_states_history_soma0[:, 0], "b-", label="Soma 0")
-        plt.axhline(y=vthr, color="r", linestyle="--", label="Threshold")
+        plt.axhline(y=soma_parameters['vthr'], color="r", linestyle="--", label="Threshold")
+
         plt.ylabel("Membrane Pot. (mV)")
         plt.title("Soma 0")
         plt.legend()
@@ -1122,7 +909,8 @@ class LogicGatesTestLIF(unittest.TestCase):
         # Plot membrane potential
         plt.subplot(12, 1, 2)
         plt.plot(internal_states_history_soma1[:, 0], "b-", label="Soma 1")
-        plt.axhline(y=vthr, color="r", linestyle="--", label="Threshold")
+        plt.axhline(y=izh_soma_parameters['vthr'], color="r", linestyle="--", label="Threshold")
+
         plt.ylabel("Membrane Pot. (mV)")
         plt.title("Soma 1")
         plt.legend()

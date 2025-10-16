@@ -20,6 +20,7 @@ soma:
       hyperparameters:
         k: 1.2
         vthr: -45
+
         C: 150
         a: 0.01
         b: 5
@@ -36,6 +37,7 @@ synapse:
   single_exp_synapse:
     no_learning_config_0:
       hyperparameters:
+
         weight: 14.0  # Synaptic weight (strength)
         synaptic_delay: 1.0  # Transmission delay (ms)
         scale: 1.0  # Scaling factor
@@ -53,9 +55,10 @@ synapse:
         tau_fall: 1e-2  # Decay time constant (1 ms)
         tau_rise: 0  # Rise time constant (instantaneous)
       internal_state:
-        I_synapse: 0.0  # Initial synaptic current  
+        I_synapse: 0.0  # Initial synaptic current
       learning_hyperparameters:
-        stdp_type: 0  # Exp pair-wise STDP
+        stdp_type: 0.0   # Exp pair-wise STDP
+
         tau_pre_stdp: 10e-3  # Pre-synaptic STDP time constant (10 ms)
         tau_post_stdp: 10e-3  # Post-synaptic STDP time constant (10 ms)
         a_exp_pre: 0.005  # Pre-synaptic STDP learning rate
