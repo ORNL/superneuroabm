@@ -4,6 +4,7 @@ from superneuroabm.model import NeuromorphicModel
 import sagesim
 import tonic 
 import math
+from itertools import combinations
 
 class Conv2dtSingleLayer:
     def __init__(self, input_x, input_y, SpikeData=None):
@@ -138,6 +139,74 @@ class Conv2dtSingleLayer:
                             tick=time_step,
                             value=CurrentSpikeSet[coor]
                         )
+    def Pooling(self, layer_idx, W, H, Density):
+        if Density not in ['1-Many','1-1','Many-1']:
+            raise ValueError("Density argument must be 1-Many, 1-1, or Many-1")
+        if Density =="1-Many":
+            kernel_pairs = self.layers[layer_idx]  # [(kernel, output_channel), ...]
+            n_kernels = len(kernel_pairs)
+            n_pool = W * H
+
+            # --- 1. Generate all output-channel combinations ---
+            all_combos = []
+            for r in range(1, n_kernels + 1):
+                all_combos.extend(itertools.combinations([oc for _, oc in kernel_pairs], r))
+            # You could restrict r to smaller subset sizes if desired
+
+            # --- 2. Limit combos to n_pool ---
+            all_combos = all_combos[:n_pool]
+
+            # --- 3. Create pooling neurons ---
+            pooling_neurons = []
+            for _ in range(len(all_combos)):
+                pooling_neuron = self.model.create_soma(
+                    breed='lif_soma',
+                    config_name='config_0',
+                    hyperparameters_overrides={
+                        'C': 1e-8, 'R': 1e6, 'vthr': -45, 'tref': 5e-3,
+                        'vrest': -60, 'vreset': -60, 'tref_allows_integration': 1,
+                        'I_in': 0, 'scaling_factor': 1e-5
+                    },
+                    default_internal_state_overrides={'v': -60, 'tcount': 0.0, 'tlast': 0.0}
+                )
+                pooling_neurons.append(pooling_neuron)
+
+            # --- 4. Connect each combo to its pooling neuron ---
+            for pool_idx, combo in enumerate(all_combos):
+                pooling_neuron = pooling_neurons[pool_idx]
+
+                for oc in combo:
+                    self.model.create_synapse(
+                        breed='single_exp_synapse',
+                        pre_soma_id=oc,
+                        post_soma_id=pooling_neuron,
+                        config_name='exp_pair_wise_stdp_config_0',
+                        hyperparameters_overrides={
+                            'weight': np.random.uniform(50.0, 100.0),
+                            'synpatic_delay': 1.0, 'scale': 1.0,
+                            'tau_fall': 1e-2, 'tau_rise': 0
+                        },
+                        default_internal_state_overrides={'internal_state': 0.0},
+                        learning_hyperparameters_overrides={
+                            'stdp_type': 10e-3, 'tau_pre_stdp': 10e-3,
+                            'tau_post_stdp': 10e-3, 'a_exp_pre': 0.005,
+                            'a_exp_post': 0.005, 'stdp_history_length': 100
+                        },
+                        default_internal_learning_state_overrides={
+                            'pre_trace': 0, 'post_trace': 0, 'dw': 0
+                        }
+                    )
+
+            # --- 5. Reshape into spatial grid for later reference ---
+            pooling_grid = np.array(pooling_neurons)
+            if len(pooling_grid) < n_pool:
+                # pad with dummy neurons if fewer combos than W*H
+                pad_count = n_pool - len(pooling_grid)
+                pooling_grid = np.concatenate([pooling_grid, np.array([None] * pad_count)])
+            pooling_grid = pooling_grid.reshape(W, H)
+
+            self.pooling_layers[layer_idx] = pooling_grid
+
     def MaxPooling(self, layer_idx, W, H):
 
         n_kernels = len(self.layers[layer_idx])
