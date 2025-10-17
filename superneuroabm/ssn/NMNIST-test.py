@@ -4,20 +4,18 @@ from superneuroabm.model import NeuromorphicModel
 import sagesim
 import tonic 
 import math
+import itertools
 from itertools import combinations
+import tonic.transforms as transforms
+import tempfile
 
 class Conv2dtSingleLayer:
-    def __init__(self, input_x, input_y, SpikeData=None):
+    def __init__(self, SpikeData=None):
         # Spike Data should be organized by spike time
         # SpikeData[t] = [(xi, yi, spike val), (xj, yj, spike val)....] all incoming spikes
         self.model = NeuromorphicModel()
-        self.input_x = input_x
-        self.input_y = input_y
         self.SpikeData = SpikeData
-
-        # filters and pooling organized by layer
         self.layers = {}           # {layer_idx: [(Kernel, Kernel_Neuron), ...]}
-        self.pooling_layers = {}   # {layer_idx: {kernel_neuron: [outputs]}}
         self.pooling_matrix = {}
 
     def load_bin_as_spike_dict(self, bin_path):
@@ -68,7 +66,6 @@ class Conv2dtSingleLayer:
             CurrentSpikeSet[(i[0], i[1])] = i[2]
         return CurrentSpikeSet
     
-   
     def szudzik_pair(self, x, y):
         if x >= y:
             return x * x + x + y + 1
@@ -76,34 +73,11 @@ class Conv2dtSingleLayer:
             return y * y + x + 1
     
     def Conv_Kernel_Construction(self, W, H, layer_idx=0, input=np.nan):
-        """
-        Construct a convolutional kernel and assign it to a specific layer index.
-        """
         Kernel = np.empty((W, H), dtype=object)
-        Kernel_Neuron = self.model.create_soma(
-            breed='lif_soma',
-            config_name='config_0',
-            hyperparameters_overrides={'C': 1e-8, 'R': 1e6, 'vthr': -45, 'tref': 5e-3,
-                                       'vrest': -60, 'vreset': -60, 'tref_allows_integration': 1,
-                                       'I_in': 0, 'scaling_factor': 1e-5},
-            default_internal_state_overrides={'v': -60, 'tcount': 0.0, 'tlast': 0.0}
-        )
+        Kernel_Neuron = self.CreateSoma()
         for i in range(W):
             for j in range(H):
-                Synapse = self.model.create_synapse(
-                    breed='single_exp_synapse',
-                    pre_soma_id=input,
-                    post_soma_id=Kernel_Neuron,
-                    config_name='exp_pair_wise_stdp_config_0',
-                    hyperparameters_overrides={'weight': np.random.uniform(50.0, 100.0),
-                                               'synpatic_delay': 1.0, 'scale': 1.0,
-                                               'tau_fall': 1e-2, 'tau_rise': 0},
-                    default_internal_state_overrides={'internal_state': 0.0},
-                    learning_hyperparameters_overrides={'stdp_type': 10e-3, 'tau_pre_stdp': 10e-3,
-                                                        'tau_post_stdp': 10e-3, 'a_exp_pre': 0.005,
-                                                        'a_exp_post': 0.005, 'stdp_history_length': 100},
-                    default_internal_learning_state_overrides={'pre_trace': 0, 'post_trace': 0, 'dw': 0}
-                )
+                Synapse=self.CreateSynapse(input, Kernel_Neuron)
                 Kernel[i][j] = Synapse
 
         # store in proper layer
@@ -139,30 +113,44 @@ class Conv2dtSingleLayer:
                             tick=time_step,
                             value=CurrentSpikeSet[coor]
                         )
-    def Pooling(self, layer_idx, W, H, Density):
-        if Density not in ['1-Many','1-1','Many-1']:
-            raise ValueError("Density argument must be 1-Many, 1-1, or Many-1")
-        if Density =="1-Many":
-            output_channels=len(self.layers[layer_idx])
-            output_channels_list=[kernel[1] for kernel in self.layers[layer_idx]]
-            combos=[]
-            for all r in range(1, output_channels+1):
-                combos.extend(list(c) for c in itertools.combinations(output_channels_list,r))
-            pooling_spikes = np.array([self.CreateSoma() for _ in range(len(combos))],dtype=object)
-            pooling_spikes = pooling_spikes.reshape(W, H)
-            current_combo_connection=0
-            for index_i in range(len(pooling_spikes)):
-                for index_j in range(len(pooling_spikes[0])):
-                    if pooling_spikes[index_i][index_j]:
-                        for soma in combos[current_combo_connection]:
-                            
-                    else:
-                        continue
-            
+    def AttentionPooling(self, layer_idx, W, H):
+        output_channels=len(self.layers[layer_idx])
+        output_channels_list=[kernel[1] for kernel in self.layers[layer_idx]]
+        combos=[]
+        for r in range(1, output_channels+1):
+            combos.extend(list(c) for c in itertools.combinations(output_channels_list,r))
+        pooling_spikes = np.array([self.CreateSoma() for _ in range(len(combos))], dtype=object)
+        total = W * H
+        if len(pooling_spikes) < total:
+            padding = [None] * (total - len(pooling_spikes))
+            pooling_spikes = np.concatenate((pooling_spikes, np.array(padding, dtype=object)))
 
+        pooling_spikes = pooling_spikes.reshape(W, H)
+        current_combo_connection=0
+        for index_i in range(len(pooling_spikes)):
+            for index_j in range(len(pooling_spikes[0])):
+                if pooling_spikes[index_i][index_j]:
+                    for soma in combos[current_combo_connection]:
+                        self.CreateSynapse(soma, pooling_spikes[index_i][index_j])
+                    current_combo_connection+=1
+                else:
+                    continue
+        self.pooling_matrix[layer_idx]=pooling_spikes
             
+    def SurjectivePooling(self, layer_idx, W, H):
+        #MUST BE A SURJECTIVE RELATIONSHP
+        output_channels=len(self.layers[layer_idx])
+        output_channels_list=[kernel[1] for kernel in self.layers[layer_idx]]
+        input_neurons_to_output_num=np.ceil(W*H/len(output_channels))
+        pooling_neurons=np.array([self.CreateSoma() for _ in range(len(W*H))], dtype=object)
+        pool_index=-1
+        for input_neuron_index in range(len(output_channels_list)):
+            if input_neuron_index % input_neurons_to_output_num:
+                pool_index+=1
+            self.CreateSynapse(output_channels_list[input_neuron_index],pooling_neurons[pool_index])
+        pooling_spikes=pooling_neurons.reshape(W,H)
+        self.pooling_matrix[layer_idx]=pooling_neurons
 
-            
     def CreateSoma(self):
         Soma=self.model.create_soma(
                 breed='lif_soma',
@@ -173,7 +161,22 @@ class Conv2dtSingleLayer:
                 default_internal_state_overrides={'v': -60, 'tcount': 0.0, 'tlast': 0.0}
             )
         return Soma
-        
+    def CreateSynapse(self,pre_soma, post_soma):
+        Synapse = self.model.create_synapse(
+                    breed='single_exp_synapse',
+                    pre_soma_id=pre_soma,
+                    post_soma_id=post_soma,
+                    config_name='exp_pair_wise_stdp_config_0',
+                    hyperparameters_overrides={'weight': np.random.uniform(50.0, 100.0),
+                                               'synpatic_delay': 1.0, 'scale': 1.0,
+                                               'tau_fall': 1e-2, 'tau_rise': 0},
+                    default_internal_state_overrides={'internal_state': 0.0},
+                    learning_hyperparameters_overrides={'stdp_type': 10e-3, 'tau_pre_stdp': 10e-3,
+                                                        'tau_post_stdp': 10e-3, 'a_exp_pre': 0.005,
+                                                        'a_exp_post': 0.005, 'stdp_history_length': 100},
+                    default_internal_learning_state_overrides={'pre_trace': 0, 'post_trace': 0, 'dw': 0}
+                )
+        return Synapse
     def ForwardPass(self, SpikeData):
         #TODO 
         #Collect Spikes at each layer and pass through
@@ -182,9 +185,7 @@ class Conv2dtSingleLayer:
         '''
         return None
 
-import tonic
-import tonic.transforms as transforms
-import tempfile
+
 
 if __name__ == '__main__':
 
@@ -194,7 +195,7 @@ if __name__ == '__main__':
     Model.Conv_Kernel_Construction(4, 4, layer_idx=0)
     Model.Conv_Kernel_Construction(4, 4, layer_idx=0)
     Model.Conv_Kernel_Construction(5, 5, layer_idx=0)
-    Model.MaxPooling(0,4,4)
+    Model.Pooling(0,4,4)
     Dataset = Model.load_bin_as_spike_dict('/lustre/orion/proj-shared/lrn088/objective3/wfishell/superneuroabm/superneuroabm/ssn/data/NMNIST/Test/1/00003.bin')
     print(Dataset[5])
 
@@ -212,5 +213,4 @@ if __name__ == '__main__':
         )
     print(internal_states_history_soma)
 
-    
     
