@@ -8,6 +8,7 @@ import itertools
 from itertools import combinations
 import tonic.transforms as transforms
 import tempfile
+from collections import defaultdict
 
 class Conv2dtSingleLayer:
     def __init__(self, SpikeData=None):
@@ -167,7 +168,7 @@ class Conv2dtSingleLayer:
                     pre_soma_id=pre_soma,
                     post_soma_id=post_soma,
                     config_name='exp_pair_wise_stdp_config_0',
-                    hyperparameters_overrides={'weight': np.random.uniform(50.0, 100.0),
+                    hyperparameters_overrides={'weight': np.random.uniform(100.0, 200.0),
                                                'synpatic_delay': 1.0, 'scale': 1.0,
                                                'tau_fall': 1e-2, 'tau_rise': 0},
                     default_internal_state_overrides={'internal_state': 0.0},
@@ -177,40 +178,70 @@ class Conv2dtSingleLayer:
                     default_internal_learning_state_overrides={'pre_trace': 0, 'post_trace': 0, 'dw': 0}
                 )
         return Synapse
-    def ForwardPass(self, SpikeData):
+    def ForwardPass(self, SpikeData,):
         #TODO 
         #Collect Spikes at each layer and pass through
         '''
         We are going to process all the spikes through and they will be collected an reprocessed at each max pooling layer
         '''
         return None
+    def invert_dict(self, input_dict, spike_value=10):
+        inverted = defaultdict(dict)
+        
+        for key, values in input_dict.items():
+            for v in values:
+                inverted[v][key] = spike_value
+                
+        return dict(inverted)
 
 
 
 if __name__ == '__main__':
 
-    Model = Conv2dtSingleLayer(34, 34)
+    Model = Conv2dtSingleLayer()
     Model.model.setup(use_gpu=True)
-    Model.Conv_Kernel_Construction(3, 3, layer_idx=0)
+    Model.Conv_Kernel_Construction(3, 2, layer_idx=0)
     Model.Conv_Kernel_Construction(4, 4, layer_idx=0)
-    Model.Conv_Kernel_Construction(4, 4, layer_idx=0)
+    Model.Conv_Kernel_Construction(4, 2, layer_idx=0)
     Model.Conv_Kernel_Construction(5, 5, layer_idx=0)
-    Model.Pooling(0,4,4)
+    Model.AttentionPooling(0,4,4)
     Dataset = Model.load_bin_as_spike_dict('/lustre/orion/proj-shared/lrn088/objective3/wfishell/superneuroabm/superneuroabm/ssn/data/NMNIST/Test/1/00003.bin')
-    print(Dataset[5])
-
     for time in Dataset:
         for kernel_array, kernel_neuron in Model.layers[0]:
                 for spike in Dataset[time]:
                     Model.Convolve_Spike(spike, kernel_array, Dataset[time], time, 1)
     
-    Model.model.simulate(ticks=1300, update_data_ticks=1300)
+    Spike_Times={}
+    Model.model.simulate(ticks=3000, update_data_ticks=3000)
 
-    soma=Model.pooling_matrix[0][0][1]
-    print(Model.model.get_spike_times(soma_id=soma))
-    internal_states_history_soma = np.array(
-            Model.model.get_internal_states_history(agent_id=soma)
-        )
-    print(internal_states_history_soma)
+    for index_i in range(len(Model.pooling_matrix[0])):
+        for index_j in range(len(Model.pooling_matrix[0][0])):
+            if Model.pooling_matrix[0][index_i][index_j]:
+                Coor=(index_i,index_j)
+                Spike_Times[Coor]=Model.model.get_spike_times(soma_id=Model.pooling_matrix[0][index_i][index_j])
+    Spike_Times=Model.invert_dict(Spike_Times)
+        
+    Model.Conv_Kernel_Construction(3, 3, layer_idx=1)
+    Model.Conv_Kernel_Construction(4, 4, layer_idx=1)
+    Model.Conv_Kernel_Construction(4, 4, layer_idx=1)
+    Model.AttentionPooling(1,3,3)
+    for time in Spike_Times:
+        for kernel_array, kernel_neuron in Model.layers[1]:
+                for spike in Spike_Times[time]:
+                    print(spike,'spike')
+                    print(Spike_Times[time],'Spike Times Data')
+                    print(time,'Time')
+                    Model.Convolve_Spike(spike, kernel_array, Spike_Times[time], time, 1)
+      
+    Spike_Times_Layer2={}
+    for index_i in range(len(Model.pooling_matrix[1])):
+        for index_j in range(len(Model.pooling_matrix[1][0])):
+            if Model.pooling_matrix[1][index_i][index_j]:
+                Coor=(index_i,index_j)
+                Spike_Times_Layer2[Coor]=Model.model.get_spike_times(soma_id=Model.pooling_matrix[1][index_i][index_j])
 
-    
+    print('SPIKE TIMES')
+    print(Spike_Times)
+    print('SPIKE TIMES 2')
+
+    print(Spike_Times_Layer2)
