@@ -205,10 +205,16 @@ if __name__ == '__main__':
     Model.Conv_Kernel_Construction(4, 4, layer_idx=0)
     Model.Conv_Kernel_Construction(4, 2, layer_idx=0)
     Model.Conv_Kernel_Construction(5, 5, layer_idx=0)
+    Model.AttentionPooling(0,4,4)
+
+    #   LAYER 1 
+    Model.Conv_Kernel_Construction(3, 3, layer_idx=1)
+    Model.Conv_Kernel_Construction(4, 4, layer_idx=1)
+    Model.Conv_Kernel_Construction(4, 4, layer_idx=1)
+    Model.AttentionPooling(1,3,3)
     #TODO add filter matrix to set the thresholds and synaptic weights
     #Each Conv channel has one output neuron
     #Computing combanitoric set
-    Model.AttentionPooling(0,4,4)
     Dataset = Model.load_bin_as_spike_dict('/lustre/orion/proj-shared/lrn088/objective3/wfishell/superneuroabm/superneuroabm/ssn/data/NMNIST/Test/1/00003.bin')
     #Dataset Time, X,Y,=> compute spatial hashing spike=suzdkik(x,y)
     #Dataset sample {T1:{(x,y):spike value, (x_1,y_1): spike value 2 ....}, t2 ,...}
@@ -229,19 +235,21 @@ if __name__ == '__main__':
     #invert spike gets us back to the dataset form seen in lines 213-214
     Spike_Times=Model.invert_dict(Spike_Times)
     #TODO should we have spatial hashing? 
-        
-    Model.Conv_Kernel_Construction(3, 3, layer_idx=1)
-    Model.Conv_Kernel_Construction(4, 4, layer_idx=1)
-    Model.Conv_Kernel_Construction(4, 4, layer_idx=1)
-    Model.AttentionPooling(1,3,3)
+    print(Spike_Times)
+
     for time in Spike_Times:
         for kernel_array, kernel_neuron in Model.layers[1]:
                 for spike in Spike_Times[time]:
                     Model.Convolve_Spike(spike, kernel_array, Spike_Times[time], time, 1)
+        
+    Model.model.simulate(ticks=1300, update_data_ticks=1300)
+
       
     Spike_Times_Layer2={}
     for index_i in range(len(Model.pooling_matrix[1])):
+        print('grabbing end spikes')
         for index_j in range(len(Model.pooling_matrix[1][0])):
             if Model.pooling_matrix[1][index_i][index_j]:
                 Coor=(index_i,index_j)
                 Spike_Times_Layer2[Coor]=Model.model.get_spike_times(soma_id=Model.pooling_matrix[1][index_i][index_j])
+    print(Spike_Times_Layer2)
