@@ -12,7 +12,7 @@ from superneuroabm.model import NeuromorphicModel
 from superneuroabm.util import load_component_configurations
 
 
-def model_from_nx_graph(graph: nx.DiGraph) -> NeuromorphicModel:
+def model_from_nx_graph(graph: nx.DiGraph, enable_internal_state_tracking: bool = True) -> NeuromorphicModel:
     """
     Load a NetworkX graph from a file.
 
@@ -22,13 +22,15 @@ def model_from_nx_graph(graph: nx.DiGraph) -> NeuromorphicModel:
             'overrides' and 'tags attributes.
         Edges should have 'synapse_breed' and 'config' attributes, and optionally
             'overrides' and 'tags attributes.
+        enable_internal_state_tracking: If True (default), tracks internal states history
+            during simulation. If False, disables tracking to save memory and improve performance.
 
     Returns:
         A NeuromorphicModel object constructed from the graph.
     """
     component_configurations = load_component_configurations()
 
-    model = NeuromorphicModel()
+    model = NeuromorphicModel(enable_internal_state_tracking=enable_internal_state_tracking)
     name2id = {}
     id2name = {}
 
@@ -53,6 +55,7 @@ def model_from_nx_graph(graph: nx.DiGraph) -> NeuromorphicModel:
         id2name[soma_id] = node
 
     # Create synapses from graph edges
+    synapse_count = 0
     for u, v, data in graph.edges(data=True):
         synapse_breed = data.get("synapse_breed")
         config_name = data.get("config", "config_0")
@@ -77,6 +80,7 @@ def model_from_nx_graph(graph: nx.DiGraph) -> NeuromorphicModel:
             ),
             tags=tags,
         )
+        synapse_count += 1
 
     return model
 

@@ -61,6 +61,7 @@ class NeuromorphicModel(Model):
                 ),
             ],
         },
+        enable_internal_state_tracking: bool = True,
     ) -> None:
         """
         Creates an SNN Model and provides methods to create, simulate,
@@ -75,10 +76,15 @@ class NeuromorphicModel(Model):
             Step functions will be executed on the respective
             breed every simulation step in the order specifed in the
             list.
+        :param enable_internal_state_tracking: If True, tracks and stores
+            internal states history for all agents during simulation.
+            If False, disables tracking to reduce memory usage and improve
+            performance. Default is True for backward compatibility.
         """
         super().__init__(space=NetworkSpace())
 
-        
+        self.enable_internal_state_tracking = enable_internal_state_tracking
+
         self.register_global_property("dt", 1e-3)  # Time step (100 μs)
         self.register_global_property("I_bias", 0)  # No bias current
 
@@ -324,6 +330,8 @@ class NeuromorphicModel(Model):
             If False, resets parameters to their default values.
         """
         self._reset_agents(retain_parameters=retain_parameters)
+        # Clear SAGESim's agent data cache to avoid expensive comparisons on next simulation
+        self._agent_factory._prev_agent_data.clear()
         super().reset()
         
     def setup(
@@ -360,7 +368,12 @@ class NeuromorphicModel(Model):
             initial_internal_state = super().get_agent_property_value(
                 id=soma_id, property_name="internal_state"
             )
-            internal_states_buffer = [initial_internal_state[::] for _ in range(ticks)]
+            # Allocate full buffer when tracking enabled, minimal dummy buffer when disabled
+            if self.enable_internal_state_tracking:
+                internal_states_buffer = [initial_internal_state[::] for _ in range(ticks)]
+            else:
+                # Minimal dummy buffer - single element that gets overwritten each tick
+                internal_states_buffer = [initial_internal_state[::]]
             super().set_agent_property_value(
                 id=soma_id,
                 property_name="internal_states_buffer",
@@ -370,7 +383,12 @@ class NeuromorphicModel(Model):
             initial_internal_state = super().get_agent_property_value(
                 id=synapse_id, property_name="internal_state"
             )
-            internal_states_buffer = [initial_internal_state[::] for _ in range(ticks)]
+            # Allocate full buffer when tracking enabled, minimal dummy buffer when disabled
+            if self.enable_internal_state_tracking:
+                internal_states_buffer = [initial_internal_state[::] for _ in range(ticks)]
+            else:
+                # Minimal dummy buffer - single element that gets overwritten each tick
+                internal_states_buffer = [initial_internal_state[::]]
             super().set_agent_property_value(
                 id=synapse_id,
                 property_name="internal_states_buffer",
@@ -380,9 +398,14 @@ class NeuromorphicModel(Model):
             initial_internal_learning_state = super().get_agent_property_value(
                 id=synapse_id, property_name="internal_learning_state"
             )
-            internal_learning_states_buffer = [
-                initial_internal_learning_state[::] for _ in range(ticks)
-            ]
+            # Allocate full buffer when tracking enabled, minimal dummy buffer when disabled
+            if self.enable_internal_state_tracking:
+                internal_learning_states_buffer = [
+                    initial_internal_learning_state[::] for _ in range(ticks)
+                ]
+            else:
+                # Minimal dummy buffer - single element that gets overwritten each tick
+                internal_learning_states_buffer = [initial_internal_learning_state[::]]
             super().set_agent_property_value(
                 id=synapse_id,
                 property_name="internal_learning_states_buffer",
@@ -474,6 +497,7 @@ class NeuromorphicModel(Model):
         config = copy.deepcopy(
             self._component_configurations["synapse"][breed][config_name]
         )
+
         # Apply overrides to hyperparameters and default internal state
         if hyperparameters_overrides:
             for parameter_name, parameter_value in hyperparameters_overrides.items():
@@ -626,11 +650,15 @@ class NeuromorphicModel(Model):
         return spike_times
 
     def get_internal_states_history(self, agent_id: int) -> np.array:
+        if not self.enable_internal_state_tracking:
+            return []
         return super().get_agent_property_value(
             id=agent_id, property_name="internal_states_buffer"
         )
 
     def get_internal_learning_states_history(self, agent_id: int) -> np.array:
+        if not self.enable_internal_state_tracking:
+            return []
         return super().get_agent_property_value(
             id=agent_id, property_name="internal_learning_states_buffer"
         )
