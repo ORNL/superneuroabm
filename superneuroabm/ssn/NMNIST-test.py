@@ -215,7 +215,18 @@ if __name__ == '__main__':
     #TODO add filter matrix to set the thresholds and synaptic weights
     #Each Conv channel has one output neuron
     #Computing combanitoric set
-    Dataset = Model.load_bin_as_spike_dict('/lustre/orion/proj-shared/lrn088/objective3/wfishell/superneuroabm/superneuroabm/ssn/data/NMNIST/Test/1/00003.bin')
+    # Dataset = Model.load_bin_as_spike_dict('/lustre/orion/proj-shared/lrn088/objective3/wfishell/superneuroabm/superneuroabm/ssn/data/NMNIST/Test/1/00003.bin')
+    # save_directory = './data' 
+    # # Load the N-MNIST training dataset
+    # train_dataset = tonic.datasets.NMNIST(save_to=save_directory, train=True)
+
+    # Dataset = Model.load_bin_as_spike_dict('./data/NMNIST/Test/1/00003.bin')
+
+    # train_data = tonic.datasets.NMNIST(save_to=root, train=True, first_saccade_only = True)
+    # dataset = tonic.datasets.NMNIST(save_to=os.path.abspath(r'/home/4v5/Documents/SNN_projects/N-MNIST/tutorials/data'), train=True, first_saccade_only = True)
+    # test_data = tonic.datasets.NMNIST(save_to="./data", train=False, first_saccade_only = True)
+
+    Dataset = Model.load_bin_as_spike_dict('./data/NMNIST/Test/1/00003.bin')
     #Dataset Time, X,Y,=> compute spatial hashing spike=suzdkik(x,y)
     #Dataset sample {T1:{(x,y):spike value, (x_1,y_1): spike value 2 ....}, t2 ,...}
     for time in Dataset:
@@ -224,7 +235,7 @@ if __name__ == '__main__':
                     Model.Convolve_Spike(spike, kernel_array, Dataset[time], time, 1)
     
     Spike_Times={}
-    Model.model.simulate(ticks=1300, update_data_ticks=1300)
+    Model.model.simulate(ticks=100, update_data_ticks=100)
 
     for index_i in range(len(Model.pooling_matrix[0])):
         for index_j in range(len(Model.pooling_matrix[0][0])):
@@ -236,13 +247,15 @@ if __name__ == '__main__':
     Spike_Times=Model.invert_dict(Spike_Times)
     #TODO should we have spatial hashing? 
     print(Spike_Times)
+    Model.model.reset()    
 
     for time in Spike_Times:
         for kernel_array, kernel_neuron in Model.layers[1]:
                 for spike in Spike_Times[time]:
                     Model.Convolve_Spike(spike, kernel_array, Spike_Times[time], time, 1)
         
-    Model.model.simulate(ticks=1300, update_data_ticks=1300)
+
+    Model.model.simulate(ticks=100, update_data_ticks=100)
 
       
     Spike_Times_Layer2={}
