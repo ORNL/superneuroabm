@@ -178,13 +178,6 @@ class Conv2dtSingleLayer:
                     default_internal_learning_state_overrides={'pre_trace': 0, 'post_trace': 0, 'dw': 0}
                 )
         return Synapse
-    def ForwardPass(self, SpikeData,):
-        #TODO 
-        #Collect Spikes at each layer and pass through
-        '''
-        We are going to process all the spikes through and they will be collected an reprocessed at each max pooling layer
-        '''
-        return None
     def invert_dict(self, input_dict, spike_value=10):
         inverted = defaultdict(dict)
         
@@ -193,6 +186,79 @@ class Conv2dtSingleLayer:
                 inverted[v][key] = spike_value
                 
         return dict(inverted)
+    def Full_Convolution_And_Extraction(self, Layer_idx, SpikeData,Total_Sim_Time):
+        for time in SpikeData:
+            for kernel_array, kernel_neuron in self.layers[Layer_idx]:
+                    for spike in SpikeData[time]:
+                        self.Convolve_Spike(spike, kernel_array, SpikeData[time], time, 1)
+        
+        Spike_Times={}
+        self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
+
+        for index_i in range(len(self.pooling_matrix[Layer_idx])):
+            for index_j in range(len(self.pooling_matrix[Layer_idx][0])):
+                if self.pooling_matrix[Layer_idx][index_i][index_j]:
+                    Coor=(index_i,index_j)
+                    Spike_Times[Coor]=self.model.get_spike_times(soma_id=Model.pooling_matrix[Layer_idx][index_i][index_j])
+                    #{(x,y):[spike time list],....}
+        Spike_Times=self.invert_dict(Spike_Times)
+        print(Spike_Times)   
+        Model.model.reset()
+        return Spike_Times
+    
+    def FeedForwardLayerNN(self, InputSize,HiddenSize,OutputSize):
+        InputLayer=np.array([self.CreateSoma() for _ in range(InputSize))]
+        HiddenLayer=np.array([self.CreateSoma() for _ in range(HiddenSize))]
+        OutputLayer=np.array([self.CreateSoma() for _ in range(OutputSize))]
+        #initialize in input synapses
+        input_synapses=[]
+        for post_soma in InputLayer:
+            synapse=self.CreateSynapse(np.nan, post_soma)
+            input_synapses.append(synapse)
+        InputToHidden=self.FullyConnected(InputLayer,HiddenLayer)
+        HiddenToOutputSize=self.FullyConnected(HiddenLayer,OutputLayer)
+        return [input_synapses,OutputLayer]
+    def FullyConnected(self, InputLayer, OutputLayer):
+        synapses = []   # collect here
+
+        for pre_soma in InputLayer:
+            for post_soma in OutputLayer:
+                synapse = self.CreateSynapse(pre_soma, post_soma)
+                synapses.append(synapse)
+
+        return np.array(synapses, dtype=object)
+    def ForwardPass(self, SpikeData, Conv_Kernel_List,Total_Sim_Time):
+        #Conv_Kernel_List is a list of lists of tuples with matrix sizes [[(w,h), (w_1,h_1),...][(w,h),...],...]
+        #Each list is a layer respectively
+        #Spike Data is a single bin file
+        Model.model.setup(use_gpu=True)
+        for layer_id in range(len(Conv_Kernel_List)):
+            for kernel in range(Conv_Kernel_List[layer_id]):
+                self.Conv_Kernel_Construction(Conv_Kernel_List[layer_id][kernel][0],Conv_Kernel_List[layer_id][kernel][0],layer_idx=layer_id)
+            kernel_count=len(Conv_Kernel_List[layer_id])
+            Dimension = 2**(kernel_count/2)
+            self.AttentionPooling(Dimension,Dimension,layer_id)
+        Dataset = self.load_bin_as_spike_dict(SpikeData)
+
+        for layer_id in range(len(Conv_Kernel_List)):
+            Dataset=self.Full_Convolution_And_Extraction(layer_id, Dataset, Total_Sim_Time)
+        Last_Layer_idx=len(self.pooling_matrix)-1
+        Input_Dimension = self.pooling_matrix[Last_Layer_idx].reshape(-1).ndim
+        #need to grab the spikes from this layer 
+        #
+        FF=self.FullyConnected(Input_Dimension,2*Input_Dimension,10) # 10 represents the classes in MNIST.
+        for time in Dataset:
+            for spike 
+
+
+
+        
+        #Collect Spikes at each layer and pass through
+        '''
+        We are going to process all the spikes through and they will be collected an reprocessed at each max pooling layer
+        '''
+        return None
+    
 
 
 
