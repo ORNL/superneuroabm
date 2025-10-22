@@ -118,8 +118,9 @@ class Conv2dtSingleLayer:
         output_channels=len(self.layers[layer_idx])
         output_channels_list=[kernel[1] for kernel in self.layers[layer_idx]]
         combos=[]
-        for r in range(1, output_channels+1):
-            combos.extend(list(c) for c in itertools.combinations(output_channels_list,r))
+        for r in range(1, min(2, output_channels) + 1):   # only r=1 and r=2
+            combos.extend(list(c) for c in itertools.combinations(output_channels_list, r))
+
         pooling_spikes = np.array([self.CreateSoma() for _ in range(len(combos))], dtype=object)
         total = W * H
         if len(pooling_spikes) < total:
@@ -193,8 +194,9 @@ class Conv2dtSingleLayer:
                         self.Convolve_Spike(spike, kernel_array, SpikeData[time], time, 1)
         
         Spike_Times={}
+        print('Full Convolution', Layer_idx)
         self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
-
+        print('simulation done')
         for index_i in range(len(self.pooling_matrix[Layer_idx])):
             for index_j in range(len(self.pooling_matrix[Layer_idx][0])):
                 if self.pooling_matrix[Layer_idx][index_i][index_j]:
@@ -203,13 +205,13 @@ class Conv2dtSingleLayer:
                     #{(x,y):[spike time list],....}
         Spike_Times=self.invert_dict(Spike_Times)
         print(Spike_Times)   
-        Model.model.reset()
+        self.model.reset()
         return Spike_Times
     
     def FeedForwardLayerNN(self, InputSize,HiddenSize,OutputSize):
-        InputLayer=np.array([self.CreateSoma() for _ in range(InputSize))]
-        HiddenLayer=np.array([self.CreateSoma() for _ in range(HiddenSize))]
-        OutputLayer=np.array([self.CreateSoma() for _ in range(OutputSize))]
+        InputLayer=np.array([self.CreateSoma() for _ in range(InputSize)])
+        HiddenLayer=np.array([self.CreateSoma() for _ in range(HiddenSize)])
+        OutputLayer=np.array([self.CreateSoma() for _ in range(OutputSize)])
         #initialize in input synapses
         input_synapses=[]
         for post_soma in InputLayer:
@@ -231,104 +233,46 @@ class Conv2dtSingleLayer:
         #Conv_Kernel_List is a list of lists of tuples with matrix sizes [[(w,h), (w_1,h_1),...][(w,h),...],...]
         #Each list is a layer respectively
         #Spike Data is a single bin file
-        Model.model.setup(use_gpu=True)
         for layer_id in range(len(Conv_Kernel_List)):
-            for kernel in range(Conv_Kernel_List[layer_id]):
+            for kernel in range(len(Conv_Kernel_List[layer_id])):
                 self.Conv_Kernel_Construction(Conv_Kernel_List[layer_id][kernel][0],Conv_Kernel_List[layer_id][kernel][0],layer_idx=layer_id)
-            kernel_count=len(Conv_Kernel_List[layer_id])
-            Dimension = 2**(kernel_count/2)
-            self.AttentionPooling(Dimension,Dimension,layer_id)
+            kernel_count = len(Conv_Kernel_List[layer_id])
+            num_combos = kernel_count + (kernel_count * (kernel_count - 1)) // 2  # size-1 + size-2
+            Dimension = math.ceil(math.sqrt(num_combos))  
+            self.AttentionPooling(layer_id, Dimension, Dimension)
         Dataset = self.load_bin_as_spike_dict(SpikeData)
 
         for layer_id in range(len(Conv_Kernel_List)):
             Dataset=self.Full_Convolution_And_Extraction(layer_id, Dataset, Total_Sim_Time)
         Last_Layer_idx=len(self.pooling_matrix)-1
-        Input_Dimension = self.pooling_matrix[Last_Layer_idx].reshape(-1).ndim
+        Input_Dimension = self.pooling_matrix[Last_Layer_idx].size
+
         #need to grab the spikes from this layer 
-        #
-        FF=self.FullyConnected(Input_Dimension,2*Input_Dimension,10) # 10 represents the classes in MNIST.
+        FF=self.FeedForwardLayerNN(Input_Dimension,2*Input_Dimension,10) # 10 represents the classes in MNIST.
         for time in Dataset:
-            for spike 
+            for Coor in Dataset[time]:
+                self.model.add_spike(
+                            synapse_id=FF[0][Coor[0]+Coor[1]],
+                            tick=time,
+                            value=10
+                        )
+        Spike_Times=[]
+        self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
 
-
-
+        for output_neuron in FF[1]:
+                
+            Values=self.model.get_spike_times(soma_id=output_neuron)
+            Spike_Times.append((len(Values),Values))
         
-        #Collect Spikes at each layer and pass through
-        '''
-        We are going to process all the spikes through and they will be collected an reprocessed at each max pooling layer
-        '''
-        return None
-    
-
-
+        max_index = max(range(len(Spike_Times)), key=lambda i: Spike_Times[i][0])
+        return max_index
 
 if __name__ == '__main__':
     #Create Convolutionary NN
     Model = Conv2dtSingleLayer()
     Model.model.setup(use_gpu=True)
-    #Convolutionary Filters
-    Model.Conv_Kernel_Construction(3, 2, layer_idx=0)
-    Model.Conv_Kernel_Construction(4, 4, layer_idx=0)
-    Model.Conv_Kernel_Construction(4, 2, layer_idx=0)
-    Model.Conv_Kernel_Construction(5, 5, layer_idx=0)
-    Model.AttentionPooling(0,4,4)
 
-    #   LAYER 1 
-    Model.Conv_Kernel_Construction(3, 3, layer_idx=1)
-    Model.Conv_Kernel_Construction(4, 4, layer_idx=1)
-    Model.Conv_Kernel_Construction(4, 4, layer_idx=1)
-    Model.AttentionPooling(1,3,3)
-    #TODO add filter matrix to set the thresholds and synaptic weights
-    #Each Conv channel has one output neuron
-    #Computing combanitoric set
-    # Dataset = Model.load_bin_as_spike_dict('/lustre/orion/proj-shared/lrn088/objective3/wfishell/superneuroabm/superneuroabm/ssn/data/NMNIST/Test/1/00003.bin')
-    # save_directory = './data' 
-    # # Load the N-MNIST training dataset
-    # train_dataset = tonic.datasets.NMNIST(save_to=save_directory, train=True)
-
-    # Dataset = Model.load_bin_as_spike_dict('./data/NMNIST/Test/1/00003.bin')
-
-    # train_data = tonic.datasets.NMNIST(save_to=root, train=True, first_saccade_only = True)
-    # dataset = tonic.datasets.NMNIST(save_to=os.path.abspath(r'/home/4v5/Documents/SNN_projects/N-MNIST/tutorials/data'), train=True, first_saccade_only = True)
-    # test_data = tonic.datasets.NMNIST(save_to="./data", train=False, first_saccade_only = True)
-
-    Dataset = Model.load_bin_as_spike_dict('./data/NMNIST/Test/1/00003.bin')
-    #Dataset Time, X,Y,=> compute spatial hashing spike=suzdkik(x,y)
-    #Dataset sample {T1:{(x,y):spike value, (x_1,y_1): spike value 2 ....}, t2 ,...}
-    for time in Dataset:
-        for kernel_array, kernel_neuron in Model.layers[0]:
-                for spike in Dataset[time]:
-                    Model.Convolve_Spike(spike, kernel_array, Dataset[time], time, 1)
-    
-    Spike_Times={}
-    Model.model.simulate(ticks=100, update_data_ticks=100)
-
-    for index_i in range(len(Model.pooling_matrix[0])):
-        for index_j in range(len(Model.pooling_matrix[0][0])):
-            if Model.pooling_matrix[0][index_i][index_j]:
-                Coor=(index_i,index_j)
-                Spike_Times[Coor]=Model.model.get_spike_times(soma_id=Model.pooling_matrix[0][index_i][index_j])
-                #{(x,y):[spike time list],....}
-    #invert spike gets us back to the dataset form seen in lines 213-214
-    Spike_Times=Model.invert_dict(Spike_Times)
-    #TODO should we have spatial hashing? 
-    print(Spike_Times)
-    Model.model.reset()    
-
-    for time in Spike_Times:
-        for kernel_array, kernel_neuron in Model.layers[1]:
-                for spike in Spike_Times[time]:
-                    Model.Convolve_Spike(spike, kernel_array, Spike_Times[time], time, 1)
-        
-
-    Model.model.simulate(ticks=100, update_data_ticks=100)
-
-      
-    Spike_Times_Layer2={}
-    for index_i in range(len(Model.pooling_matrix[1])):
-        print('grabbing end spikes')
-        for index_j in range(len(Model.pooling_matrix[1][0])):
-            if Model.pooling_matrix[1][index_i][index_j]:
-                Coor=(index_i,index_j)
-                Spike_Times_Layer2[Coor]=Model.model.get_spike_times(soma_id=Model.pooling_matrix[1][index_i][index_j])
-    print(Spike_Times_Layer2)
+    Dataset = './data/NMNIST/Test/1/00003.bin'
+    Conv_Kernel_List=[[(3,3),(4,4),(5,5),(3,2)],[(3,3),(2,3),(2,2)]]
+    Ans = Model.ForwardPass(Dataset, Conv_Kernel_List, 100)
+    print('Class returned is', Ans)
