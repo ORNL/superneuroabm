@@ -22,7 +22,7 @@ def load_component_configurations(config_file: str = base_config_fpath) -> dict:
     Returns:
         A dictionary containing the component configurations.
     """
-    with open(config_file, "r") as f:
+    with open(config_file, "r", encoding="utf-8") as f:
         configurations = yaml.safe_load(f)
         # Make sure all end values are floats
         for component_class in configurations:
