@@ -273,6 +273,14 @@ if __name__ == '__main__':
     Model.model.setup(use_gpu=True)
 
     Dataset = './data/NMNIST/Test/1/00003.bin'
-    Conv_Kernel_List=[[(3,3),(4,4),(5,5),(3,2)],[(3,3),(2,3),(2,2)]]
+    Conv_Kernel_List = [
+        [(3,3),(3,2),(2,3),(4,4)],  
+        [(3,3),(2,3),(3,2)],        
+        [(3,3),(2,3),(3,2),(4,4)],              
+        [(3,3),(2,3),(3,2)],               
+        [(3,3),(2,3),(3,2),(4,4)],                        
+        [(3,3),(2,3),(3,2)],
+        [(3,3),(2,3)]                  
+    ]
     Ans = Model.ForwardPass(Dataset, Conv_Kernel_List, 100)
     print('Class returned is', Ans)
