@@ -86,9 +86,13 @@ def exp_pair_wise_stdp(
     internal_learning_state[agent_index][0] = pre_trace
     internal_learning_state[agent_index][1] = post_trace
     internal_learning_state[agent_index][2] = dW
-    internal_learning_states_buffer[agent_index][t_current][0] = pre_trace
-    internal_learning_states_buffer[agent_index][t_current][1] = post_trace
-    internal_learning_states_buffer[agent_index][t_current][2] = dW
+
+    # Safe buffer indexing: use modulo to prevent out-of-bounds access
+    # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always
+    buffer_idx = t_current % len(internal_learning_states_buffer[agent_index])
+    internal_learning_states_buffer[agent_index][buffer_idx][0] = pre_trace
+    internal_learning_states_buffer[agent_index][buffer_idx][1] = post_trace
+    internal_learning_states_buffer[agent_index][buffer_idx][2] = dW
 
     # spike_pre_[t_current] = pre_soma_spike #spike_pre_ is an array of size (stdp_history_length, number of input neurons), pre_soma_spike is (number of input neurons,)
     # spike_post_[:, t_current] = post_soma_spike#spike_post_ is an array of size (number of output neurons,stdp_history_length), post_soma_spike is (number of output neurons,)
@@ -108,5 +112,8 @@ def exp_pair_wise_stdp(
 
     internal_state[agent_index][2] = pre_trace
     internal_state[agent_index][3] = post_trace
-    internal_states_buffer[agent_index][t_current][2] = post_soma_spike
-    internal_states_buffer[agent_index][t_current][3] = post_trace
+
+    # Safe buffer indexing for internal_states_buffer (reuse buffer_idx from above)
+    state_buffer_idx = t_current % len(internal_states_buffer[agent_index])
+    internal_states_buffer[agent_index][state_buffer_idx][2] = post_soma_spike
+    internal_states_buffer[agent_index][state_buffer_idx][3] = post_trace

@@ -90,8 +90,10 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
 
     output_spikes_tensor[agent_index][t_current] = s
 
-    
-    internal_states_buffer[agent_index][t_current][0] = v
-    internal_states_buffer[agent_index][t_current][1] = internal_state[agent_index][1] + 1
-    internal_states_buffer[agent_index][t_current][2] = tlast
+    # Safe buffer indexing: use modulo to prevent out-of-bounds access
+    # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always
+    buffer_idx = t_current % len(internal_states_buffer[agent_index])
+    internal_states_buffer[agent_index][buffer_idx][0] = v
+    internal_states_buffer[agent_index][buffer_idx][1] = internal_state[agent_index][1] + 1
+    internal_states_buffer[agent_index][buffer_idx][2] = tlast
  
