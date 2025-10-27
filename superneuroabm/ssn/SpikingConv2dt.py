@@ -10,7 +10,7 @@ import tonic.transforms as transforms
 import tempfile
 from collections import defaultdict
 
-class Conv2dtSingleLayer:
+class Conv2dtNet:
     def __init__(self, SpikeData=None):
         # Spike Data should be organized by spike time
         # SpikeData[t] = [(xi, yi, spike val), (xj, yj, spike val)....] all incoming spikes
@@ -19,6 +19,7 @@ class Conv2dtSingleLayer:
         self.layers = {}           # {layer_idx: [(Kernel, Kernel_Neuron), ...]}
         self.kernel_vals = {}
         self.pooling_matrix = {}
+        self.FF = []
 
     def load_bin_as_spike_dict(self, bin_path):
         # Read entire binary file as unsigned bytes
@@ -231,7 +232,7 @@ class Conv2dtSingleLayer:
         Spike_Times={}
         print('Full Convolution', Layer_idx)
         self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
-        #print('simulation done')
+        print('simulation done')
         for index_i in range(len(self.pooling_matrix[Layer_idx])):
             for index_j in range(len(self.pooling_matrix[Layer_idx][0])):
                 if self.pooling_matrix[Layer_idx][index_i][index_j]:
@@ -239,7 +240,7 @@ class Conv2dtSingleLayer:
                     Spike_Times[Coor]=self.model.get_spike_times(soma_id=Model.pooling_matrix[Layer_idx][index_i][index_j])
                     #{(x,y):[spike time list],....}
         Spike_Times=self.invert_dict(Spike_Times)
-        #print(Spike_Times)   
+        print(Spike_Times)   
         self.model.reset()
         return Spike_Times
     
@@ -264,10 +265,7 @@ class Conv2dtSingleLayer:
                 synapses.append(synapse)
 
         return np.array(synapses, dtype=object)
-    def ForwardPass(self, SpikeData, Conv_Kernel_List,Total_Sim_Time):
-        #Conv_Kernel_List is a list of lists of tuples with matrix sizes [[(w,h), (w_1,h_1),...][(w,h),...],...]
-        #Each list is a layer respectively
-        #Spike Data is a single bin file
+    def ConstructionOfConvKernel(self, Conv_Kernel_List, output_classes):
         for layer_id in range(len(Conv_Kernel_List)):
             for kernel in range(len(Conv_Kernel_List[layer_id])):
                 self.Conv_Kernel_Construction(Conv_Kernel_List[layer_id][kernel][0],Conv_Kernel_List[layer_id][kernel][0],layer_idx=layer_id)
@@ -275,6 +273,12 @@ class Conv2dtSingleLayer:
             num_combos = kernel_count + (kernel_count * (kernel_count - 1)) // 2  # size-1 + size-2
             Dimension = math.ceil(math.sqrt(num_combos))  
             self.AttentionPooling(layer_id, Dimension, Dimension)
+        Last_Layer_idx=len(self.pooling_matrix)-1
+        Input_Dimension = self.pooling_matrix[Last_Layer_idx].size
+
+        #need to grab the spikes from this layer 
+        self.FF = self.FeedForwardLayerNN(Input_Dimension,2*Input_Dimension,output_classes)
+    def ForwardPass(self, SpikeData,Total_Sim_Time):
         Dataset = self.load_bin_as_spike_dict(SpikeData)
 
         for layer_id in range(len(Conv_Kernel_List)):
@@ -283,18 +287,17 @@ class Conv2dtSingleLayer:
         Input_Dimension = self.pooling_matrix[Last_Layer_idx].size
 
         #need to grab the spikes from this layer 
-        FF=self.FeedForwardLayerNN(Input_Dimension,2*Input_Dimension,10) # 10 represents the classes in MNIST.
         for time in Dataset:
             for Coor in Dataset[time]:
                 self.model.add_spike(
-                            synapse_id=FF[0][Coor[0]+Coor[1]],
+                            synapse_id=self.FF[0][Coor[0]+Coor[1]],
                             tick=time,
                             value=10
                         )
         Spike_Times=[]
         self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
 
-        for output_neuron in FF[1]:
+        for output_neuron in self.FF[1]:
                 
             Values=self.model.get_spike_times(soma_id=output_neuron)
             Spike_Times.append((len(Values),Values))
@@ -304,10 +307,10 @@ class Conv2dtSingleLayer:
 
 if __name__ == '__main__':
     #Create Convolutionary NN
-    Model = Conv2dtSingleLayer()
+    Model = Conv2dtNet()
     Model.model.setup(use_gpu=True)
 
-    Dataset = './data/NMNIST/Test/1/00003.bin'
+    Dataset = '/lustre/orion/proj-shared/lrn088/objective3/wfishell/superneuroabm/superneuroabm/ssn/data/NMNIST/Test/0/00004.bin'
     Conv_Kernel_List = [
         [(3,3),(3,2),(2,3),(4,4)],  
         [(3,3),(2,3),(3,2)],        
@@ -315,7 +318,8 @@ if __name__ == '__main__':
         [(3,3),(2,3),(3,2)],               
         [(3,3),(2,3),(3,2),(4,4)],                        
         [(3,3),(2,3),(3,2)],
-        [(3,3),(2,3)]                  
+        [(3,3),(2,3)] # this gets fed into a 3 layer spiking FF neural network with majority voting               
     ]
-    Ans = Model.ForwardPass(Dataset, Conv_Kernel_List, 100)
+    Model.ConstructionOfConvKernel(Conv_Kernel_List, 10)
+    Ans = Model.ForwardPass(Dataset, 100)
     print('Class returned is', Ans)
