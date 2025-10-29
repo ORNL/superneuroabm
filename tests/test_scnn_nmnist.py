@@ -62,52 +62,70 @@ class TestMNIST(unittest.TestCase):
 
         return pd.DataFrame(rows)
 
-    def NMNIST(self, Number_Of_Samples_Per_Class=1):
+    def NMNIST(self, max_total_samples=1, do_plot=False):
         root = "./superneuroabm/ssn/data/NMNIST/Test"
-        self.weight_history = pd.DataFrame()
-        results = []  # will collect dicts
-        pass_idx=0
-        for digit in sorted(os.listdir(root)):  # '0', '1', ..., '9'
-            
-            digit_path = os.path.join(root, digit)
+        assert os.path.isdir(root), f"NMNIST root not found: {root}"
 
+        self.weight_history = pd.DataFrame()
+        results = []
+        pass_idx = 0
+        processed = 0
+
+        for digit in sorted(os.listdir(root)):  # '0'..'9'
+            digit_path = os.path.join(root, digit)
             if not os.path.isdir(digit_path):
                 continue
 
             bin_files = sorted([f for f in os.listdir(digit_path) if f.endswith(".bin")])
+            for bin_file in bin_files:
+                dataset_path = os.path.join(digit_path, bin_file)
+                print('forward pass', pass_idx, '→', dataset_path)
 
-            for bin_file in bin_files[:Number_Of_Samples_Per_Class]:
-                Dataset = os.path.join(digit_path, bin_file)
-                print('forward pass', pass_idx)
-                PredictedClass = self.ConvNet.ForwardPass(Dataset, 100)
-
+                predicted_class = self.ConvNet.ForwardPass(dataset_path, 100)
+                self.ConvNet.model.reset()
                 results.append({
                     "true_class": int(digit),
-                    "predicted_class": PredictedClass,
-                    "file_path": Dataset
+                    "predicted_class": predicted_class,
+                    "file_path": dataset_path
                 })
-                df = self.log_kernel_weights(forward_pass_id=pass_idx)  
-                self.weight_history = pd.concat([self.weight_history, df], ignore_index=True)
-                pass_idx+=1
-        df = pd.DataFrame(results)
-        self.weight_history["synapse_id"] = (
-            self.weight_history["layer"].astype(str) + "_" +
-            self.weight_history["kernel"].astype(str) + "_" +
-            self.weight_history["i"].astype(str) + "_" +
-            self.weight_history["j"].astype(str)
-            )
-        for synapse, group in self.weight_history.groupby("synapse_id"):
-            plt.plot(group["forward_pass"], group["weight"], alpha=0.5)
 
-            plt.title("Synapse Weights Over Forward Passes")
-            plt.xlabel("Forward Pass")
-            plt.ylabel("Weight")
+                # log kernel weights for this pass
+                dfw = self.log_kernel_weights(forward_pass_id=pass_idx)
+                self.weight_history = pd.concat([self.weight_history, dfw], ignore_index=True)
 
-            plt.savefig("all_synapses_weight_dynamics.png", dpi=300, bbox_inches="tight")
-            plt.close()
-        return df
+                pass_idx += 1
+                processed += 1
+                if processed >= max_total_samples:
+                    # optional plotting (skipped by default for speed)
+                    if do_plot and not self.weight_history.empty:
+                        self.weight_history["synapse_id"] = (
+                            self.weight_history["layer"].astype(str) + "_" +
+                            self.weight_history["kernel"].astype(str) + "_" +
+                            self.weight_history["i"].astype(str) + "_" +
+                            self.weight_history["j"].astype(str)
+                        )
+                        for synapse, group in self.weight_history.groupby("synapse_id"):
+                            plt.plot(group["forward_pass"], group["weight"], alpha=0.5)
+
+                        plt.title("Synapse Weights Over Forward Passes")
+                        plt.xlabel("Forward Pass")
+                        plt.ylabel("Weight")
+
+                        plt.savefig(
+                            os.path.join(os.getcwd(), "all_synapses_weight_dynamics.png"),
+                            dpi=300,
+                            bbox_inches="tight"
+                        )
+                        plt.close()
+
+                    return pd.DataFrame(results)
+
+        # if fewer than requested samples exist, return whatever we gathered
+        return pd.DataFrame(results)
+
+
     def test_NMNIST(self):
-        df = self.NMNIST(Number_Of_Samples_Per_Class=10)
+        df = self.NMNIST(max_total_samples=4, do_plot=True)
         print(df.head())  
 
         

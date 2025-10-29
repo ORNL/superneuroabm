@@ -2,11 +2,13 @@ import os
 import numpy as np
 from superneuroabm.model import NeuromorphicModel
 import sagesim
+import time
 import tonic 
 import math
 import itertools
 from itertools import combinations
 import tonic.transforms as transforms
+from tonic.datasets import NMNIST
 import tempfile
 from collections import defaultdict
 
@@ -51,8 +53,9 @@ class Conv2dtNet:
         t_ms = (t / 1000.0).astype(np.int32)
 
         # Filter ON events only
-        on_mask = p == 1
-        x, y, t_ms = x[on_mask], y[on_mask], t_ms[on_mask]
+        time_mask = t_ms <= 100
+        x, y, t_ms = x[time_mask], y[time_mask], t_ms[time_mask]
+
 
         # Group by timestamp into a dict-of-dicts
         spike_dict = {}
@@ -224,11 +227,14 @@ class Conv2dtNet:
                 
         return dict(inverted)
     def Full_Convolution_And_Extraction(self, Layer_idx, SpikeData,Total_Sim_Time):
-        for time in SpikeData:
-            for kernel_array, kernel_neuron in self.layers[Layer_idx]:
-                    for spike in SpikeData[time]:
-                        self.Convolve_Spike(spike, kernel_array, SpikeData[time], time, 1)
-        
+        start=time.time()
+        print((SpikeData))
+        for time_step in SpikeData:
+                for kernel_array, kernel_neuron in self.layers[Layer_idx]:
+                        for spike in SpikeData[time_step]:
+                            self.Convolve_Spike(spike, kernel_array, SpikeData[time_step], time_step, 1)
+        end=time.time()
+        print(end-start)
         Spike_Times={}
         print('Full Convolution', Layer_idx)
         self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
@@ -237,8 +243,7 @@ class Conv2dtNet:
             for index_j in range(len(self.pooling_matrix[Layer_idx][0])):
                 if self.pooling_matrix[Layer_idx][index_i][index_j]:
                     Coor=(index_i,index_j)
-                    Spike_Times[Coor]=self.model.get_spike_times(soma_id=Model.pooling_matrix[Layer_idx][index_i][index_j])
-                    #{(x,y):[spike time list],....}
+                    Spike_Times[Coor]=self.model.get_spike_times(soma_id=self.pooling_matrix[Layer_idx][index_i][index_j])
         Spike_Times=self.invert_dict(Spike_Times)
         print(Spike_Times)   
         self.model.reset()
@@ -280,11 +285,9 @@ class Conv2dtNet:
         self.FF = self.FeedForwardLayerNN(Input_Dimension,2*Input_Dimension,output_classes)
     def ForwardPass(self, SpikeData,Total_Sim_Time):
         Dataset = self.load_bin_as_spike_dict(SpikeData)
-
-        for layer_id in range(len(Conv_Kernel_List)):
+        # Fix conv kernel list so that is uses self.layers instead as not passed in anymore
+        for layer_id in range(len(self.layers)):
             Dataset=self.Full_Convolution_And_Extraction(layer_id, Dataset, Total_Sim_Time)
-        Last_Layer_idx=len(self.pooling_matrix)-1
-        Input_Dimension = self.pooling_matrix[Last_Layer_idx].size
 
         #need to grab the spikes from this layer 
         for time in Dataset:
@@ -305,12 +308,11 @@ class Conv2dtNet:
         max_index = max(range(len(Spike_Times)), key=lambda i: Spike_Times[i][0])
         return max_index
 
-if __name__ == '__main__':
-    #Create Convolutionary NN
+if __name__ == '__main__':    #Create Convolutionary NN
     Model = Conv2dtNet()
     Model.model.setup(use_gpu=True)
-
-    Dataset = '/lustre/orion/proj-shared/lrn088/objective3/wfishell/superneuroabm/superneuroabm/ssn/data/NMNIST/Test/0/00004.bin'
+    print('gpu set up')
+    #make sure I am not loading the entire thing use tonic. 
     Conv_Kernel_List = [
         [(3,3),(3,2),(2,3),(4,4)],  
         [(3,3),(2,3),(3,2)],        
@@ -321,5 +323,18 @@ if __name__ == '__main__':
         [(3,3),(2,3)] # this gets fed into a 3 layer spiking FF neural network with majority voting               
     ]
     Model.ConstructionOfConvKernel(Conv_Kernel_List, 10)
+    before_reset_hyperparameters = Model.model.get_agent_property_value(
+            id=Model.kernel_vals[2][1][1][1][1],
+            property_name="hyperparameters"
+        )
+    before_reset_weight = before_reset_hyperparameters[0]
+    print('constructed')
+    Dataset = './superneuroabm/ssn/data/NMNIST/Test/0/00011.bin'
     Ans = Model.ForwardPass(Dataset, 100)
-    print('Class returned is', Ans)
+    after_reset_hyperparameters = Model.model.get_agent_property_value(
+                id=Model.kernel_vals[2][1][1][1][1],
+                property_name="hyperparameters"
+            )
+    after_reset_weight = after_reset_hyperparameters[0]
+    print(before_reset_weight,'before reset')
+    print(after_reset_weight,'after reset')
