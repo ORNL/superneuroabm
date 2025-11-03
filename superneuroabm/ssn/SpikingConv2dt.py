@@ -103,35 +103,47 @@ class Conv2dtNet:
             self.kernel_vals[layer_idx] = []
         self.kernel_vals[layer_idx].append((InputSomas, Kernel))
         self.layers[layer_idx].append((InputLayer, Kernel_Neuron))
+    def compute_kernel_offsets(self, Kernel_List_Entry):
+        H = len(Kernel_List_Entry)
+        W = len(Kernel_List_Entry[0])
+
+        # Generate kernel origin offsets
+        # for each position spike could occupy in kernel
+        offsets = []
+        for i in range(H):
+            for j in range(W):
+                offsets.append((i, j))
+        return offsets
 
 
-    def Convolve_Spike(self, SpikeCoordinate, Kernel_List_Entry, CurrentSpikeSet, time_step, Stride):
-        """
-        Apply convolution for a given spike coordinate and kernel.
-        """
-        Ranges = []
-        for i in range(len(Kernel_List_Entry)):
-            for j in range(len(Kernel_List_Entry[0])):
-                Ranges_X = (SpikeCoordinate[0] - i, SpikeCoordinate[0] - i + len(Kernel_List_Entry))
-                Ranges_Y = (SpikeCoordinate[1] - j, SpikeCoordinate[1] - j + len(Kernel_List_Entry[0]))
-                Range = (Ranges_X, Ranges_Y)
-                Ranges.append(Range)
+    def Convolve_Spike(self, spike, Kernel, offsets, CurrentSpikeSet, time_step, Stride=1):
+        sx, sy = spike
+        H = len(Kernel)
+        W = len(Kernel[0])
 
-        for x_range, y_range in Ranges:
-            x_start, x_end = x_range
-            y_start, y_end = y_range
+        for i, j in offsets:
+            # Top-left of kernel window when spike is at kernel[i][j]
+            x0 = sx - i
+            y0 = sy - j
 
-            for x in range(x_start, x_end, Stride):
-                for y in range(y_start, y_end):
-                    coor = (x, y)
-                    if coor in CurrentSpikeSet:
-                        kernel_location_x = x - x_start
-                        kernel_location_y = y - y_start
+            # Apply stride to kernel window origin
+            if x0 % Stride != 0 or y0 % Stride != 0:
+                continue
+
+            # Sweep kernel window
+            for ki in range(H):
+                for kj in range(W):
+                    x = x0 + ki
+                    y = y0 + kj
+
+                    if (x, y) in CurrentSpikeSet:
                         self.model.add_spike(
-                            synapse_id=Kernel_List_Entry[kernel_location_x][kernel_location_y],
-                            tick=time_step,
-                            value=CurrentSpikeSet[coor]
+                            synapse_id = Kernel[ki][kj],
+                            tick = time_step,
+                            value = CurrentSpikeSet[(x, y)]
                         )
+
+
     def AttentionPooling(self, layer_idx, W, H):
         output_channels=len(self.layers[layer_idx])
         output_channels_list=[kernel[1] for kernel in self.layers[layer_idx]]
@@ -227,13 +239,25 @@ class Conv2dtNet:
                 
         return dict(inverted)
     def Full_Convolution_And_Extraction(self, Layer_idx, SpikeData,Total_Sim_Time):
-        start=time.time()
-        print((SpikeData))
-        for time_step in SpikeData:
-                for kernel_array, kernel_neuron in self.layers[Layer_idx]:
-                        for spike in SpikeData[time_step]:
-                            self.Convolve_Spike(spike, kernel_array, SpikeData[time_step], time_step, 1)
-        end=time.time()
+        start = time.time()
+
+        for kernel_array, kernel_neuron in self.layers[Layer_idx]:
+            # Precompute kernel offsets ONCE
+            offsets = self.compute_kernel_offsets(kernel_array)
+
+            for time_step in SpikeData:
+                current_spikes = SpikeData[time_step]
+
+                for spike in current_spikes:
+                    self.Convolve_Spike(
+                         spike,
+                         kernel_array,
+                         offsets,
+                         current_spikes,
+                         time_step,
+                    )
+
+        end = time.time()
         print(end-start)
         Spike_Times={}
         print('Full Convolution', Layer_idx)
@@ -314,7 +338,7 @@ if __name__ == '__main__':    #Create Convolutionary NN
     print('gpu set up')
     #make sure I am not loading the entire thing use tonic. 
     Conv_Kernel_List = [
-        [(3,3),(3,2),(2,3),(4,4)],  
+        [(3,3),(2,3),(3,2),(4,4)],  
         [(3,3),(2,3),(3,2)],        
         [(3,3),(2,3),(3,2),(4,4)],              
         [(3,3),(2,3),(3,2)],               
