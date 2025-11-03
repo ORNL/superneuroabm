@@ -16,11 +16,10 @@ soma:
         tcount: 0.0  # Time counter
         tlast: 0.0  # Last spike time
   izh_soma:
-    config_0:
+    config_0:   #intrinsic bursting
       hyperparameters:
         k: 1.2
         vthr: -45
-
         C: 150
         a: 0.01
         b: 5
@@ -28,16 +27,31 @@ soma:
         vrest: -75
         d: 130
         vreset: -56
-        I_in: 300
+        I_in: 420
       internal_state:
         v: -75  # Initial membrane voltage
+        u: 0  # Initial recovery variable
+
+    config_1:       # regular spiking
+      hyperparameters:
+        k: 0.7
+        vthr: -40
+        C: 100
+        a: 0.03
+        b: -2
+        vpeak: 35
+        vrest: -60
+        d: 100
+        vreset: -50
+        I_in: 100
+      internal_state:
+        v: -60  # Initial membrane voltage
         u: 0  # Initial recovery variable
 
 synapse:
   single_exp_synapse:
     no_learning_config_0:
       hyperparameters:
-
         weight: 14.0  # Synaptic weight (strength)
         synaptic_delay: 1.0  # Transmission delay (ms)
         scale: 1.0  # Scaling factor

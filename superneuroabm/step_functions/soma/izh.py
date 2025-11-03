@@ -69,7 +69,8 @@ def izh_soma_step_func(
     v = v + dt * dv * 1e3
 
     u += dt * 1e3 * (a * (b * (v - vrest) - u))
-    s = 1 * (v >= vthr)  # output spike
+    # s = 1 * (v >= vthr)  # output spike
+    s = 1 * (v >= vpeak)  # output spike
     u = u + d * s  # If spiked, update recovery variable
     v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
 
