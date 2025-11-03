@@ -9,6 +9,7 @@ import itertools
 from itertools import combinations
 import tonic.transforms as transforms
 from tonic.datasets import NMNIST
+import matplotlib.pyplot as plt
 import tempfile
 from collections import defaultdict
 
@@ -282,18 +283,25 @@ class Conv2dtNet:
         for post_soma in InputLayer:
             synapse=self.CreateSynapseNoSTDP(post_soma)
             input_synapses.append(synapse)
-        InputToHidden=self.FullyConnected(InputLayer,HiddenLayer)
-        HiddenToOutputSize=self.FullyConnected(HiddenLayer,OutputLayer)
-        return [input_synapses,OutputLayer]
+        InputToHidden,InputToHidden_Dict=self.FullyConnected(InputLayer,HiddenLayer)
+        HiddenToOutput, HiddenToOutput_Dict=self.FullyConnected(HiddenLayer,OutputLayer)
+        print('Hiddne Dict ',HiddenToOutput_Dict)
+        return [input_synapses,OutputLayer, HiddenToOutput_Dict]
     def FullyConnected(self, InputLayer, OutputLayer):
-        synapses = []   # collect here
+        synapses = []
+        synapse_dict = {}  # {post_soma: [synapses_from_all_inputs]}
+
+        for post_soma in OutputLayer:
+            synapse_dict[post_soma] = []  # initialize list for this post neuron
 
         for pre_soma in InputLayer:
             for post_soma in OutputLayer:
                 synapse = self.CreateSynapseSTDP(pre_soma, post_soma)
                 synapses.append(synapse)
+                synapse_dict[post_soma].append(synapse)
 
-        return np.array(synapses, dtype=object)
+        return np.array(synapses, dtype=object), synapse_dict
+
     def ConstructionOfConvKernel(self, Conv_Kernel_List, output_classes):
         for layer_id in range(len(Conv_Kernel_List)):
             for kernel in range(len(Conv_Kernel_List[layer_id])):
@@ -331,6 +339,55 @@ class Conv2dtNet:
         
         max_index = max(range(len(Spike_Times)), key=lambda i: Spike_Times[i][0])
         return max_index
+    def plot_output_layer_weights(self, forward_idx=None, save_dir="./ff_weight_maps"):
+        os.makedirs(save_dir, exist_ok=True)
+
+        syn_dict = self.FF[2]  # {output_soma: [synapse_ids]}
+        model = self.model
+
+        num_classes = len(syn_dict)
+        syn_per_class = 10  # you took first 10
+        grid_rows = num_classes
+        grid_cols = 1  # one tile per class, each tile is its own heatmap
+
+        # Build a figure with one heatmap per class (vertically stacked)
+        fig, axs = plt.subplots(grid_rows, 1, figsize=(4, 2 * num_classes))
+
+        if grid_rows == 1:  # handle single class case
+            axs = [axs]
+
+        for class_idx, (out_soma, syn_list) in enumerate(syn_dict.items()):
+            
+            synapses = syn_list[:syn_per_class]
+
+            weights = []
+            for syn in synapses:
+                hyper = model.get_agent_property_value(id=syn, property_name="hyperparameters")
+                weights.append(hyper[0])
+
+            # Reshape to 5x2 instead of 2x5
+            weight_grid = np.array(weights).reshape(4, 2)
+
+            ax = axs[class_idx]
+            im = ax.imshow(weight_grid)  # no cmap, per your plotting rules
+            ax.set_title(f"Output Neuron {class_idx}")
+            ax.set_xticks([]); ax.set_yticks([])
+
+            # Add colorbar next to each heatmap
+            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        # Title for entire figure
+        if forward_idx is not None:
+            fig.suptitle(f"Output Layer Weights | Pass {forward_idx}", fontsize=14)
+
+        save_path = os.path.join(
+            save_dir,
+            f"output_layer_pass_{forward_idx if forward_idx is not None else 'final'}.png"
+        )
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=250, bbox_inches="tight")
+        plt.close()
+        print(f"Saved combined figure: {save_path}")
 
 if __name__ == '__main__':    #Create Convolutionary NN
     Model = Conv2dtNet()
@@ -338,7 +395,7 @@ if __name__ == '__main__':    #Create Convolutionary NN
     print('gpu set up')
     #make sure I am not loading the entire thing use tonic. 
     Conv_Kernel_List = [
-        [(3,3),(2,3),(3,2),(4,4)],  
+        [(3,3)],  
         [(3,3),(2,3),(3,2)],        
         [(3,3),(2,3),(3,2),(4,4)],              
         [(3,3),(2,3),(3,2)],               
@@ -351,14 +408,19 @@ if __name__ == '__main__':    #Create Convolutionary NN
             id=Model.kernel_vals[2][1][1][1][1],
             property_name="hyperparameters"
         )
-    before_reset_weight = before_reset_hyperparameters[0]
     print('constructed')
     Dataset = './superneuroabm/ssn/data/NMNIST/Test/0/00011.bin'
     Ans = Model.ForwardPass(Dataset, 100)
-    after_reset_hyperparameters = Model.model.get_agent_property_value(
-                id=Model.kernel_vals[2][1][1][1][1],
-                property_name="hyperparameters"
-            )
-    after_reset_weight = after_reset_hyperparameters[0]
-    print(before_reset_weight,'before reset')
-    print(after_reset_weight,'after reset')
+    Model.plot_output_layer_weights(forward_idx=0)
+    Model.model.reset()
+    Dataset = './superneuroabm/ssn/data/NMNIST/Test/0/00004.bin'
+    Ans = Model.ForwardPass(Dataset, 100)
+    Model.plot_output_layer_weights(forward_idx=1)
+    Model.model.reset()
+    Dataset = './superneuroabm/ssn/data/NMNIST/Test/0/00014.bin'
+    Ans = Model.ForwardPass(Dataset, 100)
+    Model.model.reset()
+    Model.plot_output_layer_weights(forward_idx=2)
+    Dataset = './superneuroabm/ssn/data/NMNIST/Test/0/00026.bin'
+    Ans = Model.ForwardPass(Dataset, 100)
+    Model.plot_output_layer_weights(forward_idx=3)
