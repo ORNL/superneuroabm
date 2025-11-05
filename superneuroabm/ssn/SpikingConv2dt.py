@@ -22,6 +22,9 @@ class Conv2dtNet:
         self.kernel_vals = {}
         self.pooling_matrix = {}
         self.FF = []
+        self._queued_syn_ids = []
+        self._queued_ticks = []
+        self._queued_vals = []
 
     def load_bin_as_spike_dict(self, bin_path):
         # Read entire binary file as unsigned bytes
@@ -104,34 +107,60 @@ class Conv2dtNet:
         self.kernel_vals[layer_idx].append((InputSomas, Kernel))
         self.layers[layer_idx].append((InputLayer, Kernel_Neuron))
 
+    def all_relative_coordinate_grids(self, W, H):
+        # base coordinate grid (W,H,2)
+        base = np.stack(np.meshgrid(np.arange(W), np.arange(H), indexing="ij"), axis=-1)  # (W,H,2)
 
-    def Convolve_Spike(self, SpikeCoordinate, Kernel_List_Entry, CurrentSpikeSet, time_step, Stride):
+        # flatten all centers (W*H,2)
+        centers = base.reshape(-1, 2)  # (W*H, 2)
+
+        # subtract center from base to get relative coords
+        # broadcasting: (W*H,1,1,2) - (1,W,H,2)
+        rel = base[None,:,:,:] - centers[:,None,None,:]
+
+        return rel  # shape (W*H, W, H, 2)
+    def get_neighborhood_spikes(self, Neighborhood, CurrentSpikeDict):
+        # Create structured dtype matching Neighborhood
+        dtype = [('x', Neighborhood.dtype), ('y', Neighborhood.dtype)]
+
+        # Convert dict keys to structured np array
+        dict_keys = np.array(list(CurrentSpikeDict.keys()), dtype=dtype)
+
+        # Convert dict values to array
+        dict_vals = np.array(list(CurrentSpikeDict.values()))
+
+        # View neighborhood as structured for comparison
+        nb = Neighborhood.view(dtype).reshape(-1)
+
+        # Mask where neighborhood coords exist in spike dict
+        mask = np.isin(nb, dict_keys)
+
+        if not mask.any():
+            return None, None
+
+        # --- NEW PART: kernel index positions instead of coordinate values ---
+        # mask is flat — convert to 2D kernel indices
+        kernel_indices = np.argwhere(mask.reshape(Neighborhood.shape[0], Neighborhood.shape[1]))
+
+        # Map mask positions to spike values
+        idx = np.argmax(nb[:,None] == dict_keys, axis=1)[mask]
+        vals = dict_vals[idx]
+
+        return kernel_indices, vals
+
+    def Convolve_Spike(self, SpikeCoordinate, Kernel_List_Entry, Offsets, CurrentSpikeSet, time_step, Stride):
         """
         Apply convolution for a given spike coordinate and kernel.
         """
-        Ranges = []
-        for i in range(len(Kernel_List_Entry)):
-            for j in range(len(Kernel_List_Entry[0])):
-                Ranges_X = (SpikeCoordinate[0] - i, SpikeCoordinate[0] - i + len(Kernel_List_Entry))
-                Ranges_Y = (SpikeCoordinate[1] - j, SpikeCoordinate[1] - j + len(Kernel_List_Entry[0]))
-                Range = (Ranges_X, Ranges_Y)
-                Ranges.append(Range)
+        coord=np.array([SpikeCoordinate[0],SpikeCoordinate[1]])
+        Neighborhoods=coord+Offsets
+        for Neighborhood in Neighborhoods:
+            kernel_indices, vals= self.get_neighborhood_spikes(Neighborhood, CurrentSpikeSet)
+            for (i,j), v in zip(kernel_indices, vals):
+                self._queued_syn_ids.append(Kernel_List_Entry[i][j])
+                self._queued_ticks.append(time_step)
+                self._queued_vals.append(float(v))
 
-        for x_range, y_range in Ranges:
-            x_start, x_end = x_range
-            y_start, y_end = y_range
-
-            for x in range(x_start, x_end, Stride):
-                for y in range(y_start, y_end):
-                    coor = (x, y)
-                    if coor in CurrentSpikeSet:
-                        kernel_location_x = x - x_start
-                        kernel_location_y = y - y_start
-                        self.model.add_spike(
-                            synapse_id=Kernel_List_Entry[kernel_location_x][kernel_location_y],
-                            tick=time_step,
-                            value=CurrentSpikeSet[coor]
-                        )
     def AttentionPooling(self, layer_idx, W, H):
         output_channels=len(self.layers[layer_idx])
         output_channels_list=[kernel[1] for kernel in self.layers[layer_idx]]
@@ -218,7 +247,7 @@ class Conv2dtNet:
         )
         return Synapse
 
-    def invert_dict(self, input_dict, spike_value=10):
+    def invert_dict(self, input_dict, spike_value=100):
         inverted = defaultdict(dict)
         
         for key, values in input_dict.items():
@@ -227,26 +256,37 @@ class Conv2dtNet:
                 
         return dict(inverted)
     def Full_Convolution_And_Extraction(self, Layer_idx, SpikeData,Total_Sim_Time):
-        start=time.time()
-        print((SpikeData))
+        self._queued_syn_ids = []
+        self._queued_ticks = []
+        self._queued_vals = []
+        print(SpikeData)
+        start=time.time()        
         for time_step in SpikeData:
-                for kernel_array, kernel_neuron in self.layers[Layer_idx]:
-                        for spike in SpikeData[time_step]:
-                            self.Convolve_Spike(spike, kernel_array, SpikeData[time_step], time_step, 1)
+            for kernel_array, kernel_neuron in self.layers[Layer_idx]:
+                offsets=self.all_relative_coordinate_grids(len(kernel_array),len(kernel_array[0]))
+                for spike in SpikeData[time_step]:
+                    self.Convolve_Spike(spike, kernel_array, offsets, SpikeData[time_step], time_step, 1)
         end=time.time()
         print(end-start)
         Spike_Times={}
         print('Full Convolution', Layer_idx)
+        # Flush all convolution spikes to GPU queue
+        if self._queued_syn_ids:
+            print('entered if')
+            self.model.queue_spikes(self._queued_syn_ids, self._queued_ticks, self._queued_vals)
+            print('exited if')
+        start=time.time()
         self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
+        end=time.time()
+        print(end-start)
         print('simulation done')
+        
         for index_i in range(len(self.pooling_matrix[Layer_idx])):
             for index_j in range(len(self.pooling_matrix[Layer_idx][0])):
                 if self.pooling_matrix[Layer_idx][index_i][index_j]:
                     Coor=(index_i,index_j)
                     Spike_Times[Coor]=self.model.get_spike_times(soma_id=self.pooling_matrix[Layer_idx][index_i][index_j])
         Spike_Times=self.invert_dict(Spike_Times)
-        print(Spike_Times)   
-        self.model.reset()
         return Spike_Times
     
     def FeedForwardLayerNN(self, InputSize,HiddenSize,OutputSize):
@@ -288,16 +328,24 @@ class Conv2dtNet:
         # Fix conv kernel list so that is uses self.layers instead as not passed in anymore
         for layer_id in range(len(self.layers)):
             Dataset=self.Full_Convolution_And_Extraction(layer_id, Dataset, Total_Sim_Time)
-
+            self.model.reset()
         #need to grab the spikes from this layer 
+        # reset local spike queues
+        self._queued_syn_ids = []
+        self._queued_ticks = []
+        self._queued_vals = []
+
         for time in Dataset:
             for Coor in Dataset[time]:
-                self.model.add_spike(
-                            synapse_id=self.FF[0][Coor[0]+Coor[1]],
-                            tick=time,
-                            value=10
-                        )
+                queued_id = self.FF[0][Coor[0]+Coor[1]]
+                self._queued_syn_ids.append(queued_id)
+                self._queued_ticks.append(time)
+                self._queued_vals.append(10.0)                 
         Spike_Times=[]
+        # Flush FF network spikes to GPU queue
+        if self._queued_syn_ids:
+            self.model.queue_spikes(self._queued_syn_ids, self._queued_ticks, self._queued_vals)
+
         self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
 
         for output_neuron in self.FF[1]:
@@ -314,7 +362,7 @@ if __name__ == '__main__':    #Create Convolutionary NN
     print('gpu set up')
     #make sure I am not loading the entire thing use tonic. 
     Conv_Kernel_List = [
-        [(3,3),(3,2),(2,3),(4,4)],  
+         [(3,3),(2,3),(3,2),(4,4)],              
         [(3,3),(2,3),(3,2)],        
         [(3,3),(2,3),(3,2),(4,4)],              
         [(3,3),(2,3),(3,2)],               

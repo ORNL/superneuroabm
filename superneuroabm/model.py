@@ -84,7 +84,7 @@ class NeuromorphicModel(Model):
         super().__init__(space=NetworkSpace())
 
         self.enable_internal_state_tracking = enable_internal_state_tracking
-
+        self._gpu_spike_queue = None
         self.register_global_property("dt", 1e-3)  # Time step (100 μs)
         self.register_global_property("I_bias", 0)  # No bias current
 
@@ -321,74 +321,57 @@ class NeuromorphicModel(Model):
                 property_name="internal_state",
                 value=self._soma_reset_states[soma_id].copy(),
             )
-        
     def reset(self, retain_parameters: bool = True) -> None:
-        """
-        Resets all soma and synapse agents to their initial states.
-
-        :param retain_parameters: If True, keeps current learned parameters.
-            If False, resets parameters to their default values.
-        """
         self._reset_agents(retain_parameters=retain_parameters)
-        # Clear SAGESim's agent data cache to avoid expensive comparisons on next simulation
+        # Clear event queue introduced by CuPy batching
+        self._gpu_spike_queue = None
+        # SAGESim book-keeping
         self._agent_factory._prev_agent_data.clear()
         super().reset()
-        
-    def setup(
-        self,
-        use_gpu: bool = True,
-        retain_parameters=True,
-    ) -> None:
-        """
-        Resets the simulation and initializes agents.
 
-        :param retain_parameters: False by default. If True, parameters are
-            reset to their default values upon setup.
-        """
-        # Reset all agents using the shared helper function
+    def setup(self, use_gpu: bool = True, retain_parameters=True) -> None:
         self._reset_agents(retain_parameters=retain_parameters)
+        # Also clear here so a fresh setup can't inherit a previous queue
+        self._gpu_spike_queue = None
         super().setup(use_gpu=use_gpu)
 
-    def simulate(
-        self, ticks: int, update_data_ticks: int = 1  # , num_cpu_proc: int = 4
-    ) -> None:
-        """
-        Override of superneuroabm.core.model mainly to register an
-        AgentDataCollector to monitor marked output somas.
 
-        """
+    def simulate(self, ticks, update_data_ticks=1):
+
+        # ---- allocate buffers exactly as original simulate did ----
         for soma_id in self._soma_ids:
-            # Clear output buffer
             output_buffer = [0 for _ in range(ticks)]
             super().set_agent_property_value(
                 id=soma_id,
                 property_name="output_spikes_tensor",
                 value=output_buffer,
             )
+
             initial_internal_state = super().get_agent_property_value(
                 id=soma_id, property_name="internal_state"
             )
-            # Allocate full buffer when tracking enabled, minimal dummy buffer when disabled
+
             if self.enable_internal_state_tracking:
                 internal_states_buffer = [initial_internal_state[::] for _ in range(ticks)]
             else:
-                # Minimal dummy buffer - single element that gets overwritten each tick
                 internal_states_buffer = [initial_internal_state[::]]
+
             super().set_agent_property_value(
                 id=soma_id,
                 property_name="internal_states_buffer",
                 value=internal_states_buffer,
             )
+
         for synapse_id in self._synapse_ids:
             initial_internal_state = super().get_agent_property_value(
                 id=synapse_id, property_name="internal_state"
             )
-            # Allocate full buffer when tracking enabled, minimal dummy buffer when disabled
+
             if self.enable_internal_state_tracking:
                 internal_states_buffer = [initial_internal_state[::] for _ in range(ticks)]
             else:
-                # Minimal dummy buffer - single element that gets overwritten each tick
                 internal_states_buffer = [initial_internal_state[::]]
+
             super().set_agent_property_value(
                 id=synapse_id,
                 property_name="internal_states_buffer",
@@ -398,20 +381,25 @@ class NeuromorphicModel(Model):
             initial_internal_learning_state = super().get_agent_property_value(
                 id=synapse_id, property_name="internal_learning_state"
             )
-            # Allocate full buffer when tracking enabled, minimal dummy buffer when disabled
+
             if self.enable_internal_state_tracking:
                 internal_learning_states_buffer = [
                     initial_internal_learning_state[::] for _ in range(ticks)
                 ]
             else:
-                # Minimal dummy buffer - single element that gets overwritten each tick
                 internal_learning_states_buffer = [initial_internal_learning_state[::]]
+
             super().set_agent_property_value(
                 id=synapse_id,
                 property_name="internal_learning_states_buffer",
                 value=internal_learning_states_buffer,
             )
-        super().simulate(ticks, update_data_ticks)  # , num_cpu_proc)
+
+        # ---- Run simulation tick-by-tick so we can flush spikes ----
+        for t in range(ticks):
+            self._flush_spikes_to_synapses(t)
+            super().simulate(1,update_data_ticks)
+
 
     def create_soma(
         self,
@@ -624,6 +612,43 @@ class NeuromorphicModel(Model):
                 property_name="output_synapses_learning_params",
                 value=synapses_learning_params,
             )
+
+    def queue_spikes(self, synapse_ids, ticks, values):
+        synapse_ids = cp.asarray(synapse_ids, dtype=cp.int32)
+        ticks       = cp.asarray(ticks, dtype=cp.int32)
+        values      = cp.asarray(values, dtype=cp.float32)
+
+        batch = cp.stack([synapse_ids, ticks, values], axis=1)
+
+        if self._gpu_spike_queue is None:
+            self._gpu_spike_queue = batch
+        else:
+            self._gpu_spike_queue = cp.concatenate([self._gpu_spike_queue, batch], axis=0)
+
+    def _flush_spikes_to_synapses(self, current_tick):
+        if self._gpu_spike_queue is None:
+            return
+
+        # find events for this tick
+        mask = self._gpu_spike_queue[:,1] == current_tick
+        idxs = cp.where(mask)[0]
+
+        if idxs.size == 0:
+            return
+
+        events = self._gpu_spike_queue[idxs]
+        syn_ids = events[:,0].get()   # small CPU pull
+        vals    = events[:,2].get()
+
+        # send to model via the original Python set
+        for sid, val in zip(syn_ids, vals):
+            spikes = self.get_agent_property_value(id=int(sid), property_name="input_spikes_tensor")
+            spikes.append([current_tick, float(val)])
+            self.set_agent_property_value(int(sid), "input_spikes_tensor", spikes)
+
+        # remove flushed events from queue
+        keep = cp.where(~mask)[0]
+        self._gpu_spike_queue = self._gpu_spike_queue[keep] if keep.size > 0 else None
 
     def add_spike(self, synapse_id: int, tick: int, value: float) -> None:
         """
