@@ -153,10 +153,10 @@ class Conv2dtNet:
         Apply convolution for a given spike coordinate and kernel.
         """
         coord=np.array([SpikeCoordinate[0],SpikeCoordinate[1]])
-        Neighborhoods=coord+Offsets
+        Neighborhoods=coord+Offsets # (W*H,W,H,2)
         for Neighborhood in Neighborhoods:
             kernel_indices, vals= self.get_neighborhood_spikes(Neighborhood, CurrentSpikeSet)
-            for (i,j), v in zip(kernel_indices, vals):
+            for (i,j), v in zip(kernel_indices, vals): # NOT x,y from original space they correspond to kernel id values for kernel_list_entry
                 self._queued_syn_ids.append(Kernel_List_Entry[i][j])
                 self._queued_ticks.append(time_step)
                 self._queued_vals.append(float(v))
@@ -276,7 +276,7 @@ class Conv2dtNet:
             self.model.queue_spikes(self._queued_syn_ids, self._queued_ticks, self._queued_vals)
             print('exited if')
         start=time.time()
-        self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
+        self.model.simulate(ticks=100, update_data_ticks=100)
         end=time.time()
         print(end-start)
         print('simulation done')
@@ -362,12 +362,12 @@ if __name__ == '__main__':    #Create Convolutionary NN
     print('gpu set up')
     #make sure I am not loading the entire thing use tonic. 
     Conv_Kernel_List = [
-         [(3,3),(2,3),(3,2),(4,4)],              
-        [(3,3),(2,3),(3,2)],        
-        [(3,3),(2,3),(3,2),(4,4)],              
-        [(3,3),(2,3),(3,2)],               
-        [(3,3),(2,3),(3,2),(4,4)],                        
-        [(3,3),(2,3),(3,2)],
+        [(3,3),(2,3)],              
+        [(3,3),(2,3)],              
+        [(3,3),(2,3)],              
+        [(3,3),(2,3)],              
+        [(3,3),(2,3)],              
+        [(3,3),(2,3)],              
         [(3,3),(2,3)] # this gets fed into a 3 layer spiking FF neural network with majority voting               
     ]
     Model.ConstructionOfConvKernel(Conv_Kernel_List, 10)

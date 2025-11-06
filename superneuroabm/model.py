@@ -327,6 +327,9 @@ class NeuromorphicModel(Model):
         self._gpu_spike_queue = None
         # SAGESim book-keeping
         self._agent_factory._prev_agent_data.clear()
+        
+        self._tick = 0  # Reset the global tick counter
+        
         super().reset()
 
     def setup(self, use_gpu: bool = True, retain_parameters=True) -> None:
