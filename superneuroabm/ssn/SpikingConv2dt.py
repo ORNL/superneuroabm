@@ -206,7 +206,7 @@ class Conv2dtNet:
             post_soma_id=post_soma,
             config_name="exp_pair_wise_stdp_config_0",
             hyperparameters_overrides={
-                "weight": np.random.uniform(10.0, 20.0),
+                "weight": np.random.uniform(-5.0, 20.0),
                 "synaptic_delay": 1.0,
                 "scale": 1.0,
                 "tau_fall": 1e-2,
@@ -217,10 +217,10 @@ class Conv2dtNet:
             },
             learning_hyperparameters_overrides={
                 "stdp_type": 0.0,
-                "tau_pre_stdp": 10e-3,
-                "tau_post_stdp": 10e-3,
-                "a_exp_pre": 0.005,
-                "a_exp_post": 0.005,
+                "tau_pre_stdp": 20-3,
+                "tau_post_stdp": 33e-3,
+                "a_exp_pre": 0.01,
+                "a_exp_post": 0.0065,
                 "stdp_history_length": 100,
             },
             default_internal_learning_state_overrides={
@@ -404,8 +404,8 @@ class Conv2dtNet:
 if __name__ == '__main__':    #Create Convolutionary NN
     Model = Conv2dtNet()
     Model.model.setup(use_gpu=True)
-    print('gpu set up')
-    #make sure I am not loading the entire thing use tonic. 
+    print('GPU set up')
+
     Conv_Kernel_List = [
         [(3,3),(2,3),(4,4),(4,4)], 
         [(3,3),(2,3),(3,2)],
@@ -414,27 +414,84 @@ if __name__ == '__main__':    #Create Convolutionary NN
     ]
 
     Model.ConstructionOfConvKernel(Conv_Kernel_List, 10)
-    before_reset_hyperparameters = Model.model.get_agent_property_value(
-            id=Model.kernel_vals[2][1][1][1][1],
-            property_name="hyperparameters"
-        )
-    print('constructed')
-    Dataset = './superneuroabm/ssn/data/NMNIST/Test/0/00011.bin'
-    Ans = Model.ForwardPass(Dataset, 100)
-    print('Ans',Ans)
-    Model.plot_output_layer_weights(forward_idx=0)
-    Model.model.reset()
-    Dataset = './superneuroabm/ssn/data/NMNIST/Test/0/00004.bin'
-    Ans = Model.ForwardPass(Dataset, 100)
-    print('Ans',Ans)
-    Model.plot_output_layer_weights(forward_idx=1)
-    Model.model.reset()
-    Dataset = './superneuroabm/ssn/data/NMNIST/Test/0/00014.bin'
-    Ans = Model.ForwardPass(Dataset, 100)
-    print('Ans',Ans)
-    Model.model.reset()
-    Model.plot_output_layer_weights(forward_idx=2)
-    Dataset = './superneuroabm/ssn/data/NMNIST/Test/0/00026.bin'
-    Ans = Model.ForwardPass(Dataset, 100)
-    print('Ans',Ans)
-    Model.plot_output_layer_weights(forward_idx=3)
+    print('Constructed')
+
+    # --- Track 5 random hidden→output synapses ---
+    all_syns = [syn for syn_list in Model.FF[2].values() for syn in syn_list]
+    tracked_syns = np.random.choice(all_syns, size=5, replace=False)
+    print("Tracking synapses:", tracked_syns)
+
+    def print_weights(stage):
+        print(f"\n[{stage}] Synapse weights:")
+        for i, syn in enumerate(tracked_syns):
+            hyper = Model.model.get_agent_property_value(id=syn, property_name="hyperparameters")
+            print(f"  Synapse {i}: weight = {hyper[0]:.4f}")
+
+    print_weights("Before any ForwardPass")
+
+    datasets = [
+        './superneuroabm/ssn/data/NMNIST/Test/0/00011.bin',
+        './superneuroabm/ssn/data/NMNIST/Test/0/00004.bin',
+        './superneuroabm/ssn/data/NMNIST/Test/0/00014.bin',
+        './superneuroabm/ssn/data/NMNIST/Test/0/00026.bin'
+    ]
+
+    weight_snapshots = []  # store weights after each pass
+
+    for idx, ds in enumerate(datasets):
+        Ans = Model.ForwardPass(ds, 100)
+        print(f'Ans {idx}:', Ans)
+        print_weights(f"After ForwardPass {idx}")
+
+        # collect weights for later plotting
+        snapshot = {}
+        for out_soma, syn_list in Model.FF[2].items():
+            weights = []
+            for syn in syn_list:
+                hyper = Model.model.get_agent_property_value(id=syn, property_name="hyperparameters")
+                weights.append(hyper[0])
+            snapshot[out_soma] = weights
+        weight_snapshots.append(snapshot)
+        Model.model.reset()
+
+    # --- Plot all passes side-by-side ---
+    save_dir = "./ff_weight_maps"
+    os.makedirs(save_dir, exist_ok=True)
+    num_classes = len(Model.FF[2])
+    num_passes = len(weight_snapshots)
+
+    # compute global min/max across all passes for color normalization
+    all_w = [w for snap in weight_snapshots for ws in snap.values() for w in ws]
+    vmin, vmax = np.min(all_w), np.max(all_w)
+
+    fig, axs = plt.subplots(num_classes, num_passes, figsize=(3*num_passes, 2*num_classes))
+    if num_classes == 1:
+        axs = np.expand_dims(axs, axis=0)
+    if num_passes == 1:
+        axs = np.expand_dims(axs, axis=1)
+
+    for i, (out_soma, _) in enumerate(Model.FF[2].items()):
+        for j, snapshot in enumerate(weight_snapshots):
+            weights = np.array(snapshot[out_soma])
+            n_cols = math.ceil(math.sqrt(len(weights)))
+            n_rows = math.ceil(len(weights) / n_cols)
+            padded = np.full(n_rows * n_cols, np.nan)
+            padded[:len(weights)] = weights
+            grid = padded.reshape(n_rows, n_cols)
+
+            ax = axs[i, j]
+            im = ax.imshow(grid, vmin=vmin, vmax=vmax, cmap="viridis")
+            if i == 0:
+                ax.set_title(f"Pass {j}")
+            if j == 0:
+                ax.set_ylabel(f"Neuron {i}")
+            ax.set_xticks([]); ax.set_yticks([])
+
+    fig.colorbar(im, ax=axs, fraction=0.02, pad=0.04)
+    plt.suptitle("Output Layer Weights Across Forward Passes", fontsize=14)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+
+    save_path = os.path.join(save_dir, "output_layer_comparison.png")
+    plt.savefig(save_path, dpi=250, bbox_inches="tight")
+    plt.close()
+    print(f"Saved combined comparison figure: {save_path}")
