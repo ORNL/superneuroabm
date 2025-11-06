@@ -2,7 +2,7 @@ import os
 import numpy as np
 from superneuroabm.model import NeuromorphicModel
 import sagesim
-import time
+import time as clocktime
 import tonic 
 import math
 import itertools
@@ -117,7 +117,7 @@ class Conv2dtNet:
         return offsets
 
 
-    def Convolve_Spike(self, spike, Kernel, offsets, CurrentSpikeSet, time_step, Stride=1):
+    def Convolve_Spike(self, SynapseDict, spike, Kernel, offsets, CurrentSpikeSet, time_step, Stride=1):
         sx, sy = spike
         H = len(Kernel)
         W = len(Kernel[0])
@@ -138,12 +138,13 @@ class Conv2dtNet:
                     y = y0 + kj
 
                     if (x, y) in CurrentSpikeSet:
-                        self.model.add_spike(
-                            synapse_id = Kernel[ki][kj],
-                            tick = time_step,
-                            value = CurrentSpikeSet[(x, y)]
-                        )
-
+                        if Kernel[ki][kj] in SynapseDict:
+                            SynapseDict[Kernel[ki][kj]].append([time_step, CurrentSpikeSet[(x, y)]])
+                        else:
+                            SynapseDict[Kernel[ki][kj]]=[[time_step, CurrentSpikeSet[(x, y)]]]
+                            #G
+                    
+        return SynapseDict
 
     def AttentionPooling(self, layer_idx, W, H):
         output_channels=len(self.layers[layer_idx])
@@ -240,8 +241,7 @@ class Conv2dtNet:
                 
         return dict(inverted)
     def Full_Convolution_And_Extraction(self, Layer_idx, SpikeData,Total_Sim_Time):
-        start = time.time()
-
+        Synpase_Dict={}
         for kernel_array, kernel_neuron in self.layers[Layer_idx]:
             # Precompute kernel offsets ONCE
             offsets = self.compute_kernel_offsets(kernel_array)
@@ -250,28 +250,32 @@ class Conv2dtNet:
                 current_spikes = SpikeData[time_step]
 
                 for spike in current_spikes:
-                    self.Convolve_Spike(
+                    Synpase_Dict=self.Convolve_Spike(
+                         Synpase_Dict,
                          spike,
                          kernel_array,
                          offsets,
                          current_spikes,
                          time_step,
                     )
-
-        end = time.time()
-        print(end-start)
+        print('Convolved')
+        for key in Synpase_Dict:
+            self.model.add_spike_list(key,Synpase_Dict[key])
         Spike_Times={}
-        print('Full Convolution', Layer_idx)
+        print('start sim')
+        start=clocktime.time()
         self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
-        print('simulation done')
+        end=clocktime.time()
+        print(end-start)
+        print('end sim')
         for index_i in range(len(self.pooling_matrix[Layer_idx])):
             for index_j in range(len(self.pooling_matrix[Layer_idx][0])):
                 if self.pooling_matrix[Layer_idx][index_i][index_j]:
                     Coor=(index_i,index_j)
                     Spike_Times[Coor]=self.model.get_spike_times(soma_id=self.pooling_matrix[Layer_idx][index_i][index_j])
         Spike_Times=self.invert_dict(Spike_Times)
-        print(Spike_Times)   
         self.model.reset()
+        print(Layer_idx, 'layer')
         return Spike_Times
     
     def FeedForwardLayerNN(self, InputSize,HiddenSize,OutputSize):
@@ -285,7 +289,6 @@ class Conv2dtNet:
             input_synapses.append(synapse)
         InputToHidden,InputToHidden_Dict=self.FullyConnected(InputLayer,HiddenLayer)
         HiddenToOutput, HiddenToOutput_Dict=self.FullyConnected(HiddenLayer,OutputLayer)
-        print('Hiddne Dict ',HiddenToOutput_Dict)
         return [input_synapses,OutputLayer, HiddenToOutput_Dict]
     def FullyConnected(self, InputLayer, OutputLayer):
         synapses = []
@@ -307,7 +310,7 @@ class Conv2dtNet:
             for kernel in range(len(Conv_Kernel_List[layer_id])):
                 self.Conv_Kernel_Construction(Conv_Kernel_List[layer_id][kernel][0],Conv_Kernel_List[layer_id][kernel][0],layer_idx=layer_id)
             kernel_count = len(Conv_Kernel_List[layer_id])
-            num_combos = kernel_count + (kernel_count * (kernel_count - 1)) // 2  # size-1 + size-2
+            num_combos = kernel_count + (kernel_count * (kernel_count - 1)) // 2 
             Dimension = math.ceil(math.sqrt(num_combos))  
             self.AttentionPooling(layer_id, Dimension, Dimension)
         Last_Layer_idx=len(self.pooling_matrix)-1
@@ -316,6 +319,7 @@ class Conv2dtNet:
         #need to grab the spikes from this layer 
         self.FF = self.FeedForwardLayerNN(Input_Dimension,2*Input_Dimension,output_classes)
     def ForwardPass(self, SpikeData,Total_Sim_Time):
+        start=clocktime.time()
         Dataset = self.load_bin_as_spike_dict(SpikeData)
         # Fix conv kernel list so that is uses self.layers instead as not passed in anymore
         for layer_id in range(len(self.layers)):
@@ -338,6 +342,8 @@ class Conv2dtNet:
             Spike_Times.append((len(Values),Values))
         
         max_index = max(range(len(Spike_Times)), key=lambda i: Spike_Times[i][0])
+        end=clocktime.time()
+        print('Forward Pass Wall clock time',end-start)
         return max_index
     def plot_output_layer_weights(self, forward_idx=None, save_dir="./ff_weight_maps"):
         os.makedirs(save_dir, exist_ok=True)
@@ -345,64 +351,68 @@ class Conv2dtNet:
         syn_dict = self.FF[2]  # {output_soma: [synapse_ids]}
         model = self.model
 
+        # --- Gather all weights first to get global min/max for consistent color scale ---
+        all_weights = []
+        for syn_list in syn_dict.values():
+            for syn in syn_list:
+                hyper = model.get_agent_property_value(id=syn, property_name="hyperparameters")
+                all_weights.append(hyper[0])
+        vmin, vmax = np.min(all_weights), np.max(all_weights)
+
+        # --- Plot setup ---
         num_classes = len(syn_dict)
-        syn_per_class = 10  # you took first 10
         grid_rows = num_classes
-        grid_cols = 1  # one tile per class, each tile is its own heatmap
-
-        # Build a figure with one heatmap per class (vertically stacked)
         fig, axs = plt.subplots(grid_rows, 1, figsize=(4, 2 * num_classes))
-
-        if grid_rows == 1:  # handle single class case
+        if grid_rows == 1:
             axs = [axs]
 
+        # --- Plot each class ---
         for class_idx, (out_soma, syn_list) in enumerate(syn_dict.items()):
-            
-            synapses = syn_list[:syn_per_class]
-
             weights = []
-            for syn in synapses:
+            for syn in syn_list:
                 hyper = model.get_agent_property_value(id=syn, property_name="hyperparameters")
                 weights.append(hyper[0])
 
-            # Reshape to 5x2 instead of 2x5
-            weight_grid = np.array(weights).reshape(4, 2)
+            weights = np.array(weights)
+            n_weights = len(weights)
+            n_cols = math.ceil(math.sqrt(n_weights))
+            n_rows = math.ceil(n_weights / n_cols)
+
+            # pad with NaN so we can reshape safely
+            padded = np.full(n_rows * n_cols, np.nan)
+            padded[:n_weights] = weights
+            weight_grid = padded.reshape(n_rows, n_cols)
 
             ax = axs[class_idx]
-            im = ax.imshow(weight_grid)  # no cmap, per your plotting rules
+            im = ax.imshow(weight_grid, vmin=vmin, vmax=vmax, cmap="viridis")
             ax.set_title(f"Output Neuron {class_idx}")
             ax.set_xticks([]); ax.set_yticks([])
-
-            # Add colorbar next to each heatmap
             plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-        # Title for entire figure
+        # --- Save figure ---
         if forward_idx is not None:
             fig.suptitle(f"Output Layer Weights | Pass {forward_idx}", fontsize=14)
 
+        plt.tight_layout()
         save_path = os.path.join(
             save_dir,
             f"output_layer_pass_{forward_idx if forward_idx is not None else 'final'}.png"
         )
-        plt.tight_layout()
         plt.savefig(save_path, dpi=250, bbox_inches="tight")
         plt.close()
-        print(f"Saved combined figure: {save_path}")
-
+        print(f"Saved figure with shared color scale: {save_path}")
 if __name__ == '__main__':    #Create Convolutionary NN
     Model = Conv2dtNet()
     Model.model.setup(use_gpu=True)
     print('gpu set up')
     #make sure I am not loading the entire thing use tonic. 
     Conv_Kernel_List = [
-        [(3,3)],  
-        [(3,3),(2,3),(3,2)],        
-        [(3,3),(2,3),(3,2),(4,4)],              
-        [(3,3),(2,3),(3,2)],               
-        [(3,3),(2,3),(3,2),(4,4)],                        
+        [(3,3),(2,3),(4,4),(4,4)], 
         [(3,3),(2,3),(3,2)],
-        [(3,3),(2,3)] # this gets fed into a 3 layer spiking FF neural network with majority voting               
+        [(3,3),(2,3),(3,2),(4,4)],
+        [(3,3),(2,3),(3,2),(4,4)]
     ]
+
     Model.ConstructionOfConvKernel(Conv_Kernel_List, 10)
     before_reset_hyperparameters = Model.model.get_agent_property_value(
             id=Model.kernel_vals[2][1][1][1][1],
@@ -411,16 +421,20 @@ if __name__ == '__main__':    #Create Convolutionary NN
     print('constructed')
     Dataset = './superneuroabm/ssn/data/NMNIST/Test/0/00011.bin'
     Ans = Model.ForwardPass(Dataset, 100)
+    print('Ans',Ans)
     Model.plot_output_layer_weights(forward_idx=0)
     Model.model.reset()
     Dataset = './superneuroabm/ssn/data/NMNIST/Test/0/00004.bin'
     Ans = Model.ForwardPass(Dataset, 100)
+    print('Ans',Ans)
     Model.plot_output_layer_weights(forward_idx=1)
     Model.model.reset()
     Dataset = './superneuroabm/ssn/data/NMNIST/Test/0/00014.bin'
     Ans = Model.ForwardPass(Dataset, 100)
+    print('Ans',Ans)
     Model.model.reset()
     Model.plot_output_layer_weights(forward_idx=2)
     Dataset = './superneuroabm/ssn/data/NMNIST/Test/0/00026.bin'
     Ans = Model.ForwardPass(Dataset, 100)
+    print('Ans',Ans)
     Model.plot_output_layer_weights(forward_idx=3)
