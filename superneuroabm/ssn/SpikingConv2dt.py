@@ -15,13 +15,12 @@ from collections import defaultdict
 
 class Conv2dtNet:
     def __init__(self, SpikeData=None):
-        # Spike Data should be organized by spike time
-        # SpikeData[t] = [(xi, yi, spike val), (xj, yj, spike val)....] all incoming spikes
+
         self.model = NeuromorphicModel()
         self.SpikeData = SpikeData
-        self.layers = {}           # {layer_idx: [(Kernel, Kernel_Neuron), ...]}
-        self.kernel_vals = {}
-        self.pooling_matrix = {}
+        self.ConvLayers = {}           
+        self.Output_Channel = {}
+        self.Output_Channel_Dim={}
         self.FF = []
 
     def load_bin_as_spike_dict(self, bin_path):
@@ -61,49 +60,194 @@ class Conv2dtNet:
         # Group by timestamp into a dict-of-dicts
         spike_dict = {}
         for xi, yi, ti in zip(x, y, t_ms):
-            value = (self.szudzik_pair(int(xi), int(yi)) // 10) + 1
+            value = (self.spiral_value_for_coord(28,28,int(xi), int(yi))) + 1
             spike_dict.setdefault(int(ti), {})[(int(xi), int(yi))] = value
 
         return spike_dict
 
 
-    def HashSpikes(self, TimeStep):
-        CurrentSpikeSet = {}
-        for i in self.SpikeData[TimeStep]:
-            CurrentSpikeSet[(i[0], i[1])] = i[2]
-        return CurrentSpikeSet
-    
-    def szudzik_pair(self, x, y):
-        if x >= y:
-            return x * x + x + y + 1
-        else:
-            return y * y + x + 1
-    
-    def Conv_Kernel_Construction(self, W, H, layer_idx=0, input=np.nan):
-        InputSomas=np.empty((W, H), dtype=object)
-        InputLayer = np.empty((W, H), dtype=object)
-        for i in range(W):
-            for j in range(H):
-                InputSoma=self.CreateSoma()
-                InputSomas[i][j] = InputSoma
-        for i in range(W):
-            for j in range(H):
-                InputSynapse=self.CreateSynapseNoSTDP(InputSomas[i][j])
-                InputLayer[i][j] = InputSynapse
-        Kernel=np.empty((W, H), dtype=object)
-        Kernel_Neuron = self.CreateSoma()
-        for i in range(W):
-            for j in range(H):
-                Synapse=self.CreateSynapseSTDP(InputSomas[i][j], Kernel_Neuron)
-                Kernel[i][j] = Synapse
+    def spiral_value_for_coord(self, width, height, x, y):
+        cx = (width - 1) / 2.0
+        cy = (height - 1) / 2.0
 
-        # store in proper layer
-        if layer_idx not in self.layers:
-            self.layers[layer_idx] = []
-        if layer_idx not in self.kernel_vals:
-            self.kernel_vals[layer_idx] = []
-        self.kernel_vals[layer_idx].append((InputSomas, Kernel))
-        self.layers[layer_idx].append((InputLayer, Kernel_Neuron))
+        dx = x - cx
+        dy = y - cy
+
+        layer = int(max(abs(dx), abs(dy)))
+
+        side_len = 2 * layer + 1
+
+        prev_count = (side_len - 2) ** 2 if layer > 0 else 0
+
+        top_right_x = cx + layer
+        top_right_y = cy - layer
+
+        if y == cy - layer: 
+            offset = int(top_right_x - x)
+        elif x == cx - layer:  
+            offset = int(2 * layer + (y - (cy - layer)))
+        elif y == cy + layer:  
+            offset = int(4 * layer + (x - (cx - layer)))
+        else:  
+            offset = int(6 * layer + ((cy + layer) - y))
+
+        return prev_count + offset + 5
+
+    def CreateSoma(self):
+            Soma= self.model.create_soma(
+                breed="lif_soma",
+                config_name="config_0",
+            )
+            return Soma
+        
+    def CreateSynapseNoSTDP(self,pre_soma, post_soma, weight):
+        Synapse = self.model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=pre_soma,
+            post_soma_id=post_soma,
+            config_name="no_learning_config_0",
+            hyperparameters_overrides={
+                "weight": weight,
+                "synaptic_delay": 1.0,
+                "scale": 1.0,
+                "tau_fall": 1e-2,
+                "tau_rise": 0,
+            },
+            default_internal_state_overrides={
+                "I_synapse": 0.0,
+            },
+            learning_hyperparameters_overrides={
+                "stdp_type": -1
+            },
+            tags=None,
+        )
+        return Synapse
+
+    def CreateSynapseSTDP(self,pre_soma, post_soma):
+        Synapse = self.model.create_synapse(
+            breed="single_exp_synapse",
+            pre_soma_id=pre_soma,
+            post_soma_id=post_soma,
+            config_name="exp_pair_wise_stdp_config_0",
+            hyperparameters_overrides={
+                "weight": np.random.uniform(-5.0, 20.0),
+                "synaptic_delay": 1.0,
+                "scale": 1.0,
+                "tau_fall": 1e-2,
+                "tau_rise": 0,
+            },
+            default_internal_state_overrides={
+                "I_synapse": 0.0,
+            },
+            learning_hyperparameters_overrides={
+                "stdp_type": 0.0,
+                "tau_pre_stdp": 20-3,
+                "tau_post_stdp": 33e-3,
+                "a_exp_pre": 0.01,
+                "a_exp_post": 0.0065,
+                "stdp_history_length": 100,
+            },
+            default_internal_learning_state_overrides={
+                "pre_trace": 0,
+                "post_trace": 0,
+                "dW": 0,
+            },
+            tags=None,
+        )
+        return Synapse
+
+    def Conv_Kernel_Construction(self, W, H, layer_idx=0, input=np.nan, Stride=1):
+        Kernel=np.empty((W, H), dtype=object)
+        KernelSynapses = np.empty((W, H), dtype=object)
+        for i in range(W):
+            for j in range(H):
+                Kernel_Neuron=self.CreateSoma()
+                Kernel[i][j] = Kernel_Neuron
+        for i in range(W):
+            for j in range(H):
+                KernelSynapse=self.CreateSynapseSTDP(np.nan,Kernel[i][j])
+                KernelSynapses[i][j] = KernelSynapse
+       
+        if layer_idx not in self.ConvLayers:
+            self.ConvLayers[layer_idx] = []
+        self.ConvLayers[layer_idx].append([KernelSynapses, Kernel, Stride])
+    
+    def Lateral_Inhibition(self, Layer_Tensor):
+            for neuron_index_i in range(0,len(Layer_Tensor)):
+                for neuron_index_j in range(0,len(Layer_Tensor)):
+                    if neuron_index_i == neuron_index_j:
+                        continue
+                    else:
+                        self.CreateSynapseNoSTDP(Layer_Tensor[neuron_index_i], Layer_Tensor[neuron_index_j], -10)
+
+    
+    def Output_Channel_Construction(self, Layer_idx, Output_Layer_Size, Input_W, Input_H):
+        #Ensure Output Channel is equal to or greater then 
+        Output_Channel=np.empty(int(Output_Layer_Size), dtype=object)
+        for i in range(int(Output_Layer_Size)):
+            Output_Channel[i]=self.CreateSoma()
+        self.Output_Channel[Layer_idx]=Output_Channel
+        for kernel in self.ConvLayers[Layer_idx]:
+            Output_H = (Input_H-len(kernel[0]))/1
+            Output_W = (Input_W - len(kernel[0][0]))// kernel[2]
+            Output = Output_H * Output_W
+            for kernel_i in range(len(kernel[1])):
+                for kernel_j in range(len(kernel[1][0])):
+                    Counter=0
+                    for output_neuron in self.Output_Channel[Layer_idx]:
+                        if Counter>= Output:
+                            break
+                        self.CreateSynapseSTDP(kernel[1][kernel_i][kernel_j], output_neuron)
+                        Counter+=1
+        self.Lateral_Inhibition(self.Output_Channel[Layer_idx])
+
+    def FeedForwardLayerNN(self, InputSize, HiddenSize, OutputSize):
+        InputLayer=np.array([self.CreateSoma() for _ in range(InputSize)])
+        HiddenLayer=np.array([self.CreateSoma() for _ in range(HiddenSize)])
+        OutputLayer=np.array([self.CreateSoma() for _ in range(OutputSize)])
+        #initialize in input synapses
+        input_synapses=[]
+        for post_soma in InputLayer:
+            synapse=self.CreateSynapseSTDP(np.nan, post_soma)
+            input_synapses.append(synapse)
+        InputToHidden,InputToHidden_Dict=self.FullyConnected(InputLayer,HiddenLayer)
+        HiddenToOutput, HiddenToOutput_Dict=self.FullyConnected(HiddenLayer,OutputLayer)
+        return [input_synapses,OutputLayer, HiddenToOutput_Dict]
+
+    def FullyConnected(self, InputLayer, OutputLayer):
+        synapses = []
+        synapse_dict = {}  # {post_soma: [synapses_from_all_inputs]}
+
+        for post_soma in OutputLayer:
+            synapse_dict[post_soma] = []  # initialize list for this post neuron
+
+        for pre_soma in InputLayer:
+            for post_soma in OutputLayer:
+                synapse = self.CreateSynapseSTDP(pre_soma, post_soma)
+                synapses.append(synapse)
+                synapse_dict[post_soma].append(synapse)
+
+        return np.array(synapses, dtype=object), synapse_dict
+
+    def NetworkConstruction(self, Conv_Kernel_List, output_classes, Input_W, Input_H):
+        for layer_id in range(len(Conv_Kernel_List)):
+            Max_Output_Channel=0
+            Max_Output_H = 0
+            Max_Output_W = 0 
+            for kernel in range(len(Conv_Kernel_List[layer_id])):
+                self.Conv_Kernel_Construction(Conv_Kernel_List[layer_id][kernel][0],Conv_Kernel_List[layer_id][kernel][1],layer_idx=layer_id)
+                Output_H = (Input_H-Conv_Kernel_List[layer_id][kernel][1])/1
+                Output_W = (Input_W - Conv_Kernel_List[layer_id][kernel][0])/1
+                Max_Output_Channel=max((Output_W*Output_W), Max_Output_Channel)
+                Max_Output_H = max(Output_W, Output_H)
+                Max_Output_W = max(Output_W, Output_W)
+            self.Output_Channel_Construction(layer_id, Max_Output_Channel, Input_W, Input_H)
+            self.Output_Channel_Dim[layer_id]=[Max_Output_W, Max_Output_H]
+            Input_H = Max_Output_H
+            Input_W = Max_Output_W
+        self.FF = self.FeedForwardLayerNN(int(Max_Output_Channel),2*int(Max_Output_Channel),output_classes)           
+
+    
     def compute_kernel_offsets(self, Kernel_List_Entry):
         H = len(Kernel_List_Entry)
         W = len(Kernel_List_Entry[0])
@@ -144,116 +288,99 @@ class Conv2dtNet:
                             SynapseDict[Kernel[ki][kj]]=[[time_step, CurrentSpikeSet[(x, y)]]]
                             #G
                     
-        return SynapseDict
+        return SynapseDict     
 
-    def AttentionPooling(self, layer_idx, W, H):
-        output_channels=len(self.layers[layer_idx])
-        output_channels_list=[kernel[1] for kernel in self.layers[layer_idx]]
-        combos=[]
-        for r in range(1, min(2, output_channels) + 1):   # only r=1 and r=2
-            combos.extend(list(c) for c in itertools.combinations(output_channels_list, r))
-
-        pooling_spikes = np.array([self.CreateSoma() for _ in range(len(combos))], dtype=object)
-        total = W * H
-        if len(pooling_spikes) < total:
-            padding = [None] * (total - len(pooling_spikes))
-            pooling_spikes = np.concatenate((pooling_spikes, np.array(padding, dtype=object)))
-
-        pooling_spikes = pooling_spikes.reshape(W, H)
-        current_combo_connection=0
-        for index_i in range(len(pooling_spikes)):
-            for index_j in range(len(pooling_spikes[0])):
-                if pooling_spikes[index_i][index_j]:
-                    for soma in combos[current_combo_connection]:
-                        self.CreateSynapseSTDP(soma, pooling_spikes[index_i][index_j])
-                    current_combo_connection+=1
-                else:
-                    continue
-        self.pooling_matrix[layer_idx]=pooling_spikes
-            
-    def SurjectivePooling(self, layer_idx, W, H):
-        #MUST BE A SURJECTIVE RELATIONSHP
-        output_channels=len(self.layers[layer_idx])
-        output_channels_list=[kernel[1] for kernel in self.layers[layer_idx]]
-        input_neurons_to_output_num=np.ceil(W*H/len(output_channels))
-        pooling_neurons=np.array([self.CreateSoma() for _ in range(len(W*H))], dtype=object)
-        pool_index=-1
-        for input_neuron_index in range(len(output_channels_list)):
-            if input_neuron_index % input_neurons_to_output_num:
-                pool_index+=1
-            self.CreateSynapseSTDP(output_channels_list[input_neuron_index],pooling_neurons[pool_index])
-        pooling_spikes=pooling_neurons.reshape(W,H)
-        self.pooling_matrix[layer_idx]=pooling_neurons
-
-    def CreateSoma(self):
-        Soma= self.model.create_soma(
-            breed="lif_soma",
-            config_name="config_0",
-        )
-        return Soma
-    def CreateSynapseNoSTDP(self, post_soma):
-        Synapse =  self.model.create_synapse(
-            breed="single_exp_synapse",
-            pre_soma_id=np.nan,  # External input
-            post_soma_id=post_soma,
-            config_name="no_learning_config_0",
-        )
-        return Synapse
-    def CreateSynapseSTDP(self,pre_soma, post_soma):
-        Synapse = self.model.create_synapse(
-            breed="single_exp_synapse",
-            pre_soma_id=pre_soma,
-            post_soma_id=post_soma,
-            config_name="exp_pair_wise_stdp_config_0",
-            hyperparameters_overrides={
-                "weight": np.random.uniform(-5.0, 20.0),
-                "synaptic_delay": 1.0,
-                "scale": 1.0,
-                "tau_fall": 1e-2,
-                "tau_rise": 0,
-            },
-            default_internal_state_overrides={
-                "I_synapse": 0.0,
-            },
-            learning_hyperparameters_overrides={
-                "stdp_type": 0.0,
-                "tau_pre_stdp": 20-3,
-                "tau_post_stdp": 33e-3,
-                "a_exp_pre": 0.01,
-                "a_exp_post": 0.0065,
-                "stdp_history_length": 100,
-            },
-            default_internal_learning_state_overrides={
-                "pre_trace": 0,
-                "post_trace": 0,
-                "dW": 0,
-            },
-            tags=None,
-        )
-        return Synapse
-
-    def invert_dict(self, input_dict, spike_value=10):
+    def invert_dict(self, input_dict, W, H) :
         inverted = defaultdict(dict)
         
         for key, values in input_dict.items():
             for v in values:
-                inverted[v][key] = spike_value
+                inverted[v][key] = self.spiral_value_for_coord(W, H, key[0], key[1])
                 
         return dict(inverted)
+
+
+    def process_spikes_spiral(self, Layer_idx, Total_Sim_Time):
+        self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
+        Spike_Times = {}
+        for i in range(len(self.Output_Channel[Layer_idx])):
+            Spike_Times[i] = self.model.get_spike_times(
+                soma_id=self.Output_Channel[Layer_idx][i]
+            )
+
+        sorted_neurons = sorted(Spike_Times.items(), key=lambda x: len(x[1]), reverse=True)
+
+        Spike_Matrix = np.empty((self.Output_Channel_Dim[Layer_idx][0], self.Output_Channel_Dim[Layer_idx][1]), dtype=object)
+
+        spiral_coords = self.generate_spiral_order(self.Output_Channel_Dim[Layer_idx][0], self.Output_Channel_Dim[Layer_idx][1])
+
+        for (neuron_idx, _), (x, y) in zip(sorted_neurons, spiral_coords):
+            Spike_Matrix[x, y] = neuron_idx
+
+        Spike_Times = {}
+        for index_i in range(len(Spike_Matrix)):
+            for index_j in range(len(Spike_Matrix[0])):
+                if Spike_Matrix[index_i][index_j]:
+                    Coor=(index_i,index_j)
+                    Spike_Times[Coor]=self.model.get_spike_times(soma_id=Spike_Matrix[index_i][index_j])
+        Spike_Times=self.invert_dict(Spike_Times, len(Spike_Matrix), len(Spike_Matrix[0]))
+
+        self.model.reset()
+
+        return Spike_Times
+
+
+    def generate_spiral_order(self, W, H):
+        coords = []
+
+        cx = (W - 1) / 2.0
+        cy = (H - 1) / 2.0
+        max_layer = int(max(cx, cy))
+
+        for layer in range(max_layer + 1):
+            top_right_x = int(cx + layer)
+            top_right_y = int(cy - layer)
+
+            # --- Top edge (right → left)
+            for x in range(top_right_x, int(cx - layer) - 1, -1):
+                y = top_right_y
+                if 0 <= x < W and 0 <= y < H:
+                    coords.append((x, y))
+
+            # --- Left edge (top → bottom)
+            for y in range(int(cy - layer) + 1, int(cy + layer) + 1):
+                x = int(cx - layer)
+                if 0 <= x < W and 0 <= y < H:
+                    coords.append((x, y))
+
+            # --- Bottom edge (left → right)
+            for x in range(int(cx - layer) + 1, int(cx + layer) + 1):
+                y = int(cy + layer)
+                if 0 <= x < W and 0 <= y < H:
+                    coords.append((x, y))
+
+            # --- Right edge (bottom → top)
+            for y in range(int(cy + layer) - 1, int(cy - layer), -1):
+                x = int(cx + layer)
+                if 0 <= x < W and 0 <= y < H:
+                    coords.append((x, y))
+
+        return coords
+
+
+
     def Full_Convolution_And_Extraction(self, Layer_idx, SpikeData,Total_Sim_Time):
         Synpase_Dict={}
-        for kernel_array, kernel_neuron in self.layers[Layer_idx]:
+        for kernel_array_index in range(len(self.ConvLayers[Layer_idx])):
             # Precompute kernel offsets ONCE
-            offsets = self.compute_kernel_offsets(kernel_array)
-
+            offsets = self.compute_kernel_offsets(self.ConvLayers[Layer_idx][kernel_array_index][0])
             for time_step in SpikeData:
                 current_spikes = SpikeData[time_step]
-
                 for spike in current_spikes:
                     Synpase_Dict=self.Convolve_Spike(
                          Synpase_Dict,
                          spike,
-                         kernel_array,
+                         self.ConvLayers[Layer_idx][kernel_array_index][0],
                          offsets,
                          current_spikes,
                          time_step,
@@ -261,68 +388,18 @@ class Conv2dtNet:
         print('Convolved')
         for key in Synpase_Dict:
             self.model.add_spike_list(key,Synpase_Dict[key])
-        Spike_Times={}
         print('start sim')
-        start=clocktime.time()
-        self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
-        end=clocktime.time()
-        print(end-start)
+        Spike_Times=self.process_spikes_spiral(Layer_idx, Total_Sim_Time)
         print('end sim')
-        for index_i in range(len(self.pooling_matrix[Layer_idx])):
-            for index_j in range(len(self.pooling_matrix[Layer_idx][0])):
-                if self.pooling_matrix[Layer_idx][index_i][index_j]:
-                    Coor=(index_i,index_j)
-                    Spike_Times[Coor]=self.model.get_spike_times(soma_id=self.pooling_matrix[Layer_idx][index_i][index_j])
-        Spike_Times=self.invert_dict(Spike_Times)
-        self.model.reset()
-        print(Layer_idx, 'layer')
         return Spike_Times
     
-    def FeedForwardLayerNN(self, InputSize,HiddenSize,OutputSize):
-        InputLayer=np.array([self.CreateSoma() for _ in range(InputSize)])
-        HiddenLayer=np.array([self.CreateSoma() for _ in range(HiddenSize)])
-        OutputLayer=np.array([self.CreateSoma() for _ in range(OutputSize)])
-        #initialize in input synapses
-        input_synapses=[]
-        for post_soma in InputLayer:
-            synapse=self.CreateSynapseNoSTDP(post_soma)
-            input_synapses.append(synapse)
-        InputToHidden,InputToHidden_Dict=self.FullyConnected(InputLayer,HiddenLayer)
-        HiddenToOutput, HiddenToOutput_Dict=self.FullyConnected(HiddenLayer,OutputLayer)
-        return [input_synapses,OutputLayer, HiddenToOutput_Dict]
-    def FullyConnected(self, InputLayer, OutputLayer):
-        synapses = []
-        synapse_dict = {}  # {post_soma: [synapses_from_all_inputs]}
 
-        for post_soma in OutputLayer:
-            synapse_dict[post_soma] = []  # initialize list for this post neuron
 
-        for pre_soma in InputLayer:
-            for post_soma in OutputLayer:
-                synapse = self.CreateSynapseSTDP(pre_soma, post_soma)
-                synapses.append(synapse)
-                synapse_dict[post_soma].append(synapse)
-
-        return np.array(synapses, dtype=object), synapse_dict
-
-    def ConstructionOfConvKernel(self, Conv_Kernel_List, output_classes):
-        for layer_id in range(len(Conv_Kernel_List)):
-            for kernel in range(len(Conv_Kernel_List[layer_id])):
-                self.Conv_Kernel_Construction(Conv_Kernel_List[layer_id][kernel][0],Conv_Kernel_List[layer_id][kernel][0],layer_idx=layer_id)
-            kernel_count = len(Conv_Kernel_List[layer_id])
-            num_combos = kernel_count + (kernel_count * (kernel_count - 1)) // 2 
-            Dimension = math.ceil(math.sqrt(num_combos))  
-            self.AttentionPooling(layer_id, Dimension, Dimension)
-        Last_Layer_idx=len(self.pooling_matrix)-1
-        Input_Dimension = self.pooling_matrix[Last_Layer_idx].size
-
-        #need to grab the spikes from this layer 
-        self.FF = self.FeedForwardLayerNN(Input_Dimension,2*Input_Dimension,output_classes)
     def ForwardPass(self, SpikeData,Total_Sim_Time):
         start=clocktime.time()
         Dataset = self.load_bin_as_spike_dict(SpikeData)
         # Fix conv kernel list so that is uses self.layers instead as not passed in anymore
-        for layer_id in range(len(self.layers)):
+        for layer_id in range(len(self.ConvLayers)):
             Dataset=self.Full_Convolution_And_Extraction(layer_id, Dataset, Total_Sim_Time)
 
         #need to grab the spikes from this layer 
@@ -331,7 +408,7 @@ class Conv2dtNet:
                 self.model.add_spike(
                             synapse_id=self.FF[0][Coor[0]+Coor[1]],
                             tick=time,
-                            value=10
+                            value=self.spiral_value_for_coord(self.Output_Channel_Dim[-1][0], self.Output_Channel_Dim[-1][1], Coor[0], Coor[1])
                         )
         Spike_Times=[]
         self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
@@ -401,97 +478,41 @@ class Conv2dtNet:
         plt.savefig(save_path, dpi=250, bbox_inches="tight")
         plt.close()
         print(f"Saved figure with shared color scale: {save_path}")
-if __name__ == '__main__':    #Create Convolutionary NN
+if __name__ == "__main__":
+    # --- Initialize model ---
     Model = Conv2dtNet()
     Model.model.setup(use_gpu=True)
-    print('GPU set up')
+    print("GPU setup complete")
 
+    # --- Define convolutional architecture ---
     Conv_Kernel_List = [
-        [(3,3),(2,3),(4,4),(4,4)], 
-        [(3,3),(2,3),(3,2)],
-        [(3,3),(2,3),(3,2),(4,4)],
-        [(3,3),(2,3),(3,2),(4,4)]
+        [(3, 3), (2, 3), (4, 4), (4, 4)],
+        [(3, 3), (2, 3), (3, 2)],
+        [(3, 3), (2, 3), (3, 2), (4, 4)],
+        [(3, 3), (2, 3), (3, 2), (4, 4)],
     ]
 
-    Model.ConstructionOfConvKernel(Conv_Kernel_List, 10)
-    print('Constructed')
+    # --- Build network ---
+    Model.NetworkConstruction(
+        Conv_Kernel_List=Conv_Kernel_List,
+        output_classes=10,
+        Input_W=28,
+        Input_H=28,
+    )
+    print("Network constructed")
 
-    # --- Track 5 random hidden→output synapses ---
-    all_syns = [syn for syn_list in Model.FF[2].values() for syn in syn_list]
-    tracked_syns = np.random.choice(all_syns, size=5, replace=False)
-    print("Tracking synapses:", tracked_syns)
+    # --- Run one NMNIST example ---
+    root = "./superneuroabm/ssn/data/NMNIST/Test"
+    assert os.path.isdir(root), f"NMNIST Test directory not found: {root}"
 
-    def print_weights(stage):
-        print(f"\n[{stage}] Synapse weights:")
-        for i, syn in enumerate(tracked_syns):
-            hyper = Model.model.get_agent_property_value(id=syn, property_name="hyperparameters")
-            print(f"  Synapse {i}: weight = {hyper[0]:.4f}")
+    # Pick first available digit and file
+    first_digit = sorted(os.listdir(root))[0]
+    digit_path = os.path.join(root, first_digit)
+    bin_files = [f for f in os.listdir(digit_path) if f.endswith(".bin")]
+    assert bin_files, f"No .bin files found in {digit_path}"
+    bin_file = bin_files[0]
+    dataset_path = os.path.join(digit_path, bin_file)
 
-    print_weights("Before any ForwardPass")
-
-    datasets = [
-        './superneuroabm/ssn/data/NMNIST/Test/0/00011.bin',
-        './superneuroabm/ssn/data/NMNIST/Test/0/00004.bin',
-        './superneuroabm/ssn/data/NMNIST/Test/0/00014.bin',
-        './superneuroabm/ssn/data/NMNIST/Test/0/00026.bin'
-    ]
-
-    weight_snapshots = []  # store weights after each pass
-
-    for idx, ds in enumerate(datasets):
-        Ans = Model.ForwardPass(ds, 100)
-        print(f'Ans {idx}:', Ans)
-        print_weights(f"After ForwardPass {idx}")
-
-        # collect weights for later plotting
-        snapshot = {}
-        for out_soma, syn_list in Model.FF[2].items():
-            weights = []
-            for syn in syn_list:
-                hyper = Model.model.get_agent_property_value(id=syn, property_name="hyperparameters")
-                weights.append(hyper[0])
-            snapshot[out_soma] = weights
-        weight_snapshots.append(snapshot)
-        Model.model.reset()
-
-    # --- Plot all passes side-by-side ---
-    save_dir = "./ff_weight_maps"
-    os.makedirs(save_dir, exist_ok=True)
-    num_classes = len(Model.FF[2])
-    num_passes = len(weight_snapshots)
-
-    # compute global min/max across all passes for color normalization
-    all_w = [w for snap in weight_snapshots for ws in snap.values() for w in ws]
-    vmin, vmax = np.min(all_w), np.max(all_w)
-
-    fig, axs = plt.subplots(num_classes, num_passes, figsize=(3*num_passes, 2*num_classes))
-    if num_classes == 1:
-        axs = np.expand_dims(axs, axis=0)
-    if num_passes == 1:
-        axs = np.expand_dims(axs, axis=1)
-
-    for i, (out_soma, _) in enumerate(Model.FF[2].items()):
-        for j, snapshot in enumerate(weight_snapshots):
-            weights = np.array(snapshot[out_soma])
-            n_cols = math.ceil(math.sqrt(len(weights)))
-            n_rows = math.ceil(len(weights) / n_cols)
-            padded = np.full(n_rows * n_cols, np.nan)
-            padded[:len(weights)] = weights
-            grid = padded.reshape(n_rows, n_cols)
-
-            ax = axs[i, j]
-            im = ax.imshow(grid, vmin=vmin, vmax=vmax, cmap="viridis")
-            if i == 0:
-                ax.set_title(f"Pass {j}")
-            if j == 0:
-                ax.set_ylabel(f"Neuron {i}")
-            ax.set_xticks([]); ax.set_yticks([])
-
-    fig.colorbar(im, ax=axs, fraction=0.02, pad=0.04)
-    plt.suptitle("Output Layer Weights Across Forward Passes", fontsize=14)
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
-
-    save_path = os.path.join(save_dir, "output_layer_comparison.png")
-    plt.savefig(save_path, dpi=250, bbox_inches="tight")
-    plt.close()
-    print(f"Saved combined comparison figure: {save_path}")
+    print(f"Running example → Digit {first_digit} | File: {bin_file}")
+    predicted_class = Model.ForwardPass(dataset_path, Total_Sim_Time=100)
+    print(f"Predicted class: {predicted_class} (True: {first_digit})")
