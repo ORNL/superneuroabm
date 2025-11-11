@@ -9,14 +9,17 @@ def get_soma_spike(
     agent_index,
     globals,
     agent_ids,
-    pre_soma_id,
+    pre_soma_index,  # Used to be pre_soma_id, now it's already an index
     t_current,
     input_spikes_tensor,  # input spikes
     output_spikes_tensor,
 ):
     """
-    Get spike from pre-soma using its AGENT ID.
-    Converts agent ID to local index by searching through agent_ids array.
+    Get spike from pre-soma using its local index (already converted by SAGESim).
+
+    Args:
+        pre_soma_index: Local index of the pre-synaptic soma (-1 if NaN/external input)
+        globals, agent_ids: Kept for signature compatibility, not used anymore
 
     NOTE: Due to double buffering, this reads from the PREVIOUS tick's spikes.
     Somas write spikes at priority 0, synapses read at priority 1, but the
@@ -25,16 +28,12 @@ def get_soma_spike(
     """
     t_current = int(tick)
 
-    if not cp.isnan(pre_soma_id):
-        # Convert agent ID to local index
-        i = 0
-        while i < len(agent_ids) and agent_ids[i] != pre_soma_id:
-            i += 1
-
+    if pre_soma_index >= 0:
+        # pre_soma_index is already a local index (no search needed!)
         # Read from previous tick due to double buffering
         # At tick 0, there are no previous spikes, so spike will be 0
         if t_current > 0:
-            spike = output_spikes_tensor[i][t_current - 1]
+            spike = output_spikes_tensor[pre_soma_index][t_current - 1]
         else:
             spike = 0.0
     else:
@@ -49,5 +48,4 @@ def get_soma_spike(
                     1
                 ]  # TODO: check if we need analog values for spikes
             i += 1
-
     return spike
