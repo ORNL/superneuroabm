@@ -7,7 +7,9 @@ from superneuroabm.model import NeuromorphicModel
 
 def vizualize_responses(model: NeuromorphicModel, vthr: int, fig_name: str, figsize=None) -> None:
 
-    soma_ids = model.soma2synapse_map.keys()
+    # Filter out invalid soma IDs (negative values like -1 or NaN used for external inputs)
+    all_soma_ids = model.soma2synapse_map.keys()
+    soma_ids = [sid for sid in all_soma_ids if sid >= 0 and not np.isnan(sid)]
     synapse_ids = model.synapse2soma_map.keys()
 
     # Always print spike times first

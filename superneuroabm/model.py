@@ -560,27 +560,29 @@ class NeuromorphicModel(Model):
 
         # IMPORTANT: Connect in order [pre, post] to maintain ordered locations
         # First connection: pre_soma (if exists)
-        if not np.isnan(float(pre_soma_id)):
+        # -1 indicates external input
+        if pre_soma_id != -1:
             network_space.connect_agents(synapse_id, pre_soma_id, directed=True)
             self.soma2synapse_map[pre_soma_id]["post"].add(synapse_id)
             self.synapse2soma_map[synapse_id]["pre"] = pre_soma_id
         else:
-            # For external input, manually add NaN to locations to maintain [pre, post] order
-            network_space.get_location(synapse_id).append(float("nan"))
-            self.synapse2soma_map[synapse_id]["pre"] = float("nan")  # External input
+            # For external input, manually add -1 to locations to maintain [pre, post] order
+            network_space.get_location(synapse_id).append(-1)
+            self.synapse2soma_map[synapse_id]["pre"] = -1  # External input
             tags.add("input_synapse")
 
 
         # Second connection: post_soma (if exists)
-        if not np.isnan(float(post_soma_id)):
+        # -1 indicates external output
+        if post_soma_id != -1:
             network_space.connect_agents(synapse_id, post_soma_id, directed=True)
             network_space.connect_agents(post_soma_id, synapse_id, directed=True)  # Bidirectional for STDP
             self.synapse2soma_map[synapse_id]["post"] = post_soma_id
             self.soma2synapse_map[post_soma_id]["pre"].add(synapse_id)
         else:
-            self.synapse2soma_map[synapse_id]["post"] = float("nan")
-            # For external output (rare), manually add NaN
-            network_space.get_location(synapse_id).append(float("nan"))
+            self.synapse2soma_map[synapse_id]["post"] = -1
+            # For external output (rare), manually add -1
+            network_space.get_location(synapse_id).append(-1)
 
         self.agentid2config[synapse_id] = config_name
         tags.update({"synapse", breed})

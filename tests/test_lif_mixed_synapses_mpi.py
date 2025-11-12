@@ -46,7 +46,7 @@ def test_lif_soma_mixed_synapses(enable_internal_state_tracking=True, use_gpu=Tr
     ]
     # Define simulation duration
     simulation_duration = 200  # Total simulation time in ticks
-    sync_every_n_ticks = 200  # Synchronization interval for updates
+    sync_every_n_ticks = 1  # Synchronization interval for updates
 
     # Create soma_0 (LIF)
     soma_0 = model.create_soma(
@@ -63,7 +63,7 @@ def test_lif_soma_mixed_synapses(enable_internal_state_tracking=True, use_gpu=Tr
     # Create synapse_2: external input -> soma_0
     synapse_2 = model.create_synapse(
         breed="single_exp_synapse",
-        pre_soma_id=np.nan,  # External input
+        pre_soma_id=-1,  # External input
         post_soma_id=soma_0,
         config_name="no_learning_config_0",
     )
@@ -79,7 +79,7 @@ def test_lif_soma_mixed_synapses(enable_internal_state_tracking=True, use_gpu=Tr
     # Create synapse_4: external input -> soma_1
     synapse_4 = model.create_synapse(
         breed="single_exp_synapse",
-        pre_soma_id=np.nan,  # External input
+        pre_soma_id=-1,  # External input
         post_soma_id=soma_1,
         config_name="no_learning_config_0",
     )
