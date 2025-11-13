@@ -16,7 +16,7 @@ from collections import defaultdict
 class Conv2dtNet:
     def __init__(self, SpikeData=None):
 
-        self.model = NeuromorphicModel()
+        self.model = NeuromorphicModel(enable_internal_state_tracking=False)
         self.SpikeData = SpikeData
         self.ConvLayers = {}           
         self.Output_Channel = {}
@@ -53,7 +53,7 @@ class Conv2dtNet:
         t_ms = (t / 1000.0).astype(np.int32)
 
         # Filter ON events only
-        time_mask = t_ms <= 100
+        time_mask = t_ms <= 5
         x, y, t_ms = x[time_mask], y[time_mask], t_ms[time_mask]
 
 
@@ -156,7 +156,7 @@ class Conv2dtNet:
         )
         return Synapse
 
-    def Conv_Kernel_Construction(self, W, H, layer_idx=0, input=np.nan, Stride=1):
+    def Conv_Kernel_Construction(self, W, H, layer_idx=0, input=-1, Stride=1):
         Kernel=np.empty((W, H), dtype=object)
         KernelSynapses = np.empty((W, H), dtype=object)
         for i in range(W):
@@ -165,7 +165,7 @@ class Conv2dtNet:
                 Kernel[i][j] = Kernel_Neuron
         for i in range(W):
             for j in range(H):
-                KernelSynapse=self.CreateSynapseSTDP(np.nan,Kernel[i][j])
+                KernelSynapse=self.CreateSynapseSTDP(-1,Kernel[i][j])
                 KernelSynapses[i][j] = KernelSynapse
        
         if layer_idx not in self.ConvLayers:
@@ -178,7 +178,7 @@ class Conv2dtNet:
                     if neuron_index_i == neuron_index_j:
                         continue
                     else:
-                        self.CreateSynapseNoSTDP(Layer_Tensor[neuron_index_i], Layer_Tensor[neuron_index_j], -10)
+                        self.CreateSynapseNoSTDP(Layer_Tensor[neuron_index_i], Layer_Tensor[neuron_index_j], -20)
 
     
     def Output_Channel_Construction(self, Layer_idx, Output_Layer_Size, Input_W, Input_H):
@@ -208,7 +208,7 @@ class Conv2dtNet:
         #initialize in input synapses
         input_synapses=[]
         for post_soma in InputLayer:
-            synapse=self.CreateSynapseSTDP(np.nan, post_soma)
+            synapse=self.CreateSynapseSTDP(-1, post_soma)
             input_synapses.append(synapse)
         InputToHidden,InputToHidden_Dict=self.FullyConnected(InputLayer,HiddenLayer)
         HiddenToOutput, HiddenToOutput_Dict=self.FullyConnected(HiddenLayer,OutputLayer)
@@ -302,6 +302,7 @@ class Conv2dtNet:
 
     def process_spikes_spiral(self, Layer_idx, Total_Sim_Time):
         self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
+        print('Finished Simulate')
         Spike_Times = {}
         for i in range(len(self.Output_Channel[Layer_idx])):
             Spike_Times[i] = self.model.get_spike_times(
@@ -310,9 +311,9 @@ class Conv2dtNet:
 
         sorted_neurons = sorted(Spike_Times.items(), key=lambda x: len(x[1]), reverse=True)
 
-        Spike_Matrix = np.empty((self.Output_Channel_Dim[Layer_idx][0], self.Output_Channel_Dim[Layer_idx][1]), dtype=object)
+        Spike_Matrix = np.empty((int(self.Output_Channel_Dim[Layer_idx][0]), int(self.Output_Channel_Dim[Layer_idx][1])), dtype=object)
 
-        spiral_coords = self.generate_spiral_order(self.Output_Channel_Dim[Layer_idx][0], self.Output_Channel_Dim[Layer_idx][1])
+        spiral_coords = self.generate_spiral_order(int(self.Output_Channel_Dim[Layer_idx][0]), int(self.Output_Channel_Dim[Layer_idx][1]))
 
         for (neuron_idx, _), (x, y) in zip(sorted_neurons, spiral_coords):
             Spike_Matrix[x, y] = neuron_idx
@@ -371,6 +372,7 @@ class Conv2dtNet:
 
     def Full_Convolution_And_Extraction(self, Layer_idx, SpikeData,Total_Sim_Time):
         Synpase_Dict={}
+        print('Adding Spikes per kernel')
         for kernel_array_index in range(len(self.ConvLayers[Layer_idx])):
             # Precompute kernel offsets ONCE
             offsets = self.compute_kernel_offsets(self.ConvLayers[Layer_idx][kernel_array_index][0])
@@ -396,13 +398,17 @@ class Conv2dtNet:
 
 
     def ForwardPass(self, SpikeData,Total_Sim_Time):
+        print('Start Forward Pass')
         start=clocktime.time()
         Dataset = self.load_bin_as_spike_dict(SpikeData)
         # Fix conv kernel list so that is uses self.layers instead as not passed in anymore
         for layer_id in range(len(self.ConvLayers)):
+            print(Dataset)
+            print(layer_id)
             Dataset=self.Full_Convolution_And_Extraction(layer_id, Dataset, Total_Sim_Time)
 
         #need to grab the spikes from this layer 
+        print('Feed Forward Part')
         for time in Dataset:
             for Coor in Dataset[time]:
                 self.model.add_spike(
@@ -486,10 +492,9 @@ if __name__ == "__main__":
 
     # --- Define convolutional architecture ---
     Conv_Kernel_List = [
-        [(3, 3), (2, 3), (4, 4), (4, 4)],
-        [(3, 3), (2, 3), (3, 2)],
-        [(3, 3), (2, 3), (3, 2), (4, 4)],
-        [(3, 3), (2, 3), (3, 2), (4, 4)],
+        [(9, 9),(12,12),(13,13),(10,10)],
+        [(6,6),(8,8),(7,7),(7,8)],
+        [(4, 4),(3,3),(5,5)]
     ]
 
     # --- Build network ---
@@ -500,7 +505,9 @@ if __name__ == "__main__":
         Input_H=28,
     )
     print("Network constructed")
-
+    print("Number of somas:", len(Model.model._soma_ids))
+    print("Number of synapses:", len(Model.model._synapse_ids))
+    print("Total agents:", len(Model.model._soma_ids) + len(Model.model._synapse_ids))
     # --- Run one NMNIST example ---
     root = "./superneuroabm/ssn/data/NMNIST/Test"
     assert os.path.isdir(root), f"NMNIST Test directory not found: {root}"
@@ -514,5 +521,5 @@ if __name__ == "__main__":
     dataset_path = os.path.join(digit_path, bin_file)
 
     print(f"Running example → Digit {first_digit} | File: {bin_file}")
-    predicted_class = Model.ForwardPass(dataset_path, Total_Sim_Time=100)
+    predicted_class = Model.ForwardPass(dataset_path, Total_Sim_Time=5)
     print(f"Predicted class: {predicted_class} (True: {first_digit})")
