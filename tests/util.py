@@ -82,8 +82,6 @@ def vizualize_responses(model: NeuromorphicModel, vthr: int, fig_name: str, figs
         plt.legend()
         current_subplot += 1
 
-        print(internal_learning_state_synapse)
-
         if num_plots > 1:
             # Plot pre trace
             plt.subplot(total_plot_count, 1, current_subplot)

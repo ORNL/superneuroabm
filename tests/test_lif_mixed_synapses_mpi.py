@@ -50,13 +50,13 @@ def test_lif_soma_mixed_synapses(enable_internal_state_tracking=True, use_gpu=Tr
 
     # Create soma_0 (LIF)
     soma_0 = model.create_soma(
-        breed="lif_soma",
+        breed="izh_soma",
         config_name="config_0",
     )
 
     # Create soma_1 (LIF)
     soma_1 = model.create_soma(
-        breed="lif_soma",
+        breed="izh_soma",
         config_name="config_0",
     )
 
