@@ -508,7 +508,9 @@ if __name__ == "__main__":
     print("Number of synapses:", len(Model.model._synapse_ids))
     print("Total agents:", len(Model.model._soma_ids) + len(Model.model._synapse_ids))
     # --- Run one NMNIST example ---
-    root = "./superneuroabm/ssn/data/NMNIST/Test"
+    # get NMNIST test data
+    # test_dataset = tonic.datasets.NMNIST(save_to="./superneuroabm/ssn/data/", train=False)
+    root = "./data/NMNIST/Test"
     assert os.path.isdir(root), f"NMNIST Test directory not found: {root}"
 
     # Pick first available digit and file
