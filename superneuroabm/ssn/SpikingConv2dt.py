@@ -492,9 +492,8 @@ if __name__ == "__main__":
 
     # --- Define convolutional architecture ---
     Conv_Kernel_List = [
-        [(9, 9),(12,12),(13,13),(10,10)],
-        [(6,6),(8,8),(7,7),(7,8)],
-        [(4, 4),(3,3),(5,5)]
+        [(22, 22)],
+        [(3,3)]
     ]
 
     # --- Build network ---
