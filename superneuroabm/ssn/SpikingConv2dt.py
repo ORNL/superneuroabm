@@ -44,7 +44,7 @@ class Conv2dtNet:
         )
 
         # Bit-mask and shift to extract fields
-        x = (data >> 32) & 0xFFd
+        x = (data >> 32) & 0xFF
         y = (data >> 24) & 0xFF
         p = (data >> 23) & 0x1
         t = data & 0x7FFFFF  # 23 bits
@@ -53,7 +53,7 @@ class Conv2dtNet:
         t_ms = (t / 1000.0).astype(np.int32)
 
         # Filter ON events only
-        time_mask = t_ms <= 2
+        time_mask = t_ms <= 10
         x, y, t_ms = x[time_mask], y[time_mask], t_ms[time_mask]
 
 
@@ -69,29 +69,43 @@ class Conv2dtNet:
     def spiral_value_for_coord(self, width, height, x, y):
         cx = (width - 1) / 2.0
         cy = (height - 1) / 2.0
-
         dx = x - cx
         dy = y - cy
 
-        layer = int(max(abs(dx), abs(dy)))
+        layer = max(abs(dx), abs(dy))
+        max_layer = max((width - 1) / 2, (height - 1) / 2)
+        r_norm = layer / max_layer
 
-        side_len = 2 * layer + 1
+        # Compute offset same way as before
+        offset = self._spiral_offset(dx, dy, layer)
 
-        prev_count = (side_len - 2) ** 2 if layer > 0 else 0
+        # Normalize within layer
+        if layer == 0:
+            o_norm = 0
+        else:
+            o_norm = offset / (8 * layer)
 
-        top_right_x = cx + layer
-        top_right_y = cy - layer
+        return int(30*(r_norm + o_norm) / 2.0)
+    def _spiral_offset(self, dx, dy, layer):
+        # layer == max(|dx|, |dy|)
+        L = int(layer)
 
-        if y == cy - layer: 
-            offset = int(top_right_x - x)
-        elif x == cx - layer:  
-            offset = int(2 * layer + (y - (cy - layer)))
-        elif y == cy + layer:  
-            offset = int(4 * layer + (x - (cx - layer)))
-        else:  
-            offset = int(6 * layer + ((cy + layer) - y))
+        # Top edge (y = -L, x decreasing)
+        if dy == -L:
+            return int((L - dx))
 
-        return (prev_count + offset + 5)*1e-3
+        # Left edge (x = -L, y increasing)
+        if dx == -L:
+            return int(2*L + (dy + L))
+
+        # Bottom edge (y = L, x increasing)
+        if dy == L:
+            return int(4*L + (dx + L))
+
+        # Right edge (x = L, y decreasing)
+        # If no other case matched, we are here
+        return int(6*L + (L - dy))
+
 
     def CreateSoma(self):
             Soma= self.model.create_soma(
@@ -182,43 +196,66 @@ class Conv2dtNet:
         for i in range(W):
             for j in range(H):
                 KernelSynapse=self.CreateSynapseSTDP(-1,Kernel[i][j])
-                #KernelSynapse=self.CreateSynapseNoSTDP(-1,Kernel[i][j],10)
                 KernelSynapses[i][j] = KernelSynapse
        
         if layer_idx not in self.ConvLayers:
             self.ConvLayers[layer_idx] = []
         self.ConvLayers[layer_idx].append([KernelSynapses, Kernel, Stride])
     
-    def Lateral_Inhibition(self, Layer_Tensor):
-            for neuron_index_i in range(0,len(Layer_Tensor)):
-                for neuron_index_j in range(0,len(Layer_Tensor)):
-                    if neuron_index_i == neuron_index_j:
-                        continue
-                    else:
-                        self.CreateSynapseNoSTDP(Layer_Tensor[neuron_index_i], Layer_Tensor[neuron_index_j], -30)
+    def Lateral_Inhibition(self, Layer_Tensor, p=0.5):
+        N = len(Layer_Tensor)
 
-    
-    def Output_Channel_Construction(self, Layer_idx, Output_Layer_Size, Input_W, Input_H):
-        #Ensure Output Channel is equal to or greater then 
-        Output_Channel=np.empty(int(Output_Layer_Size), dtype=object)
+        for i in range(N):
+            # Choose a random 20% subset of OTHER neurons
+            possible_targets = [j for j in range(N) if j != i]
+            num_targets = max(1, int(p * len(possible_targets)))
+
+            chosen_indices = np.random.choice(
+                possible_targets,
+                size=num_targets,
+                replace=False
+            )
+
+            # Create inhibitory connections
+            for j in chosen_indices:
+                self.CreateSynapseNoSTDP(
+                    Layer_Tensor[i],
+                    Layer_Tensor[j],
+                    -10
+                )
+        
+    def Output_Channel_Construction(self, Layer_idx, Output_Layer_Size, Input_W, Input_H, p=0.2):
+        # 1. Create output channel neurons
+        Output_Channel = np.empty(int(Output_Layer_Size), dtype=object)
         for i in range(int(Output_Layer_Size)):
-            Output_Channel[i]=self.CreateSoma()
-        self.Output_Channel[Layer_idx]=Output_Channel
-        for kernel in self.ConvLayers[Layer_idx]:
-            Output_H = (Input_H-len(kernel[0]))/1
-            Output_W = (Input_W - len(kernel[0][0]))// kernel[2]
-            Output = Output_H * Output_W
-            for kernel_i in range(len(kernel[1])):
-                for kernel_j in range(len(kernel[1][0])):
-                    Counter=0
-                    for output_neuron in self.Output_Channel[Layer_idx]:
-                        if Counter>= Output:
-                            break
-                        self.CreateSynapseSTDP(kernel[1][kernel_i][kernel_j], output_neuron)
-                        #self.CreateSynapseNoSTDP(kernel[1][kernel_i][kernel_j], output_neuron,10)
+            Output_Channel[i] = self.CreateSoma()
 
-                        Counter+=1
+        self.Output_Channel[Layer_idx] = Output_Channel
+
+        # 2. For each kernel in this layer
+        for kernel in self.ConvLayers[Layer_idx]:
+
+            kernel_height = len(kernel[0])
+            kernel_width = len(kernel[0][0])
+            stride = kernel[2]
+
+            # Compute how many rastered positions exist (standard conv output size)
+            Output_H = (Input_H - kernel_height) // stride + 1
+            Output_W = (Input_W - kernel_width) // stride + 1
+            Output = Output_H * Output_W
+
+            kernel_somas = kernel[1]
+            flat_kernel_somas = [
+                kernel_somas[i][j]
+                for i in range(kernel_height)
+                for j in range(kernel_width)
+            ]
+
+            for out_idx in range(Output):
+                for k_soma in flat_kernel_somas:
+                    self.CreateSynapseSTDP(k_soma, Output_Channel[out_idx])
         self.Lateral_Inhibition(self.Output_Channel[Layer_idx])
+
 
     def FeedForwardLayerNN(self, InputSize, HiddenSize, OutputSize):
         InputLayer=np.array([self.CreateSoma() for _ in range(InputSize)])
@@ -250,23 +287,42 @@ class Conv2dtNet:
 
         return np.array(synapses, dtype=object), synapse_dict
 
-    def NetworkConstruction(self, Conv_Kernel_List, output_classes, Input_W, Input_H):
+    def NetworkConstruction(self, Conv_Kernel_List, output_classes, Input_W, Input_H, stride=1):
+
         for layer_id in range(len(Conv_Kernel_List)):
-            Max_Output_Channel=0
+
+            Max_Output_Channel = 0
             Max_Output_H = 0
-            Max_Output_W = 0 
-            for kernel in range(len(Conv_Kernel_List[layer_id])):
-                self.Conv_Kernel_Construction(Conv_Kernel_List[layer_id][kernel][0],Conv_Kernel_List[layer_id][kernel][1],layer_idx=layer_id)
-                Output_H = (Input_H-Conv_Kernel_List[layer_id][kernel][1])/1
-                Output_W = (Input_W - Conv_Kernel_List[layer_id][kernel][0])/1
-                Max_Output_Channel=max((Output_W*Output_W), Max_Output_Channel)
-                Max_Output_H = max(Output_W, Output_H)
-                Max_Output_W = max(Output_W, Output_W)
-            self.Output_Channel_Construction(layer_id, Max_Output_Channel, Input_W, Input_H)
-            self.Output_Channel_Dim[layer_id]=[Max_Output_W, Max_Output_H]
+            Max_Output_W = 0
+
+            for kernel_specs in Conv_Kernel_List[layer_id]:
+                K_H = kernel_specs[0]
+                K_W = kernel_specs[1]
+                self.Conv_Kernel_Construction(kernel_specs[0], kernel_specs[1], layer_idx=layer_id)
+
+                # Correct output size formula
+                Output_H = (Input_H - K_H) // stride 
+                Output_W = (Input_W - K_W) // stride 
+
+                Output_Channel = Output_H * Output_W
+
+                Max_Output_Channel = max(Max_Output_Channel, Output_Channel)
+                Max_Output_H = max(Max_Output_H, Output_H)
+                Max_Output_W = max(Max_Output_W, Output_W)
+
+            # Build output neurons for this layer
+            self.Output_Channel_Construction(layer_id, Max_Output_Channel, Max_Output_W, Max_Output_H)
+
+            # Save dims
+            self.Output_Channel_Dim[layer_id] = [Max_Output_W, Max_Output_H]
+
+            # Update input for the next layer
             Input_H = Max_Output_H
             Input_W = Max_Output_W
-        self.FF = self.FeedForwardLayerNN(int(Max_Output_Channel),2*int(Max_Output_Channel),output_classes)           
+
+        # Build final fully connected readout
+        self.FF = self.FeedForwardLayerNN(Max_Output_Channel, 2 * Max_Output_Channel, output_classes)
+       
 
     
     def compute_kernel_offsets(self, Kernel_List_Entry):
@@ -282,7 +338,7 @@ class Conv2dtNet:
         return offsets
 
 
-    def Convolve_Spike(self, SynapseDict, spike, Kernel, offsets, CurrentSpikeSet, time_step, Stride=1):
+    def Convolve_Spike( self, SynapseDict, spike, Kernel, offsets, CurrentSpikeSet, time_step, Input_W, Input_H, Stride=1):
         sx, sy = spike
         H = len(Kernel)
         W = len(Kernel[0])
@@ -292,7 +348,14 @@ class Conv2dtNet:
             x0 = sx - i
             y0 = sy - j
 
-            # Apply stride to kernel window origin
+            # --- SKIP ILLEGAL RASTERINGS ---
+            if x0 < 0 or y0 < 0:
+                continue
+            if (x0 + H) > Input_W or (y0 + W) > Input_H:
+                continue
+            # --------------------------------
+
+            # Stride constraint
             if x0 % Stride != 0 or y0 % Stride != 0:
                 continue
 
@@ -303,12 +366,14 @@ class Conv2dtNet:
                     y = y0 + kj
 
                     if (x, y) in CurrentSpikeSet:
-                        if Kernel[ki][kj] in SynapseDict:
-                            SynapseDict[Kernel[ki][kj]].append([time_step, CurrentSpikeSet[(x, y)]])
+                        syn = Kernel[ki][kj]
+                        val = CurrentSpikeSet[(x, y)]
+                        if syn in SynapseDict:
+                            SynapseDict[syn].append([time_step, val])
                         else:
-                            SynapseDict[Kernel[ki][kj]]=[[time_step, CurrentSpikeSet[(x, y)]]]
-                            #G
-        
+                            SynapseDict[syn] = [[time_step, val]]
+
+            
     def invert_dict(self, input_dict, W, H) :
         inverted = defaultdict(dict)
         
@@ -320,32 +385,42 @@ class Conv2dtNet:
 
 
     def process_spikes_spiral(self, Layer_idx, Total_Sim_Time):
+
+        # --- 1. Run simulation ---
         self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
-        print('Finished Simulate')
-        Spike_Times = {}
-        for i in range(len(self.Output_Channel[Layer_idx])):
-            Spike_Times[i] = self.model.get_spike_times(
-                soma_id=self.Output_Channel[Layer_idx][i]
-            )
-        sorted_neurons = sorted(Spike_Times.items(), key=lambda x: len(x[1]), reverse=True)
+        print("Finished Simulate")
 
-        Spike_Matrix = np.empty((int(self.Output_Channel_Dim[Layer_idx][0]), int(self.Output_Channel_Dim[Layer_idx][1])), dtype=object)
+        # --- 2. Get spike times for each soma in this layer's output channel ---
+        spike_counts = []   # list of (soma_id, spike_times, count)
 
-        spiral_coords = self.generate_spiral_order(int(self.Output_Channel_Dim[Layer_idx][0]), int(self.Output_Channel_Dim[Layer_idx][1]))
+        for soma_id in self.Output_Channel[Layer_idx]:
+            times = self.model.get_spike_times(soma_id=soma_id)
+            spike_counts.append((soma_id, times, len(times)))
 
-        for (neuron_idx, _), (x, y) in zip(sorted_neurons, spiral_coords):
-            Spike_Matrix[x, y] = neuron_idx
+        # --- 3. Sort by spike count DESC ---
+        spike_counts.sort(key=lambda x: x[2], reverse=True)
 
-        Spike_Times = {}
-        for index_i in range(len(Spike_Matrix)):
-            for index_j in range(len(Spike_Matrix[0])):
-                if Spike_Matrix[index_i][index_j]:
-                    Coor=(index_i,index_j)
-                    Spike_Times[Coor]=self.model.get_spike_times(soma_id=Spike_Matrix[index_i][index_j])
-        Spike_Times=self.invert_dict(Spike_Times, len(Spike_Matrix), len(Spike_Matrix[0]))
+        # --- 4. Build spiral mapping (x,y) -> soma_id ---
+        W = self.Output_Channel_Dim[Layer_idx][0]
+        H = self.Output_Channel_Dim[Layer_idx][1]
 
+        spiral_coords = self.generate_spiral_order(W, H)
 
-        return Spike_Times
+        coord_map = {}   # (x,y) -> soma_id
+
+        for (soma_id, times, _), (x, y) in zip(spike_counts, spiral_coords):
+            coord_map[(x, y)] = (soma_id, times)
+
+        # --- 5. Build time-indexed spike output: { t : { (x,y): value } } ---
+        time_dict = defaultdict(dict)
+
+        for (x, y), (soma_id, times) in coord_map.items():
+            for t in times:
+                value = self.spiral_value_for_coord(W, H, x, y)
+                time_dict[t][(x, y)] = value
+
+        return dict(time_dict)
+
 
 
     def generate_spiral_order(self, W, H):
@@ -388,9 +463,11 @@ class Conv2dtNet:
 
 
     def Full_Convolution_And_Extraction(self, Layer_idx, SpikeData,Total_Sim_Time):
+        print('SPIKE DATA')
+        print(SpikeData)
+        print(self.Output_Channel_Dim[Layer_idx])
         start=clocktime.time()
         Synpase_Dict={}
-        print(self.Output_Channel_Dim[Layer_idx])
         print('Adding Spikes per kernel')
         for kernel_array_index in range(len(self.ConvLayers[Layer_idx])):
             # Precompute kernel offsets ONCE
@@ -398,15 +475,40 @@ class Conv2dtNet:
             for time_step in SpikeData:
                 current_spikes = SpikeData[time_step]
                 for spike in current_spikes:
-                    self.Convolve_Spike(
+                    if Layer_idx==0:
+                        input_w=28
+                        input_h=28
+                    else:
+                        input_w=self.Output_Channel_Dim[Layer_idx-1][0]
+                        input_h=self.Output_Channel_Dim[Layer_idx-1][1]
+
+                    
+                    if Layer_idx==0:
+
+                        self.Convolve_Spike(
+                            Synpase_Dict,
+                            spike,
+                            self.ConvLayers[Layer_idx][kernel_array_index][0],
+                            offsets,
+                            current_spikes,
+                            time_step,
+                            input_w,
+                            input_h,
+                            Stride=2
+                        )
+                    else:
+                        self.Convolve_Spike(
                          Synpase_Dict,
                          spike,
                          self.ConvLayers[Layer_idx][kernel_array_index][0],
                          offsets,
                          current_spikes,
                          time_step,
+                         input_w,
+                         input_h,
+                         Stride=3
                     )
-
+        #print(Synpase_Dict)
         for key in Synpase_Dict:
             self.model.add_spike_list(key,Synpase_Dict[key])
         print('start sim')
@@ -425,18 +527,18 @@ class Conv2dtNet:
         Dataset = self.load_bin_as_spike_dict(SpikeData)
         # Fix conv kernel list so that is uses self.layers instead as not passed in anymore
         for layer_id in range(len(self.ConvLayers)):
-            print(Dataset)
             print(layer_id)
             Dataset=self.Full_Convolution_And_Extraction(layer_id, Dataset, Total_Sim_Time)
 
         #need to grab the spikes from this layer 
         print('Feed Forward Part')
+        last_layer = max(self.Output_Channel_Dim.keys())
         for time in Dataset:
             for Coor in Dataset[time]:
                 self.model.add_spike(
                             synapse_id=self.FF[0][Coor[0]+Coor[1]],
                             tick=time,
-                            value=self.spiral_value_for_coord(self.Output_Channel_Dim[-1][0], self.Output_Channel_Dim[-1][1], Coor[0], Coor[1])
+                            value=self.spiral_value_for_coord(self.Output_Channel_Dim[last_layer][0], self.Output_Channel_Dim[last_layer][1], Coor[0], Coor[1])
                         )
         Spike_Times=[]
         self.model.simulate(ticks=Total_Sim_Time, update_data_ticks=Total_Sim_Time)
@@ -514,8 +616,10 @@ if __name__ == "__main__":
 
     # --- Define convolutional architecture ---
     Conv_Kernel_List = [
-        [(6,6)],
-        [(5,5)],
+        [(10,10),(9,9),(11,11)],
+        [(6,6),(5,5),(7,7)],
+        [(5,5),(4,4)],
+        [(3,3),(4,4)],
         [(3,3)]
         ]
 
@@ -545,5 +649,5 @@ if __name__ == "__main__":
     dataset_path = os.path.join(digit_path, bin_file)
 
     print(f"Running example → Digit {first_digit} | File: {bin_file}")
-    predicted_class = Model.ForwardPass(dataset_path, Total_Sim_Time=3)
+    predicted_class = Model.ForwardPass(dataset_path, Total_Sim_Time=10)
     print(f"Predicted class: {predicted_class} (True: {first_digit})")
