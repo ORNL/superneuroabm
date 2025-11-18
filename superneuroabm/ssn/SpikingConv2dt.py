@@ -44,7 +44,7 @@ class Conv2dtNet:
         )
 
         # Bit-mask and shift to extract fields
-        x = (data >> 32) & 0xFF
+        x = (data >> 32) & 0xFFd
         y = (data >> 24) & 0xFF
         p = (data >> 23) & 0x1
         t = data & 0x7FFFFF  # 23 bits
@@ -53,7 +53,7 @@ class Conv2dtNet:
         t_ms = (t / 1000.0).astype(np.int32)
 
         # Filter ON events only
-        time_mask = t_ms <= 5
+        time_mask = t_ms <= 2
         x, y, t_ms = x[time_mask], y[time_mask], t_ms[time_mask]
 
 
@@ -91,12 +91,28 @@ class Conv2dtNet:
         else:  
             offset = int(6 * layer + ((cy + layer) - y))
 
-        return prev_count + offset + 5
+        return (prev_count + offset + 5)*1e-3
 
     def CreateSoma(self):
             Soma= self.model.create_soma(
                 breed="lif_soma",
                 config_name="config_0",
+                hyperparameters_overrides = {
+                    'C':      np.float64(np.random.uniform(5e-9, 15e-9)),
+                    'R':      np.float64(np.random.uniform(0.5e6, 2e6)),
+                    'vthr':   np.float64(np.random.uniform(-55, -35)),
+                    'tref':   np.float64(5e-3),
+                    'vrest':  np.float64(np.random.uniform(-65, -55)),
+                    'vreset': np.float64(np.random.uniform(-65, -55)),
+                    'tref_integration':1,
+                    'I_in': 0,
+                    'scaling_factor':1e-6,
+                },
+                default_internal_state_overrides={
+                    'v':-60,
+                    'tcount':0.0,
+                    'tlast':0.0
+                }
             )
             return Soma
         
@@ -166,6 +182,7 @@ class Conv2dtNet:
         for i in range(W):
             for j in range(H):
                 KernelSynapse=self.CreateSynapseSTDP(-1,Kernel[i][j])
+                #KernelSynapse=self.CreateSynapseNoSTDP(-1,Kernel[i][j],10)
                 KernelSynapses[i][j] = KernelSynapse
        
         if layer_idx not in self.ConvLayers:
@@ -178,7 +195,7 @@ class Conv2dtNet:
                     if neuron_index_i == neuron_index_j:
                         continue
                     else:
-                        self.CreateSynapseNoSTDP(Layer_Tensor[neuron_index_i], Layer_Tensor[neuron_index_j], -20)
+                        self.CreateSynapseNoSTDP(Layer_Tensor[neuron_index_i], Layer_Tensor[neuron_index_j], -30)
 
     
     def Output_Channel_Construction(self, Layer_idx, Output_Layer_Size, Input_W, Input_H):
@@ -198,6 +215,8 @@ class Conv2dtNet:
                         if Counter>= Output:
                             break
                         self.CreateSynapseSTDP(kernel[1][kernel_i][kernel_j], output_neuron)
+                        #self.CreateSynapseNoSTDP(kernel[1][kernel_i][kernel_j], output_neuron,10)
+
                         Counter+=1
         self.Lateral_Inhibition(self.Output_Channel[Layer_idx])
 
@@ -209,6 +228,7 @@ class Conv2dtNet:
         input_synapses=[]
         for post_soma in InputLayer:
             synapse=self.CreateSynapseSTDP(-1, post_soma)
+            #synapse=self.CreateSynapseNoSTDP(-1,post_soma,10)
             input_synapses.append(synapse)
         InputToHidden,InputToHidden_Dict=self.FullyConnected(InputLayer,HiddenLayer)
         HiddenToOutput, HiddenToOutput_Dict=self.FullyConnected(HiddenLayer,OutputLayer)
@@ -224,6 +244,7 @@ class Conv2dtNet:
         for pre_soma in InputLayer:
             for post_soma in OutputLayer:
                 synapse = self.CreateSynapseSTDP(pre_soma, post_soma)
+                #synapse=self.CreateSynapseNoSTDP(pre_soma,post_soma,10)
                 synapses.append(synapse)
                 synapse_dict[post_soma].append(synapse)
 
@@ -287,9 +308,7 @@ class Conv2dtNet:
                         else:
                             SynapseDict[Kernel[ki][kj]]=[[time_step, CurrentSpikeSet[(x, y)]]]
                             #G
-                    
-        return SynapseDict     
-
+        
     def invert_dict(self, input_dict, W, H) :
         inverted = defaultdict(dict)
         
@@ -308,7 +327,6 @@ class Conv2dtNet:
             Spike_Times[i] = self.model.get_spike_times(
                 soma_id=self.Output_Channel[Layer_idx][i]
             )
-
         sorted_neurons = sorted(Spike_Times.items(), key=lambda x: len(x[1]), reverse=True)
 
         Spike_Matrix = np.empty((int(self.Output_Channel_Dim[Layer_idx][0]), int(self.Output_Channel_Dim[Layer_idx][1])), dtype=object)
@@ -326,7 +344,6 @@ class Conv2dtNet:
                     Spike_Times[Coor]=self.model.get_spike_times(soma_id=Spike_Matrix[index_i][index_j])
         Spike_Times=self.invert_dict(Spike_Times, len(Spike_Matrix), len(Spike_Matrix[0]))
 
-        self.model.reset()
 
         return Spike_Times
 
@@ -371,7 +388,9 @@ class Conv2dtNet:
 
 
     def Full_Convolution_And_Extraction(self, Layer_idx, SpikeData,Total_Sim_Time):
+        start=clocktime.time()
         Synpase_Dict={}
+        print(self.Output_Channel_Dim[Layer_idx])
         print('Adding Spikes per kernel')
         for kernel_array_index in range(len(self.ConvLayers[Layer_idx])):
             # Precompute kernel offsets ONCE
@@ -379,7 +398,7 @@ class Conv2dtNet:
             for time_step in SpikeData:
                 current_spikes = SpikeData[time_step]
                 for spike in current_spikes:
-                    Synpase_Dict=self.Convolve_Spike(
+                    self.Convolve_Spike(
                          Synpase_Dict,
                          spike,
                          self.ConvLayers[Layer_idx][kernel_array_index][0],
@@ -387,12 +406,15 @@ class Conv2dtNet:
                          current_spikes,
                          time_step,
                     )
-        print('Convolved')
+
         for key in Synpase_Dict:
             self.model.add_spike_list(key,Synpase_Dict[key])
         print('start sim')
         Spike_Times=self.process_spikes_spiral(Layer_idx, Total_Sim_Time)
         print('end sim')
+        self.model.reset()
+        end=clocktime.time()
+        print(end-start)
         return Spike_Times
     
 
@@ -492,9 +514,10 @@ if __name__ == "__main__":
 
     # --- Define convolutional architecture ---
     Conv_Kernel_List = [
-        [(22, 22)],
+        [(6,6)],
+        [(5,5)],
         [(3,3)]
-    ]
+        ]
 
     # --- Build network ---
     Model.NetworkConstruction(
@@ -522,5 +545,5 @@ if __name__ == "__main__":
     dataset_path = os.path.join(digit_path, bin_file)
 
     print(f"Running example → Digit {first_digit} | File: {bin_file}")
-    predicted_class = Model.ForwardPass(dataset_path, Total_Sim_Time=5)
+    predicted_class = Model.ForwardPass(dataset_path, Total_Sim_Time=3)
     print(f"Predicted class: {predicted_class} (True: {first_digit})")
