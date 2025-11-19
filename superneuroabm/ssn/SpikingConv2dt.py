@@ -85,7 +85,7 @@ class Conv2dtNet:
         else:
             o_norm = offset / (8 * layer)
 
-        return int(40*(r_norm + o_norm) / 2.0)
+        return int(20*(r_norm + o_norm) / 2.0)
     def _spiral_offset(self, dx, dy, layer):
         # layer == max(|dx|, |dy|)
         L = int(layer)
@@ -160,7 +160,7 @@ class Conv2dtNet:
             post_soma_id=post_soma,
             config_name="exp_pair_wise_stdp_config_0",
             hyperparameters_overrides={
-                "weight": np.random.uniform(10,30),
+                "weight": np.random.uniform(-5,20),
                 "synaptic_delay": 1.0,
                 "scale": 1.0,
                 "tau_fall": 1e-2,
@@ -171,10 +171,10 @@ class Conv2dtNet:
             },
             learning_hyperparameters_overrides={
                 "stdp_type": 0.0,
-                "tau_pre_stdp": 20-3,
-                "tau_post_stdp": 33e-3,
-                "a_exp_pre": 0.01,
-                "a_exp_post": 0.0065,
+                "tau_pre_stdp": 10e-3,
+                "tau_post_stdp": 10e-3,
+                "a_exp_pre": 0.1,
+                "a_exp_post": 0.065,
                 "stdp_history_length": 100,
             },
             default_internal_learning_state_overrides={
@@ -221,7 +221,7 @@ class Conv2dtNet:
                 self.CreateSynapseNoSTDP(
                     Layer_Tensor[i],
                     Layer_Tensor[j],
-                    -10
+                    -15
                 )
         
     def Output_Channel_Construction(self, Layer_idx, Output_Layer_Size, Input_W, Input_H, p=0.2):
@@ -639,6 +639,46 @@ class Conv2dtNet:
         plt.savefig(save_path, dpi=250, bbox_inches="tight")
         plt.close()
         print(f"Saved figure with shared color scale: {save_path}")
+    def print_ff_weights_as_matrix(self, neuron_index=0):
+        syn_dict = self.FF[2]  # {out_soma : [synapse_ids]}
+        out_somas = list(syn_dict.keys())
+
+        if neuron_index >= len(out_somas):
+            print(f"Invalid neuron index {neuron_index}")
+            return
+
+        soma_id = out_somas[neuron_index]
+        syn_list = syn_dict[soma_id]
+
+        # Get final-layer dims
+        last_layer = max(self.Output_Channel_Dim.keys())
+        W, H = self.Output_Channel_Dim[last_layer]
+
+        expected = W * H
+        actual = len(syn_list)
+
+        if actual != expected:
+            print(f"Warning: expected {expected} weights but found {actual}")
+
+        # Fetch all weights
+        weights = []
+        for syn in syn_list:
+            hyper = self.model.get_agent_property_value(
+                id=syn,
+                property_name="hyperparameters"
+            )
+            w = hyper[0]  # STDP weight
+            weights.append(w)
+
+        # Reshape into matrix
+        weight_matrix = np.array(weights).reshape(2*H, W)
+
+        print(f"\n=== Weights for FF Output Neuron {neuron_index} ===")
+        print(weight_matrix)
+        print("===============================================\n")
+
+        return weight_matrix
+
 if __name__ == "__main__":
     # --- Initialize model ---
     Model = Conv2dtNet()
@@ -648,11 +688,10 @@ if __name__ == "__main__":
     # --- Define convolutional architecture ---
     Conv_Kernel_List = [
         [(3,3,2)],
-        [(3,3,1)],
-        [(3,3,1)],
-
-
-                ]
+        [(5,5,1)],
+        [(4,4,1)],
+        [(3,3,1)]
+    ]
 
     # --- Build network ---
     Model.NetworkConstruction(
@@ -665,20 +704,34 @@ if __name__ == "__main__":
     print("Number of somas:", len(Model.model._soma_ids))
     print("Number of synapses:", len(Model.model._synapse_ids))
     print("Total agents:", len(Model.model._soma_ids) + len(Model.model._synapse_ids))
-    # --- Run one NMNIST example ---
-    # get NMNIST test data
-    # test_dataset = tonic.datasets.NMNIST(save_to="./superneuroabm/ssn/data/", train=False)
+
+    # --- Run one example per class ---
     root = "./data/NMNIST/Test"
     assert os.path.isdir(root), f"NMNIST Test directory not found: {root}"
 
-    # Pick first available digit and file
-    first_digit = sorted(os.listdir(root))[0]
-    digit_path = os.path.join(root, first_digit)
-    bin_files = [f for f in os.listdir(digit_path) if f.endswith(".bin")]
-    assert bin_files, f"No .bin files found in {digit_path}"
-    bin_file = bin_files[0]
-    dataset_path = os.path.join(digit_path, bin_file)
+    digit_dirs = sorted(os.listdir(root))
+    print("\n=== Running one example per class ===")
 
-    print(f"Running example → Digit {first_digit} | File: {bin_file}")
-    predicted_class = Model.ForwardPass(dataset_path, Total_Sim_Time=50)
-    print(f"Predicted class: {predicted_class} (True: {first_digit})")
+    results = {}
+
+    for idx, digit in enumerate(digit_dirs):
+        digit_path = os.path.join(root, digit)
+        bin_files = [f for f in os.listdir(digit_path) if f.endswith(".bin")]
+        assert bin_files, f"No .bin files found in {digit_path}"
+
+        # pick the first file for this digit
+        bin_file = bin_files[0]
+        dataset_path = os.path.join(digit_path, bin_file)
+
+        print(f"\n--- Forward pass {idx} | Digit {digit} | File: {bin_file} ---")
+
+        predicted_class = Model.ForwardPass(dataset_path, Total_Sim_Time=50)
+        results[digit] = predicted_class
+
+        Model.print_ff_weights_as_matrix(neuron_index=0)
+
+        Model.model.reset()
+
+    print("\n=== Summary of Predictions ===")
+    for digit, pred in results.items():
+        print(f"Digit {digit} → Predicted {pred}")
