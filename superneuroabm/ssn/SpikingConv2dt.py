@@ -1,4 +1,5 @@
 import os
+import json
 import numpy as np
 from superneuroabm.model import NeuromorphicModel
 import sagesim
@@ -202,7 +203,7 @@ class Conv2dtNet:
             self.ConvLayers[layer_idx] = []
         self.ConvLayers[layer_idx].append([KernelSynapses, Kernel, Stride])
     
-    def Lateral_Inhibition(self, Layer_Tensor, p=0.4):
+    def Lateral_Inhibition(self, Layer_Tensor, p=0.7):
         N = len(Layer_Tensor)
 
         for i in range(N):
@@ -224,7 +225,7 @@ class Conv2dtNet:
                     -15
                 )
         
-    def Output_Channel_Construction(self, Layer_idx, Output_Layer_Size, Input_W, Input_H, p=0.2):
+    def Output_Channel_Construction(self, Layer_idx, Output_Layer_Size, Input_W, Input_H):
         # 1. Create output channel neurons
         Output_Channel = np.empty(int(Output_Layer_Size), dtype=object)
         for i in range(int(Output_Layer_Size)):
@@ -232,6 +233,7 @@ class Conv2dtNet:
 
         self.Output_Channel[Layer_idx] = Output_Channel
 
+        # 2. For each kernel in this layer
         # 2. For each kernel in this layer
         for kernel in self.ConvLayers[Layer_idx]:
 
@@ -242,7 +244,7 @@ class Conv2dtNet:
             # Compute how many rastered positions exist (standard conv output size)
             Output_H = (Input_H - kernel_height) // stride + 1
             Output_W = (Input_W - kernel_width) // stride + 1
-            Output = Output_H * Output_W
+            Output = Output_H * Output_W    # number of connections this kernel needs
 
             kernel_somas = kernel[1]
             flat_kernel_somas = [
@@ -251,9 +253,18 @@ class Conv2dtNet:
                 for j in range(kernel_width)
             ]
 
-            for out_idx in range(Output):
+            # ---- NEW: randomly choose Output neurons from the full Output_Channel ----
+            target_indices = np.random.choice(
+                len(Output_Channel),  # full output layer size (largest raster)
+                size=Output,          # number this kernel should connect to
+                replace=False
+            )
+
+            # Connect kernel to these selected neurons
+            for out_idx in target_indices:
                 for k_soma in flat_kernel_somas:
                     self.CreateSynapseSTDP(k_soma, Output_Channel[out_idx])
+
         self.Lateral_Inhibition(self.Output_Channel[Layer_idx])
 
 
@@ -478,8 +489,6 @@ class Conv2dtNet:
 
 
     def Full_Convolution_And_Extraction(self, Layer_idx, SpikeData,Total_Sim_Time):
-        print('SPIKE DATA')
-        print(SpikeData)
         print(self.Output_Channel_Dim[Layer_idx])
         start=clocktime.time()
         Synpase_Dict={}
@@ -583,125 +592,241 @@ class Conv2dtNet:
 
         return max_index
 
-    def plot_all_passes_weight_maps(self, weight_matrices, save_path="all_forward_passes.png"):
-        num_passes = len(weight_matrices)
+    def plot_all_output_neurons_single(self, save_path):
+        matrices = self.get_all_ff_weight_matrices()
 
-        # global color scale
-        vmin = min(np.nanmin(W) for W in weight_matrices)
-        vmax = max(np.nanmax(W) for W in weight_matrices)
+        num_neurons = len(matrices)
+        cols = 5  # adjust if needed
+        rows = math.ceil(num_neurons / cols)
 
-        fig, axs = plt.subplots(
-            nrows=1,
-            ncols=num_passes,
-            figsize=(4 * num_passes, 4)
-        )
+        # Create figure
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3))
 
-        if num_passes == 1:
-            axs = [axs]
+        # In case rows*cols > num_neurons, flatten indices
+        axes = axes.flatten()
 
-        for i, (ax, W) in enumerate(zip(axs, weight_matrices)):
-            im = ax.imshow(W, vmin=vmin, vmax=vmax, cmap="viridis")
-            ax.set_title(f"Pass {i}")
+        # Fixed color scale for all plots
+        vmin, vmax = -10, 30
+
+        for idx, (neuron_idx, W) in enumerate(matrices.items()):
+            ax = axes[idx]
+            im = ax.imshow(W, cmap="viridis", vmin=vmin, vmax=vmax)
+            ax.set_title(f"Neuron {neuron_idx}")
             ax.set_xticks([])
             ax.set_yticks([])
 
-        # shared colorbar
-        fig.colorbar(im, ax=axs, fraction=0.025, pad=0.04)
+        # Hide any unused subplots
+        for k in range(len(matrices), len(axes)):
+            axes[k].axis('off')
+
+        # Add one shared colorbar
+        cbar = fig.colorbar(im, ax=axes.tolist(), shrink=0.6)
+        cbar.set_label("Synaptic Weight", rotation=270, labelpad=15)
 
         plt.tight_layout()
         plt.savefig(save_path, dpi=300)
         plt.close()
-        print(f"Saved combined plot: {save_path}")
 
-    def get_ff_weight_matrix(self, neuron_index=0):
-        syn_dict = self.FF[2]  # {output_soma: [syn_id]}
+        print(f"Saved combined FF output neuron plot: {save_path}")
+
+    def get_all_ff_weight_matrices(self):
+
+        syn_dict = self.FF[2]  # {output_soma: [syn_ids]}
         out_somas = list(syn_dict.keys())
 
-        if neuron_index >= len(out_somas):
-            raise ValueError(f"Invalid neuron index {neuron_index}")
-
-        soma_id = out_somas[neuron_index]
-        syn_list = syn_dict[soma_id]
-
-        # Final-layer dims
+        # dims of final conv layer (used to reshape weight vector)
         last_layer = max(self.Output_Channel_Dim.keys())
         W, H = self.Output_Channel_Dim[last_layer]
 
-        # Fetch weights
-        weights = []
-        for syn in syn_list:
-            hyper = self.model.get_agent_property_value(id=syn, property_name="hyperparameters")
-            weights.append(hyper[0])
+        matrices = {}
 
-        # Reshape into matrix
-        return np.array(weights).reshape(2 * H, W)
+        for idx, soma_id in enumerate(out_somas):
+            syn_list = syn_dict[soma_id]
+
+            weights = []
+            for syn in syn_list:
+                hyper = self.model.get_agent_property_value(
+                    id=syn, property_name="hyperparameters"
+                )
+                weights.append(hyper[0])  # weight is hyperparameters[0]
+
+            # reshape into matrix
+            matrices[idx] = np.array(weights).reshape(2 * H, W)
+
+        return matrices
+
+
+
+    def extract_full_network(self, save_path):
+
+        # Helper to convert numpy values → JSON-safe Python types
+        def to_py(obj):
+            if isinstance(obj, np.ndarray):
+                return [to_py(x) for x in obj]
+
+            if isinstance(obj, (np.float32, np.float64, float)):
+                return float(obj)
+
+            if isinstance(obj, (np.int32, np.int64, int)):
+                return int(obj)
+
+            if isinstance(obj, set):
+                return [to_py(x) for x in obj]
+
+            if isinstance(obj, (list, tuple)):
+                return [to_py(x) for x in obj]
+
+            return obj
+
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+        structure = {}
+
+        # ---- Somas ----
+        soma_data = []
+        for soma in self.model._soma_ids:
+
+            hyper = self.model.get_agent_property_value(
+                id=soma, property_name="hyperparameters"
+            )
+            internal = self.model.get_agent_property_value(
+                id=soma, property_name="internal_state"
+            )
+
+            soma_data.append({
+                "soma_id": int(soma),
+                "hyperparameters": to_py(hyper),
+                "internal_state": to_py(internal),
+                "incoming_synapses": to_py(self.model.soma2synapse_map[soma]["pre"]),
+                "outgoing_synapses": to_py(self.model.soma2synapse_map[soma]["post"])
+            })
+
+        structure["somas"] = soma_data
+
+        # ---- Synapses ----
+        syn_data = []
+        for syn in self.model._synapse_ids:
+
+            conn = self.model.get_synapse_connectivity(syn)
+            pre = int(conn[0])
+            post = int(conn[1])
+
+            hyper = self.model.get_agent_property_value(
+                id=syn, property_name="hyperparameters"
+            )
+            lhyper = self.model.get_agent_property_value(
+                id=syn, property_name="learning_hyperparameters"
+            )
+            internal = self.model.get_agent_property_value(
+                id=syn, property_name="internal_state"
+            )
+            lint = self.model.get_agent_property_value(
+                id=syn, property_name="internal_learning_state"
+            )
+
+            syn_data.append({
+                "synapse_id": int(syn),
+                "pre": pre,
+                "post": post,
+                "hyperparameters": to_py(hyper),
+                "learning_hyperparameters": to_py(lhyper),
+                "internal_state": to_py(internal),
+                "internal_learning_state": to_py(lint)
+            })
+
+        structure["synapses"] = syn_data
+
+        # ---- Write JSON ----
+        with open(save_path, "w") as outfile:
+            json.dump(structure, outfile, indent=2)
+
+        return structure
 
 
 if __name__ == "__main__":
-    # --- Initialize model ---
+    # -------------------------
+    #  Initialize model
+    # -------------------------
     Model = Conv2dtNet()
     Model.model.setup(use_gpu=True)
     print("GPU setup complete")
 
-    # --- Define convolutional architecture ---
+    # -------------------------
+    #  Build convolutional network
+    # -------------------------
     Conv_Kernel_List = [
-        [(3,3,2)],
-        [(5,5,1)],
-        [(4,4,1)],
-        [(3,3,1)]
+        [(3, 3, 2)],
+        [(5, 5, 1)],
+        [(4, 4, 1)],
+        [(3, 3, 1)]
     ]
 
-    # --- Build network ---
     Model.NetworkConstruction(
         Conv_Kernel_List=Conv_Kernel_List,
         output_classes=10,
         Input_W=28,
         Input_H=28,
     )
+
     print("Network constructed")
     print("Number of somas:", len(Model.model._soma_ids))
     print("Number of synapses:", len(Model.model._synapse_ids))
     print("Total agents:", len(Model.model._soma_ids) + len(Model.model._synapse_ids))
 
-    # --- Run one example per class ---
+    # -------------------------
+    #  Data folder (NMNIST)
+    # -------------------------
     root = "./data/NMNIST/Test"
     assert os.path.isdir(root), f"NMNIST Test directory not found: {root}"
 
     digit_dirs = sorted(os.listdir(root))
-    print("\n=== Running one example per class ===")
 
+    # -------------------------
+    #  Run only 2 examples
+    # -------------------------
     results = {}
-    all_weight_matrices = []   # <-- store matrices for each forward pass
-    counter=0
-    for idx, digit in enumerate(digit_dirs):
+    NUM_RUNS = 3
+
+    for run_idx in range(NUM_RUNS):
+        digit = digit_dirs[run_idx]
         digit_path = os.path.join(root, digit)
+
         bin_files = [f for f in os.listdir(digit_path) if f.endswith(".bin")]
         assert bin_files, f"No .bin files found in {digit_path}"
 
-        # pick the first file for this digit
         bin_file = bin_files[0]
         dataset_path = os.path.join(digit_path, bin_file)
 
-        print(f"\n--- Forward pass {idx} | Digit {digit} | File: {bin_file} ---")
+        print(f"\n=== RUN {run_idx} | Digit {digit} | File {bin_file} ===")
 
-        predicted_class = Model.ForwardPass(dataset_path, Total_Sim_Time=100)
-        results[digit] = predicted_class
+        pred = Model.ForwardPass(dataset_path, Total_Sim_Time=100)
+        results[f"run_{run_idx}"] = {
+            "digit": digit,
+            "predicted": pred
+        }
 
-        # grab weight matrix instead of printing
-        W = Model.get_ff_weight_matrix(neuron_index=0)
-        all_weight_matrices.append(W)
+        # -------------------------
+        #  Save FF weight plot (single image)
+        # -------------------------
+        plot_path = f"./ff_plots_run_{run_idx}.png"
+        Model.plot_all_output_neurons_single(plot_path)
+        print(f"Saved FF weight plot (single image) for run {run_idx} → {plot_path}")
 
+        matricies=Model.get_all_ff_weight_matrices()
+        print(matricies)
+        # -------------------------
+        #  Save full network structure
+        # -------------------------
+        json_path = f"./network_run_{run_idx}.json"
+        Model.extract_full_network(json_path)
+        print(f"Saved full network JSON for run {run_idx} to {json_path}")
+
+        # Reset SNN before next run
         Model.model.reset()
-        counter+=1
-        if counter==5:
-            break
 
-    print("\n=== Summary of Predictions ===")
-    for digit, pred in results.items():
-        print(f"Digit {digit} → Predicted {pred}")
-
-    # --- Plot weight matrices side-by-side ---
-    Model.plot_all_passes_weight_maps(
-        all_weight_matrices,
-        save_path="all_forward_passes.png"
-    )
+    # -------------------------
+    #  Print summary
+    # -------------------------
+    print("\n=== FINAL SUMMARY ===")
+    for run_id, info in results.items():
+        print(f"{run_id}: Digit {info['digit']} → Predicted {info['predicted']}")
