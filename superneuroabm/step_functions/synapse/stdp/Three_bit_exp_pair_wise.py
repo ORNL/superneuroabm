@@ -50,7 +50,7 @@ def exp_pair_wise_stdp_quantized(
 
     # Get pre and post soma IDs from connectivity (contains agent IDs, not converted by SAGESim)
     pre_soma_index = locations[agent_index][0]
-    # post_soma_index = locations[agent_index][1]
+    post_soma_index = locations[agent_index][1]
 
     # Get the pre-soma spike
     pre_soma_spike = get_soma_spike(
@@ -69,7 +69,7 @@ def exp_pair_wise_stdp_quantized(
         agent_index,
         globals,
         agent_ids,
-        post_soma_id,
+        post_soma_index,
         t_current,
         input_spikes_tensor,
         output_spikes_tensor,
@@ -82,12 +82,16 @@ def exp_pair_wise_stdp_quantized(
     weight += dW  # Update the weight
 
     # === 3-bit quantization ===
-    wmin = 0#learning_params[agent_index][6]  # assuming stored in learning_params
-    wmax = 14#learning_params[agent_index][7]
+    wmin = 0.0 #learning_params[agent_index][6]  # assuming stored in learning_params
+    wmax = 14.0 #learning_params[agent_index][7]
     num_levels = 8  # 3 bits -> 8 quantization levels#learning_params[agent_index][8]
     delta = (wmax - wmin) / (num_levels - 1)
-    weight = cp.clip(weight, wmin, wmax)
-    quantized_weight = cp.round((weight - wmin) / delta) * delta + wmin
+    # weight = cp.clip(weight, wmin, wmax)
+    weight = weight if weight <= wmax else wmax
+    weight = weight if weight >= wmin else wmin
+    # quantized_weight = cp.round((weight - wmin) / delta) * delta + wmin
+    quantized_weight = cp.rint((weight - wmin) / delta) * delta + wmin
+    # quantized_weight = int((weight - wmin) / delta + 0.5) * delta + wmin
     weight = quantized_weight
     # ==========================
 
