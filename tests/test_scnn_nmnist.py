@@ -1,170 +1,112 @@
-from superneuroabm.ssn.SpikingConv2dt import Conv2dtNet
-import pandas as pd
-import unittest
 import os
+import unittest
+import argparse
 import numpy as np
-import math
-import matplotlib.pyplot as plt
+from superneuroabm.ssn.SpikingConv2dt import Conv2dtNet
 
-class TestMNIST(unittest.TestCase):
+
+# -------------------- Command-line arguments --------------------
+parser = argparse.ArgumentParser(description="Conv2dtNet Output Layer Weight Tests")
+parser.add_argument("--data_path", required=True, help="Path to NMNIST Train directory")
+parser.add_argument("--output_path", required=True, help="Directory to save output plots")
+args, remaining_argv = parser.parse_known_args()
+
+# Make unittest ignore our custom CLI args
+import sys
+sys.argv = [sys.argv[0]] + remaining_argv
+
+
+class TestOutputLayerWeights(unittest.TestCase):
     """
-    Tests the model.reset() method's retain_parameters functionality with STDP learning.
-
-    This test suite verifies that:
-    - STDP learning actually changes synapse weights during simulation
-    - When retain_parameters=True, learned weights are preserved after reset
-    - When retain_parameters=False, weights are reset to their default values
+    Integration-style test that:
+    - builds a Conv2dtNet
+    - runs 100 forward passes per digit
+    - collects FF weights
+    - saves plot every 25 passes
     """
 
     def setUp(self):
-        """Set up a fresh model for each test."""
         self.ConvNet = Conv2dtNet()
         self.ConvNet.model.setup(use_gpu=True)
+        print("GPU setup complete")
 
-        # fixed kernel list (removed the double assignment typo)
-        self.Conv_Kernel_List = [
-            [(3, 3), (2, 3), (4, 4), (4, 4), (3, 4), (4, 3)],
-            [(3, 3), (2, 3), (3, 2), (3, 3)],
-            [(3, 3), (2, 3), (3, 2), (4, 4)],
-            [(3, 3), (2, 3), (3, 2), (4, 4)],
-            [(3, 3), (2, 3), (3, 2), (4, 4)]
+        Conv_Kernel_List = [
+            [(3, 3, 2)],
+            [(5, 5, 1)],
+            [(4, 4, 1)],
+            [(3, 3, 1)],
         ]
 
-        self.ConvNet.ConstructionOfConvKernel(self.Conv_Kernel_List, 10)
+        self.ConvNet.NetworkConstruction(
+            Conv_Kernel_List=Conv_Kernel_List,
+            output_classes=10,
+            Input_W=28,
+            Input_H=28,
+        )
 
-    def log_kernel_weights(self, forward_pass_id=None):
-        """Logs every learned synapse weight from each kernel in each layer into a pandas DataFrame."""
-        rows = []
-        for layer_idx, kernels in self.ConvNet.kernel_vals.items():  # layer → list of kernels
-            for kernel_idx, (_, kernel_matrix) in enumerate(kernels):
-                W, H = kernel_matrix.shape
-                for i in range(W):
-                    for j in range(H):
-                        synapse = kernel_matrix[i][j]
-                        hyper = self.ConvNet.model.get_agent_property_value(
-                            id=synapse,
-                            property_name="hyperparameters"
-                        )
-                        learned_weight = hyper[0]
-                        rows.append({
-                            "forward_pass": forward_pass_id,
-                            "layer": layer_idx,
-                            "kernel": kernel_idx,
-                            "i": i,
-                            "j": j,
-                            "weight": learned_weight
-                        })
-        return pd.DataFrame(rows)
+        print("Network constructed")
+        print("Number of somas:", len(self.ConvNet.model._soma_ids))
+        print("Number of synapses:", len(self.ConvNet.model._synapse_ids))
 
-    def NMNIST(self, max_total_samples=1000, do_plot=True, passes_per_plot=25):
-        """Run up to `max_total_samples` samples from NMNIST and plot every 25 forward passes."""
-        root = "./superneuroabm/ssn/data/NMNIST/Train"
-        assert os.path.isdir(root), f"NMNIST root not found: {root}"
+    def test_output_layer_weight_maps(self):
+        root = args.data_path
+        self.assertTrue(os.path.isdir(root), f"NMNIST directory not found: {root}")
 
-        save_dir = "./ff_weight_maps"
-        os.makedirs(save_dir, exist_ok=True)
+        output_dir = args.output_path
+        os.makedirs(output_dir, exist_ok=True)
 
-        self.weight_history = pd.DataFrame()
-        results = []
-        pass_idx = 0
-        processed = 0
-        weight_snapshots = []
+        digit_dirs = sorted(os.listdir(root))
 
-        # --- Load all digit subfolders (0–9) ---
-        for digit in sorted(os.listdir(root)):
+        Total_Sim_Time = 100
+        passes_per_digit = 100
+        save_every = 25
+
+        print("\n=== Running 100 forward passes per digit ===")
+
+        for digit in digit_dirs:
             digit_path = os.path.join(root, digit)
             if not os.path.isdir(digit_path):
                 continue
 
-            bin_files = sorted([f for f in os.listdir(digit_path) if f.endswith(".bin")])[:5]
-            for bin_file in bin_files:
-                dataset_path = os.path.join(digit_path, bin_file)
-                print(f"[Forward pass {pass_idx}] → {dataset_path}")
+            bin_files = [f for f in os.listdir(digit_path) if f.endswith(".bin")]
+            if not bin_files:
+                continue
 
-                predicted_class = self.ConvNet.ForwardPass(dataset_path, 100)
+            dataset_path = os.path.join(digit_path, bin_files[0])
+            print(f"\n--- Digit {digit} | Using example file: {bin_files[0]} ---")
+
+            for p in range(1, passes_per_digit + 1):
+                print(f"Digit {digit} → Pass {p}/100")
+
+                _ = self.ConvNet.ForwardPass(
+                    dataset_path,
+                    Total_Sim_Time=Total_Sim_Time,
+                )
+
+                # ---- Every 25 passes: save full output layer maps + network JSON ----
+                if p % save_every == 0:
+
+                    # -------- Create subdirectories --------
+                    plots_dir = os.path.join(output_dir, "plots")
+                    json_dir = os.path.join(output_dir, "json")
+                    os.makedirs(plots_dir, exist_ok=True)
+                    os.makedirs(json_dir, exist_ok=True)
+
+                    # -------- Save full FF weight map (using existing function) --------
+                    plot_path = os.path.join(
+                        plots_dir, f"digit_{digit}_pass_{p}.png"
+                    )
+                    self.ConvNet.plot_all_output_neurons_single(plot_path)
+                    print(f"Saved plot: {plot_path}")
+
+                    # -------- Save full network JSON snapshot (using existing function) --------
+                    json_path = os.path.join(
+                        json_dir, f"digit_{digit}_pass_{p}.json"
+                    )
+                    self.ConvNet.extract_full_network(json_path)
+                    print(f"Saved JSON: {json_path}")
+
+                # ---- Reset neuron internal states but keep learned weights ----
                 self.ConvNet.model.reset()
 
-                results.append({
-                    "true_class": int(digit),
-                    "predicted_class": predicted_class,
-                    "file_path": dataset_path
-                })
-
-                # --- Log kernel weights for this pass ---
-                dfw = self.log_kernel_weights(forward_pass_id=pass_idx)
-                self.weight_history = pd.concat([self.weight_history, dfw], ignore_index=True)
-
-                # --- Collect snapshot for comparison plotting ---
-                snapshot = {}
-                for out_soma, syn_list in self.ConvNet.FF[2].items():
-                    weights = []
-                    for syn in syn_list:
-                        hyper = self.ConvNet.model.get_agent_property_value(
-                            id=syn, property_name="hyperparameters"
-                        )
-                        weights.append(hyper[0])
-                    snapshot[out_soma] = weights
-                weight_snapshots.append(snapshot)
-
-                pass_idx += 1
-                processed += 1
-
-                # --- Every N passes: generate visual comparison ---
-                if do_plot and pass_idx % passes_per_plot == 0:
-                    print(f"Generating weight map comparison at pass {pass_idx}")
-
-                    num_classes = len(self.ConvNet.FF[2])
-                    num_passes = len(weight_snapshots)
-                    all_w = [w for snap in weight_snapshots for ws in snap.values() for w in ws]
-                    vmin, vmax = np.min(all_w), np.max(all_w)
-
-                    fig_height = max(6, 1.5 * num_classes)
-                    fig_width = max(8, 2.5 * num_passes)
-                    fig, axs = plt.subplots(num_classes, num_passes, figsize=(fig_width, fig_height))
-
-                    if num_classes == 1:
-                        axs = np.expand_dims(axs, axis=0)
-                    if num_passes == 1:
-                        axs = np.expand_dims(axs, axis=1)
-
-                    for i, (out_soma, _) in enumerate(self.ConvNet.FF[2].items()):
-                        for j, snapshot in enumerate(weight_snapshots):
-                            weights = np.array(snapshot[out_soma])
-                            n_cols = math.ceil(math.sqrt(len(weights)))
-                            n_rows = math.ceil(len(weights) / n_cols)
-                            padded = np.full(n_rows * n_cols, np.nan)
-                            padded[:len(weights)] = weights
-                            grid = padded.reshape(n_rows, n_cols)
-
-                            ax = axs[i, j]
-                            im = ax.imshow(grid, vmin=vmin, vmax=vmax, cmap="viridis")
-                            if i == 0:
-                                ax.set_title(f"Pass {j + 1}")
-                            if j == 0:
-                                ax.set_ylabel(f"Neuron {i}")
-                            ax.set_xticks([])
-                            ax.set_yticks([])
-
-                    # single colorbar on right
-                    cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
-                    fig.colorbar(im, cax=cbar_ax)
-
-                    plt.suptitle(f"Output Layer Weights Evolution (up to pass {pass_idx})", fontsize=14)
-                    plt.tight_layout(rect=[0, 0, 0.9, 0.95])
-                    save_path = os.path.join(save_dir, f"output_layer_comparison_pass_{pass_idx}.png")
-                    plt.savefig(save_path, dpi=250, bbox_inches="tight")
-                    plt.close()
-                    print(f"Saved comparison figure: {save_path}")
-
-                # --- Stop after total limit ---
-                if processed >= max_total_samples:
-                    print(f"Reached {max_total_samples} total samples.")
-                    return pd.DataFrame(results)
-
-        print(f"Completed {processed} total samples.")
-        return pd.DataFrame(results)
-
-    def test_NMNIST(self):
-        """Run the full NMNIST test."""
-        df = self.NMNIST(max_total_samples=1000, do_plot=True, passes_per_plot=25)
-        print(df.head())
+        print("\n=== Completed all digits ===")
