@@ -64,6 +64,12 @@ def generate_metis_partition(graph: nx.DiGraph, num_workers: int) -> Dict[int, i
     print(f"[SuperNeuroABM] Running METIS partition with {num_workers} partitions...")
     _, partition_array = metis.part_graph(adjacency, nparts=num_workers, recursive=True)
 
+    # Normalize partition indices to start from 0
+    # METIS may return partitions starting from 1 when nparts=1
+    unique_partitions = sorted(set(partition_array))
+    partition_remap = {old_id: new_id for new_id, old_id in enumerate(unique_partitions)}
+    partition_array = [partition_remap[p] for p in partition_array]
+
     # Convert to dict mapping original node -> rank
     partition_dict = {}
     for idx, rank in enumerate(partition_array):
