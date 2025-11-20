@@ -10,7 +10,7 @@ from superneuroabm.step_functions.synapse.util import get_soma_spike
 
 
 @jit.rawkernel(device="cuda")
-def exp_pair_wise_stdp(
+def exp_pair_wise_stdp_quantized(
     tick,
     agent_index,
     globals,
