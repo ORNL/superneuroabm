@@ -15,7 +15,6 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     agent_ids,
     breeds,
     locations,
-    connectivity,
     neuron_params,  # k, vth, C, a, b,
     learning_params,
     internal_state,  # v, u

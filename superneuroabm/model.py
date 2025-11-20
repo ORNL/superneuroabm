@@ -81,7 +81,7 @@ class NeuromorphicModel(Model):
             If False, disables tracking to reduce memory usage and improve
             performance. Default is True for backward compatibility.
         """
-        super().__init__(space=NetworkSpace())
+        super().__init__(space=NetworkSpace(ordered=True))
 
         self.enable_internal_state_tracking = enable_internal_state_tracking
 
@@ -89,7 +89,6 @@ class NeuromorphicModel(Model):
         self.register_global_property("I_bias", 0)  # No bias current
 
         soma_properties = {
-            "connectivity": [],  # placeholder for connectivity info
             "hyperparameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
             "learning_hyperparameters": [
                 0.0 for _ in range(5)
@@ -105,7 +104,6 @@ class NeuromorphicModel(Model):
             "internal_learning_states_buffer": [],  # learning states buffer
         }
         synapse_properties = {
-            "connectivity": [],  # hold pre and post soma ids, needed since locations is unordered
             "hyperparameters": [
                 0.0 for _ in range(10)
             ],  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
@@ -211,10 +209,15 @@ class NeuromorphicModel(Model):
         """
         Returns the connectivity of the synapse with the given ID.
         The connectivity is a list of length 2 containing pre and post soma IDs.
+
+        Note: This returns the ordered locations [pre_soma_id, post_soma_id].
+        These are agent IDs, not local indices.
         """
+
         return self.get_agent_property_value(
-            id=synapse_id, property_name="connectivity"
+            id=synapse_id, property_name="locations"
         )
+
 
     def get_agent_config_diff(self, agent_id: int) -> Dict[str, any]:
         """
@@ -550,32 +553,36 @@ class NeuromorphicModel(Model):
         self._synapse_ids.append(synapse_id)
 
         network_space: NetworkSpace = self.get_space()
-        if not np.isnan(float(pre_soma_id)):
+
+        # Connect synapse to somas using SAGESim's API
+        # With ordered=True, connections are maintained in insertion order
+        # So synapse's locations will be [pre_soma_id, post_soma_id] after we connect them
+
+        # IMPORTANT: Connect in order [pre, post] to maintain ordered locations
+        # First connection: pre_soma (if exists)
+        # -1 indicates external input
+        if pre_soma_id != -1:
             network_space.connect_agents(synapse_id, pre_soma_id, directed=True)
             self.soma2synapse_map[pre_soma_id]["post"].add(synapse_id)
             self.synapse2soma_map[synapse_id]["pre"] = pre_soma_id
         else:
-            self.synapse2soma_map[synapse_id]["pre"] = float("nan")  # External input
+            # For external input, manually add -1 to locations to maintain [pre, post] order
+            network_space.get_location(synapse_id).append(-1)
+            self.synapse2soma_map[synapse_id]["pre"] = -1  # External input
             tags.add("input_synapse")
-        if not np.isnan(float(post_soma_id)):
-            network_space.connect_agents(
-                synapse_id, post_soma_id, directed=True
-            )  # Necessary due to STDP
-            network_space.connect_agents(
-                post_soma_id, synapse_id, directed=True
-            )  # Necessary due to STDP
+
+
+        # Second connection: post_soma (if exists)
+        # -1 indicates external output
+        if post_soma_id != -1:
+            network_space.connect_agents(synapse_id, post_soma_id, directed=True)
+            network_space.connect_agents(post_soma_id, synapse_id, directed=True)  # Bidirectional for STDP
             self.synapse2soma_map[synapse_id]["post"] = post_soma_id
             self.soma2synapse_map[post_soma_id]["pre"].add(synapse_id)
         else:
-            self.synapse2soma_map[synapse_id]["post"] = float("nan")
-
-        # Locations is unordered so we need to store pre and post soma ids
-        # in an ordered manner using a property
-        self.set_agent_property_value(
-            id=synapse_id,
-            property_name="connectivity",
-            value=[pre_soma_id, post_soma_id],
-        )
+            self.synapse2soma_map[synapse_id]["post"] = -1
+            # For external output (rare), manually add -1
+            network_space.get_location(synapse_id).append(-1)
 
         self.agentid2config[synapse_id] = config_name
         tags.update({"synapse", breed})

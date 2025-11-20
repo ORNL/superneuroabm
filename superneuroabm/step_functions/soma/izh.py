@@ -3,6 +3,7 @@ Izhikevich Neuron and weighted synapse step functions for spiking neural network
 
 """
 
+import cupy as cp
 from cupyx import jit
 
 
@@ -14,7 +15,6 @@ def izh_soma_step_func(
     agent_ids,
     breeds,
     locations,
-    connectivity,
     neuron_params,  # k, vth, C, a, b,
     learning_params,
     internal_state,  # v, u

@@ -41,7 +41,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         # Set to use CPU for base test (GPU variant in separate class)
         self._use_gpu = True
 
-        with open(COMPONENT_CONFIG_FPATH, "r") as f:
+        with open(COMPONENT_CONFIG_FPATH, "r", encoding="utf-8") as f:
             self._component_configurations = yaml.safe_load(f)
 
         # Define input spike patterns for synapses
@@ -53,7 +53,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         ]
         # Define simulation duration
         self._simulation_duration = 200  # Total simulation time in ticks
-        self._sync_every_n_ticks = 200  # Synchronization interval for updates
+        self._sync_every_n_ticks = 1  # Synchronization interval for updates
 
     def test_lif_soma_single_exp_synapse(self) -> None:
         """
@@ -101,7 +101,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         # Create synapse_3: external input -> soma_1 (no spikes to this one)
         synapse_1 = self._model.create_synapse(
             breed="single_exp_synapse",
-            pre_soma_id=np.nan,  # External input
+            pre_soma_id=-1,  # External input
             post_soma_id=soma_0,
             config_name="no_learning_config_0",
         )
@@ -109,7 +109,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         # Create synapse_4: external input -> soma_1 (spike to this one)
         synapse_2 = self._model.create_synapse(
             breed="single_exp_synapse",
-            pre_soma_id=np.nan,  # External input
+            pre_soma_id=-1,  # External input
             post_soma_id=soma_0,
             config_name="no_learning_config_0",
         )
@@ -158,7 +158,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         # Create synapse_0 -> soma_0
         synapse_0 = self._model.create_synapse(
             breed="single_exp_synapse",
-            pre_soma_id=np.nan,
+            pre_soma_id=-1,
             post_soma_id=soma_0,
             config_name="no_learning_config_0",
         )
@@ -166,7 +166,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         # Create synapse_1 -> soma_1
         synapse_1 = self._model.create_synapse(
             breed="single_exp_synapse",
-            pre_soma_id=np.nan,
+            pre_soma_id=-1,
             post_soma_id=soma_1,
             config_name="no_learning_config_0",
         )
@@ -250,7 +250,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         # Create synapse_2: external input -> soma_0
         synapse_2 = self._model.create_synapse(
             breed="single_exp_synapse",
-            pre_soma_id=np.nan,  # External input
+            pre_soma_id=-1,  # External input
             post_soma_id=soma_0,
             config_name="no_learning_config_0",
         )
@@ -266,7 +266,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         # Create synapse_2: external input -> soma_1
         synapse_4= self._model.create_synapse(
             breed="single_exp_synapse",
-            pre_soma_id=np.nan,  # External input
+            pre_soma_id=-1,  # External input
             post_soma_id=soma_1,
             config_name="no_learning_config_0",
         )
@@ -330,7 +330,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         # Create synapse connecting external input to soma
         synapse_0 = self._model.create_synapse(
             breed=synapse_breed,
-            pre_soma_id=np.nan,  # External input
+            pre_soma_id=-1,  # External input
             post_soma_id=soma_0,  # Connected to the created soma
             config_name=synapse_config,
         )

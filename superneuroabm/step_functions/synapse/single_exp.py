@@ -19,7 +19,6 @@ def synapse_single_exp_step_func(
     agent_ids,
     breeds,
     locations,
-    connectivity,
     synapse_params,  # scale, time constant (tau_rise and tau_fall)
     learning_params,
     internal_state,  #
@@ -40,16 +39,19 @@ def synapse_single_exp_step_func(
     tau_fall = synapse_params[agent_index][3]
     tau_rise = synapse_params[agent_index][4]
 
-    pre_soma_id, post_soma_id = (
-        connectivity[agent_index][0],
-        connectivity[agent_index][1],
+    # locations[agent_index] = [pre_soma_index, post_soma_index]
+    # SAGESim has already converted agent IDs to local indices
+    pre_soma_index, post_soma_index = (
+        locations[agent_index][0],
+        locations[agent_index][1],
     )
+
     spike = get_soma_spike(
         tick,
         agent_index,
         globals,
         agent_ids,
-        pre_soma_id,
+        pre_soma_index,
         t_current,
         input_spikes_tensor,
         output_spikes_tensor,
