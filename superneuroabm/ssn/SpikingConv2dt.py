@@ -53,7 +53,7 @@ class Conv2dtNet:
         t_ms = (t / 1000.0).astype(np.int32)
 
         # Filter ON events only
-        time_mask = t_ms <= 50
+        time_mask = t_ms <= 100
         x, y, t_ms = x[time_mask], y[time_mask], t_ms[time_mask]
 
 
@@ -583,101 +583,59 @@ class Conv2dtNet:
 
         return max_index
 
-    def plot_output_layer_weights(self, forward_idx=None, save_dir="./ff_weight_maps"):
-        os.makedirs(save_dir, exist_ok=True)
+    def plot_all_passes_weight_maps(self, weight_matrices, save_path="all_forward_passes.png"):
+        num_passes = len(weight_matrices)
 
-        syn_dict = self.FF[2]  # {output_soma: [synapse_ids]}
-        model = self.model
+        # global color scale
+        vmin = min(np.nanmin(W) for W in weight_matrices)
+        vmax = max(np.nanmax(W) for W in weight_matrices)
 
-        # --- Gather all weights first to get global min/max for consistent color scale ---
-        all_weights = []
-        for syn_list in syn_dict.values():
-            for syn in syn_list:
-                hyper = model.get_agent_property_value(id=syn, property_name="hyperparameters")
-                all_weights.append(hyper[0])
-        vmin, vmax = np.min(all_weights), np.max(all_weights)
+        fig, axs = plt.subplots(
+            nrows=1,
+            ncols=num_passes,
+            figsize=(4 * num_passes, 4)
+        )
 
-        # --- Plot setup ---
-        num_classes = len(syn_dict)
-        grid_rows = num_classes
-        fig, axs = plt.subplots(grid_rows, 1, figsize=(4, 2 * num_classes))
-        if grid_rows == 1:
+        if num_passes == 1:
             axs = [axs]
 
-        # --- Plot each class ---
-        for class_idx, (out_soma, syn_list) in enumerate(syn_dict.items()):
-            weights = []
-            for syn in syn_list:
-                hyper = model.get_agent_property_value(id=syn, property_name="hyperparameters")
-                weights.append(hyper[0])
+        for i, (ax, W) in enumerate(zip(axs, weight_matrices)):
+            im = ax.imshow(W, vmin=vmin, vmax=vmax, cmap="viridis")
+            ax.set_title(f"Pass {i}")
+            ax.set_xticks([])
+            ax.set_yticks([])
 
-            weights = np.array(weights)
-            n_weights = len(weights)
-            n_cols = math.ceil(math.sqrt(n_weights))
-            n_rows = math.ceil(n_weights / n_cols)
-
-            # pad with NaN so we can reshape safely
-            padded = np.full(n_rows * n_cols, np.nan)
-            padded[:n_weights] = weights
-            weight_grid = padded.reshape(n_rows, n_cols)
-
-            ax = axs[class_idx]
-            im = ax.imshow(weight_grid, vmin=vmin, vmax=vmax, cmap="viridis")
-            ax.set_title(f"Output Neuron {class_idx}")
-            ax.set_xticks([]); ax.set_yticks([])
-            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-
-        # --- Save figure ---
-        if forward_idx is not None:
-            fig.suptitle(f"Output Layer Weights | Pass {forward_idx}", fontsize=14)
+        # shared colorbar
+        fig.colorbar(im, ax=axs, fraction=0.025, pad=0.04)
 
         plt.tight_layout()
-        save_path = os.path.join(
-            save_dir,
-            f"output_layer_pass_{forward_idx if forward_idx is not None else 'final'}.png"
-        )
-        plt.savefig(save_path, dpi=250, bbox_inches="tight")
+        plt.savefig(save_path, dpi=300)
         plt.close()
-        print(f"Saved figure with shared color scale: {save_path}")
-    def print_ff_weights_as_matrix(self, neuron_index=0):
-        syn_dict = self.FF[2]  # {out_soma : [synapse_ids]}
+        print(f"Saved combined plot: {save_path}")
+
+    def get_ff_weight_matrix(self, neuron_index=0):
+        syn_dict = self.FF[2]  # {output_soma: [syn_id]}
         out_somas = list(syn_dict.keys())
 
         if neuron_index >= len(out_somas):
-            print(f"Invalid neuron index {neuron_index}")
-            return
+            raise ValueError(f"Invalid neuron index {neuron_index}")
 
         soma_id = out_somas[neuron_index]
         syn_list = syn_dict[soma_id]
 
-        # Get final-layer dims
+        # Final-layer dims
         last_layer = max(self.Output_Channel_Dim.keys())
         W, H = self.Output_Channel_Dim[last_layer]
 
-        expected = W * H
-        actual = len(syn_list)
-
-        if actual != expected:
-            print(f"Warning: expected {expected} weights but found {actual}")
-
-        # Fetch all weights
+        # Fetch weights
         weights = []
         for syn in syn_list:
-            hyper = self.model.get_agent_property_value(
-                id=syn,
-                property_name="hyperparameters"
-            )
-            w = hyper[0]  # STDP weight
-            weights.append(w)
+            hyper = self.model.get_agent_property_value(id=syn, property_name="hyperparameters")
+            weights.append(hyper[0])
 
         # Reshape into matrix
-        weight_matrix = np.array(weights).reshape(2*H, W)
+        return np.array(weights).reshape(2 * H, W)
 
-        print(f"\n=== Weights for FF Output Neuron {neuron_index} ===")
-        print(weight_matrix)
-        print("===============================================\n")
-
-        return weight_matrix
 
 if __name__ == "__main__":
     # --- Initialize model ---
@@ -713,7 +671,8 @@ if __name__ == "__main__":
     print("\n=== Running one example per class ===")
 
     results = {}
-
+    all_weight_matrices = []   # <-- store matrices for each forward pass
+    counter=0
     for idx, digit in enumerate(digit_dirs):
         digit_path = os.path.join(root, digit)
         bin_files = [f for f in os.listdir(digit_path) if f.endswith(".bin")]
@@ -725,13 +684,24 @@ if __name__ == "__main__":
 
         print(f"\n--- Forward pass {idx} | Digit {digit} | File: {bin_file} ---")
 
-        predicted_class = Model.ForwardPass(dataset_path, Total_Sim_Time=50)
+        predicted_class = Model.ForwardPass(dataset_path, Total_Sim_Time=100)
         results[digit] = predicted_class
 
-        Model.print_ff_weights_as_matrix(neuron_index=0)
+        # grab weight matrix instead of printing
+        W = Model.get_ff_weight_matrix(neuron_index=0)
+        all_weight_matrices.append(W)
 
         Model.model.reset()
+        counter+=1
+        if counter==5:
+            break
 
     print("\n=== Summary of Predictions ===")
     for digit, pred in results.items():
         print(f"Digit {digit} → Predicted {pred}")
+
+    # --- Plot weight matrices side-by-side ---
+    Model.plot_all_passes_weight_maps(
+        all_weight_matrices,
+        save_path="all_forward_passes.png"
+    )
