@@ -82,9 +82,9 @@ def exp_pair_wise_stdp_quantized(
     weight += dW  # Update the weight
 
     # === 3-bit quantization ===
-    wmin = 0.0 #learning_params[agent_index][6]  # assuming stored in learning_params
-    wmax = 14.0 #learning_params[agent_index][7]
-    num_levels = 8  # 3 bits -> 8 quantization levels#learning_params[agent_index][8]
+    wmin = learning_params[agent_index][6]  #0.0 #learning_params[agent_index][6]  # assuming stored in learning_params
+    wmax = learning_params[agent_index][7]  #14.0 #learning_params[agent_index][7]
+    num_levels = learning_params[agent_index][8] #8  # 3 bits -> 8 quantization levels#learning_params[agent_index][8]
     delta = (wmax - wmin) / (num_levels - 1)
     # weight = cp.clip(weight, wmin, wmax)
     weight = weight if weight <= wmax else wmax
