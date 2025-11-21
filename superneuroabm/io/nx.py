@@ -36,8 +36,7 @@ def generate_metis_partition(graph: nx.DiGraph, num_workers: int) -> Dict[int, i
         import metis
     except ImportError:
         raise ImportError(
-            "METIS not installed. Install with: pip install metis\n"
-            "Note: Requires METIS library installed on system"
+            "METIS not installed."
         )
 
     # Convert to undirected graph for METIS
