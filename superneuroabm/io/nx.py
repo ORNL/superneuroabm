@@ -36,7 +36,10 @@ def model_from_nx_graph(graph: nx.DiGraph, enable_internal_state_tracking: bool 
 
     # Create somas from graph nodes
     for node, data in graph.nodes(data=True):
-        if type(node) == float and np.isnan(node):
+        # -1 indicates an input or output node; NaNs are what *used*
+        # to signal such, so we check for that for backward compatibility.
+        # TODO -1 is a magic number and should be a defined constant.
+        if (type(node) == float and np.isnan(node)) or node == -1:
             continue
         soma_breed = data.get("soma_breed")
         config_name = data.get("config", "config_0")
@@ -63,7 +66,7 @@ def model_from_nx_graph(graph: nx.DiGraph, enable_internal_state_tracking: bool 
         tags = set(data.get("tags", []))
         tags.add(f"nx_edge:{u}_to_{v}")
 
-        pre_soma_id = name2id.get(u, np.nan)  # External input if not found
+        pre_soma_id = name2id.get(u, -1)  # External input if not found
         post_soma_id = name2id[v]
         model.create_synapse(
             breed=synapse_breed,
@@ -166,9 +169,9 @@ if __name__ == "__main__":
             "internal_state": {"v": -75.002},
         },
     )
-    # np.nan indicates external synapse
+    # -1 indicates external synapse
     graph.add_edge(
-        np.nan,
+        -1,
         "A",
         synapse_breed="single_exp_synapse",
         config="no_learning_config_0",
