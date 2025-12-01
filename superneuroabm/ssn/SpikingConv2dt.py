@@ -6,6 +6,7 @@ import sagesim
 import time as clocktime
 import tonic 
 import math
+import pandas as pd
 import itertools
 from itertools import combinations
 import tonic.transforms as transforms
@@ -172,10 +173,10 @@ class Conv2dtNet:
             },
             learning_hyperparameters_overrides={
                 "stdp_type": 0.0,
-                "tau_pre_stdp": 10e-3,
-                "tau_post_stdp": 10e-3,
-                "a_exp_pre": 0.1,
-                "a_exp_post": 0.065,
+                "tau_pre_stdp": 20e-3,
+                "tau_post_stdp": 20e-3,
+                "a_exp_pre": 0.03,
+                "a_exp_post": 0.04,
                 "stdp_history_length": 100,
             },
             default_internal_learning_state_overrides={
@@ -203,7 +204,7 @@ class Conv2dtNet:
             self.ConvLayers[layer_idx] = []
         self.ConvLayers[layer_idx].append([KernelSynapses, Kernel, Stride])
     
-    def Lateral_Inhibition(self, Layer_Tensor, p=0.7):
+    def Lateral_Inhibition(self, Layer_Tensor, p=0.8, inhibition_strength=-15):
         N = len(Layer_Tensor)
 
         for i in range(N):
@@ -222,7 +223,7 @@ class Conv2dtNet:
                 self.CreateSynapseNoSTDP(
                     Layer_Tensor[i],
                     Layer_Tensor[j],
-                    -15
+                    -10
                 )
         
     def Output_Channel_Construction(self, Layer_idx, Output_Layer_Size, Input_W, Input_H):
@@ -280,6 +281,9 @@ class Conv2dtNet:
             input_synapses.append(synapse)
         InputToHidden,InputToHidden_Dict=self.FullyConnected(InputLayer,HiddenLayer)
         HiddenToOutput, HiddenToOutput_Dict=self.FullyConnected(HiddenLayer,OutputLayer)
+        self.Lateral_Inhibition(HiddenLayer, p=.8, inhibition_strength=-15)
+        self.Lateral_Inhibition(OutputLayer, p=.8, inhibition_strength=-15)
+
         return [input_synapses,OutputLayer, HiddenToOutput_Dict]
 
     def FullyConnected(self, InputLayer, OutputLayer):
@@ -535,10 +539,10 @@ class Conv2dtNet:
         for layer_id in range(len(self.ConvLayers)):
             print(layer_id)
             Dataset = self.Full_Convolution_And_Extraction(layer_id, Dataset, Total_Sim_Time)
-            
+            print(Dataset)
             # Reset after each layer EXCEPT the last
-            if layer_id != len(self.ConvLayers) - 1:
-                self.model.reset()
+            self.model.reset()
+
 
 
         print("Feed Forward Part")
@@ -555,7 +559,6 @@ class Conv2dtNet:
                 final_spike_dict[idx].append(int(t))
 
         # Reset before building the FF layer activity
-        self.model.reset()
 
         # ----------------------------------------------
         #  Inject the final-layer spikes into FF synapses
@@ -596,7 +599,7 @@ class Conv2dtNet:
         matrices = self.get_all_ff_weight_matrices()
 
         num_neurons = len(matrices)
-        cols = 5  # adjust if needed
+        cols = 6  # increased for 30 neurons
         rows = math.ceil(num_neurons / cols)
 
         # Create figure
@@ -654,6 +657,77 @@ class Conv2dtNet:
             matrices[idx] = np.array(weights).reshape(2 * H, W)
 
         return matrices
+
+    def extract_ff_weights_df(self):
+
+        syn_dict = self.FF[2]  # {post_soma: [syn_ids]}
+        rows = []
+
+        last_layer = max(self.Output_Channel_Dim.keys())
+        W, H = self.Output_Channel_Dim[last_layer]
+        mat_height = 2 * H
+
+        for post_idx, (post_soma, syn_list) in enumerate(zip(syn_dict.keys(), syn_dict.values())):
+            for flat_i, syn in enumerate(syn_list):
+
+                # Convert index into spatial coordinates (row, col)
+                row = flat_i // W
+                col = flat_i % W
+
+                hyper = self.model.get_agent_property_value(id=syn, property_name="hyperparameters")
+                weight = float(hyper[0])
+
+                rows.append({
+                    "syn_id": int(syn),
+                    "post_idx": post_idx,
+                    "weight": weight,
+                    "row": row,
+                    "col": col,
+                })
+
+        return pd.DataFrame(rows)
+
+    def compare_stdp(self, baseline_df, current_df):
+        merged = baseline_df.merge(current_df, on="syn_id", suffixes=("_base", "_curr"))
+        merged["delta"] = merged["weight_curr"] - merged["weight_base"]
+
+        changed = merged[merged["delta"] != 0]
+        positive_changes = changed[changed["delta"] > 0]["delta"]
+        negative_changes = changed[changed["delta"] < 0]["delta"]
+        
+        total = len(changed)
+        positive = len(positive_changes)
+        negative = len(negative_changes)
+
+        print("\n=== STDP Change Summary ===")
+        print(f"Total synapses that changed: {total}")
+        print(f"  Positive ΔW: {positive}")
+        print(f"  Negative ΔW: {negative}")
+        
+        if positive > 0:
+            print(f"    Avg positive ΔW:    {positive_changes.mean():.6f}")
+            print(f"    Median positive ΔW: {positive_changes.median():.6f}")
+        else:
+            print(f"    Avg positive ΔW:    N/A")
+            print(f"    Median positive ΔW: N/A")
+            
+        if negative > 0:
+            print(f"    Avg negative ΔW:    {negative_changes.mean():.6f}")
+            print(f"    Median negative ΔW: {negative_changes.median():.6f}")
+        else:
+            print(f"    Avg negative ΔW:    N/A")
+            print(f"    Median negative ΔW: N/A")
+
+        return {
+            "total_changed": total,
+            "positive": positive,
+            "negative": negative,
+            "avg_positive": positive_changes.mean() if positive > 0 else None,
+            "median_positive": positive_changes.median() if positive > 0 else None,
+            "avg_negative": negative_changes.mean() if negative > 0 else None,
+            "median_negative": negative_changes.median() if negative > 0 else None,
+        }
+
 
 
 
@@ -756,14 +830,12 @@ if __name__ == "__main__":
     # -------------------------
     Conv_Kernel_List = [
         [(3, 3, 2)],
-        [(5, 5, 1)],
-        [(4, 4, 1)],
-        [(3, 3, 1)]
+        [(5, 5, 1)]
     ]
 
     Model.NetworkConstruction(
         Conv_Kernel_List=Conv_Kernel_List,
-        output_classes=10,
+        output_classes=30,
         Input_W=28,
         Input_H=28,
     )
@@ -785,7 +857,8 @@ if __name__ == "__main__":
     #  Run only 2 examples
     # -------------------------
     results = {}
-    NUM_RUNS = 3
+    NUM_RUNS = 7
+    baseline_df = None
 
     for run_idx in range(NUM_RUNS):
         digit = digit_dirs[run_idx]
@@ -800,10 +873,16 @@ if __name__ == "__main__":
         print(f"\n=== RUN {run_idx} | Digit {digit} | File {bin_file} ===")
 
         pred = Model.ForwardPass(dataset_path, Total_Sim_Time=100)
-        results[f"run_{run_idx}"] = {
-            "digit": digit,
-            "predicted": pred
-        }
+        # Extract Hidden→Output weight matrix DF for this run
+        current_df = Model.extract_ff_weights_df()
+
+        if run_idx == 0:
+            print("\nSaved baseline synaptic weights for future comparison.\n")
+            baseline_df = current_df.copy()
+
+        else:
+            # Compare to baseline
+            Model.compare_stdp(baseline_df, current_df)
 
         # -------------------------
         #  Save FF weight plot (single image)
@@ -812,8 +891,6 @@ if __name__ == "__main__":
         Model.plot_all_output_neurons_single(plot_path)
         print(f"Saved FF weight plot (single image) for run {run_idx} → {plot_path}")
 
-        matricies=Model.get_all_ff_weight_matrices()
-        print(matricies)
         # -------------------------
         #  Save full network structure
         # -------------------------
