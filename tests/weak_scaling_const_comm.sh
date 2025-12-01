@@ -6,11 +6,11 @@
 #SBATCH -p batch
 #SBATCH -q debug
 #SBATCH -N 1
-#SBATCH --gpus=2
+#SBATCH --gpus=4
 
 # Weak scaling test on Frontier - CONSTANT COMMUNICATION MODEL
 # Cross-worker edges per worker remains constant as network scales
-# Uses weak_scaling_lif_constant_comm.py
+# Uses weak_scaling_const_comm.py
 # Adjust -N and --gpus based on your needs
 
 unset SLURM_EXPORT_ENV
@@ -59,11 +59,11 @@ echo "Intra-cluster prob: $INTRA_PROB"
 echo "Cross-cluster edges per worker: $CROSS_CLUSTER_EDGES (constant)"
 echo "======================================================================"
 
-# Start with smallest configuration that might hit memory limit
-# Then show that adding workers enables larger networks
+# Compare 2 vs 4 workers (both have MPI overhead)
+# Avoid comparing against 1 worker since it bypasses contextualization
 
 # Test with progressively more workers
-for NWORKERS in 1 2; do
+for NWORKERS in 2 4; do
     TOTAL_NEURONS=$((NWORKERS * NEURONS_PER_WORKER))
     echo ""
     echo "======================================================================"
@@ -72,7 +72,7 @@ for NWORKERS in 1 2; do
 
     # Use srun for all worker counts (more stable)
     srun -n$NWORKERS -c7 --gpus-per-task=1 --gpu-bind=closest \
-        python weak_scaling_lif_constant_comm.py \
+        python weak_scaling_const_comm.py \
         --neurons-per-worker $NEURONS_PER_WORKER \
         --ticks $TICKS \
         --update-ticks $UPDATE_TICKS \
