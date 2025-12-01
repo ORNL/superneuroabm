@@ -29,6 +29,10 @@ def main():
                        help="Simulation ticks")
     parser.add_argument("--update-ticks", type=int, default=5,
                        help="Update data every N ticks")
+    parser.add_argument("--intra-cluster-prob", type=float, default=0.01,
+                       help="Intra-cluster connection probability (default: 0.01)")
+    parser.add_argument("--inter-cluster-prob", type=float, default=0.001,
+                       help="Inter-cluster connection probability (default: 0.001)")
     parser.add_argument("--no-metis", action="store_true",
                        help="Disable METIS partitioning")
     args = parser.parse_args()
@@ -36,6 +40,8 @@ def main():
     neurons_per_worker = args.neurons_per_worker
     simulation_ticks = args.ticks
     update_ticks = args.update_ticks
+    intra_cluster_prob = args.intra_cluster_prob
+    inter_cluster_prob = args.inter_cluster_prob
     use_metis = not args.no_metis and size > 1
 
     if rank == 0:
@@ -51,6 +57,8 @@ def main():
         print(f"Simulation ticks: {simulation_ticks}")
         print(f"Update ticks: {update_ticks}")
         print(f"Number of clusters: {size}")
+        print(f"Intra-cluster prob: {intra_cluster_prob}")
+        print(f"Inter-cluster prob: {inter_cluster_prob}")
         print(f"METIS partitioning: {use_metis}")
         print("="*70)
 
@@ -61,8 +69,8 @@ def main():
         graph = generate_clustered_network(
             num_clusters=size,
             neurons_per_cluster=neurons_per_worker,
-            intra_cluster_prob=0.01,    # Much lower density for sparse network
-            inter_cluster_prob=0.001,   # Ensure some inter-cluster edges exist
+            intra_cluster_prob=intra_cluster_prob,
+            inter_cluster_prob=inter_cluster_prob,
             external_input_prob=0.1,
             soma_breed="lif_soma",      # LIF only
             synapse_breed="single_exp_synapse",  # No learning

@@ -6,7 +6,7 @@
 #SBATCH -p batch
 #SBATCH -q debug
 #SBATCH -N 1
-#SBATCH --gpus=8
+#SBATCH --gpus=2
 
 # Weak scaling test on Frontier
 # Adjust -N and --gpus based on your needs
@@ -34,9 +34,13 @@ cd /lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/tests
 mkdir -p output
 
 # Configuration
-NEURONS_PER_WORKER=10000  # Large per-worker to demonstrate memory limits
+# Memory limit found: 20K neurons max, failed at 30K
+# Using 50% of limit for safety = 10K neurons per worker
+NEURONS_PER_WORKER=10000  # 50% of single-GPU limit (20K max)
 TICKS=10                  # Small number for quick comparison
 UPDATE_TICKS=5            # Sync every 5 ticks
+INTRA_PROB=0.01           # Intra-cluster connection probability (1%)
+INTER_PROB=0.001          # Inter-cluster connection probability (0.1%)
 
 echo "======================================================================"
 echo "Memory Scaling Test on Frontier"
@@ -48,6 +52,8 @@ echo "Nodes: $SLURM_JOB_NUM_NODES"
 echo "GPUs: $SLURM_GPUS"
 echo "Neurons per worker: $NEURONS_PER_WORKER (constant)"
 echo "Simulation ticks: $TICKS"
+echo "Intra-cluster prob: $INTRA_PROB"
+echo "Inter-cluster prob: $INTER_PROB"
 echo "======================================================================"
 
 # Start with smallest configuration that might hit memory limit
@@ -61,20 +67,14 @@ for NWORKERS in 1 2; do
     echo "Test: $NWORKERS worker(s) -> ${TOTAL_NEURONS} neurons total"
     echo "======================================================================"
 
-    if [ $NWORKERS -eq 1 ]; then
-        # Single worker
+    # Use srun for all worker counts (more stable)
+    srun -n$NWORKERS -c7 --gpus-per-task=1 --gpu-bind=closest \
         python weak_scaling_lif.py \
-            --neurons-per-worker $NEURONS_PER_WORKER \
-            --ticks $TICKS \
-            --update-ticks $UPDATE_TICKS
-    else
-        # Multiple workers - use srun
-        srun -n$NWORKERS -c7 --gpus-per-task=1 --gpu-bind=closest \
-            python weak_scaling_lif.py \
-            --neurons-per-worker $NEURONS_PER_WORKER \
-            --ticks $TICKS \
-            --update-ticks $UPDATE_TICKS
-    fi
+        --neurons-per-worker $NEURONS_PER_WORKER \
+        --ticks $TICKS \
+        --update-ticks $UPDATE_TICKS \
+        --intra-cluster-prob $INTRA_PROB \
+        --inter-cluster-prob $INTER_PROB
 
     echo ""
 done
