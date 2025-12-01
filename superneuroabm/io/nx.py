@@ -39,16 +39,16 @@ def generate_metis_partition(graph: nx.DiGraph, num_workers: int) -> Dict[int, i
             "METIS not installed."
         )
 
-    # Convert to undirected graph for METIS
-    if graph.is_directed():
-        G_undirected = graph.to_undirected()
-    else:
-        G_undirected = graph
+    # Filter out external input nodes (-1 and NaN for backward compatibility)
+    nodes_to_remove = [n for n in graph.nodes() if (type(n) == float and np.isnan(n)) or n == -1]
+    G_filtered = graph.copy()
+    G_filtered.remove_nodes_from(nodes_to_remove)
 
-    # Filter out NaN nodes
-    nodes_to_remove = [n for n in G_undirected.nodes() if isinstance(n, float) and np.isnan(n)]
-    G_undirected = G_undirected.copy()
-    G_undirected.remove_nodes_from(nodes_to_remove)
+    # Convert to undirected graph for METIS
+    if G_filtered.is_directed():
+        G_undirected = G_filtered.to_undirected()
+    else:
+        G_undirected = G_filtered
 
     # Create adjacency list (METIS format)
     node_list = list(G_undirected.nodes())
@@ -172,7 +172,9 @@ def model_from_nx_graph(
     if node_to_rank:
         # Create mapping from agent_id (creation order) to rank
         # We'll create nodes in sorted order to ensure consistency across all ranks
-        sorted_nodes = sorted([n for n in graph.nodes() if not (isinstance(n, float) and np.isnan(n))])
+        # -1 indicates an input or output node; NaNs are what *used*
+        # to signal such, so we check for that for backward compatibility.
+        sorted_nodes = sorted([n for n in graph.nodes() if not ((type(n) == float and np.isnan(n)) or n == -1)])
         agent_id_to_rank = {}
         agent_id = 0
         for node in sorted_nodes:
@@ -208,7 +210,10 @@ def model_from_nx_graph(
     else:
         # Create somas from graph nodes (original behavior)
         for node, data in graph.nodes(data=True):
-            if type(node) == float and np.isnan(node):
+            # -1 indicates an input or output node; NaNs are what *used*
+            # to signal such, so we check for that for backward compatibility.
+            # TODO -1 is a magic number and should be a defined constant.
+            if (type(node) == float and np.isnan(node)) or node == -1:
                 continue
             soma_breed = data.get("soma_breed")
             config_name = data.get("config", "config_0")
@@ -235,7 +240,7 @@ def model_from_nx_graph(
         tags = set(data.get("tags", []))
         tags.add(f"nx_edge:{u}_to_{v}")
 
-        pre_soma_id = name2id.get(u, np.nan)  # External input if not found
+        pre_soma_id = name2id.get(u, -1)  # External input if not found
         post_soma_id = name2id[v]
         model.create_synapse(
             breed=synapse_breed,
@@ -338,9 +343,9 @@ if __name__ == "__main__":
             "internal_state": {"v": -75.002},
         },
     )
-    # np.nan indicates external synapse
+    # -1 indicates external synapse
     graph.add_edge(
-        np.nan,
+        -1,
         "A",
         synapse_breed="single_exp_synapse",
         config="no_learning_config_0",
