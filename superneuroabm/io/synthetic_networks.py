@@ -168,6 +168,200 @@ def generate_clustered_network(
     return graph
 
 
+def generate_clustered_network_constant_comm(
+    num_clusters: int,
+    neurons_per_cluster: int,
+    intra_cluster_prob: float = 0.3,
+    cross_cluster_edges: int = 2000,
+    external_input_prob: float = 0.2,
+    soma_breed: str = "lif_soma",
+    soma_config: str = "config_0",
+    synapse_breed: str = "single_exp_synapse",
+    synapse_config: str = "no_learning_config_0",
+    excitatory_ratio: float = 0.8,
+    weight_exc: float = 14.0,
+    weight_inh: float = -10.0,
+    seed: Optional[int] = None
+) -> nx.DiGraph:
+    """
+    Generate a clustered network with TRULY CONSTANT per-worker communication.
+
+    Unlike generate_clustered_network which uses inter_cluster_prob, this function
+    ensures each cluster sends exactly `cross_cluster_edges` TOTAL (distributed among
+    all other clusters), maintaining constant per-worker communication overhead
+    regardless of network size.
+
+    This is ideal for weak scaling tests with the "constant communication" model,
+    where adding more workers should NOT increase per-worker communication.
+
+    Args:
+        num_clusters: Number of clusters (should match number of workers)
+        neurons_per_cluster: Number of neurons in each cluster
+        intra_cluster_prob: Connection probability within cluster (default: 0.3)
+        cross_cluster_edges: Total edges each cluster sends to ALL other clusters (default: 2000)
+        external_input_prob: Probability of external input per neuron (default: 0.2)
+        soma_breed: Neuron type ("lif_soma" or "izh_soma")
+        soma_config: Configuration name for somas
+        synapse_breed: Synapse type
+        synapse_config: Configuration name for synapses
+        excitatory_ratio: Ratio of excitatory neurons (default: 0.8)
+        weight_exc: Weight for excitatory synapses (default: 14.0)
+        weight_inh: Weight for inhibitory synapses (default: -10.0)
+        seed: Random seed for reproducibility
+
+    Returns:
+        NetworkX DiGraph with neuron and synapse attributes
+
+    Example:
+        >>> # Create network for 4 workers with constant 2000 outgoing edges per worker
+        >>> graph = generate_clustered_network_constant_comm(
+        ...     num_clusters=4,
+        ...     neurons_per_cluster=10000,
+        ...     cross_cluster_edges=2000,  # Each cluster sends 2000 edges TOTAL
+        ...     seed=42
+        ... )
+        >>> # Per worker: 2000 outgoing edges (constant)
+        >>> # Total cross-cluster edges: 4 × 2000 = 8,000 (scales linearly with workers)
+    """
+    if seed is not None:
+        np.random.seed(seed)
+
+    graph = nx.DiGraph()
+    total_neurons = num_clusters * neurons_per_cluster
+
+    print(f"[SyntheticNet] Generating clustered network (constant communication):")
+    print(f"  - Clusters: {num_clusters}")
+    print(f"  - Neurons per cluster: {neurons_per_cluster}")
+    print(f"  - Total neurons: {total_neurons}")
+    print(f"  - Intra-cluster p: {intra_cluster_prob}")
+    print(f"  - Cross-cluster edges per worker: {cross_cluster_edges} (constant)")
+
+    # Create neurons organized by cluster
+    neuron_ids = []
+    for cluster_id in range(num_clusters):
+        cluster_neurons = []
+        for i in range(neurons_per_cluster):
+            neuron_id = cluster_id * neurons_per_cluster + i
+
+            # Determine if excitatory or inhibitory
+            is_excitatory = i < int(neurons_per_cluster * excitatory_ratio)
+
+            # Add neuron node
+            graph.add_node(
+                neuron_id,
+                soma_breed=soma_breed,
+                config=soma_config,
+                cluster=cluster_id,
+                type="excitatory" if is_excitatory else "inhibitory",
+                tags=[f"cluster_{cluster_id}"]
+            )
+            cluster_neurons.append(neuron_id)
+
+        neuron_ids.append(cluster_neurons)
+
+    # Add intra-cluster connections (same as before)
+    intra_edges = 0
+    for cluster_id, cluster_neurons in enumerate(neuron_ids):
+        for pre in cluster_neurons:
+            for post in cluster_neurons:
+                if pre != post and np.random.random() < intra_cluster_prob:
+                    pre_type = graph.nodes[pre]["type"]
+                    weight = weight_exc if pre_type == "excitatory" else weight_inh
+
+                    graph.add_edge(
+                        pre,
+                        post,
+                        synapse_breed=synapse_breed,
+                        config=synapse_config,
+                        overrides={"hyperparameters": {"weight": weight}},
+                        connection_type="intra_cluster"
+                    )
+                    intra_edges += 1
+
+    # Add inter-cluster connections with TRULY CONSTANT per-worker communication
+    # Each cluster sends exactly cross_cluster_edges TOTAL, distributed among all other clusters
+    inter_edges = 0
+    for cluster_i in range(num_clusters):
+        if num_clusters == 1:
+            continue  # No other clusters to connect to
+
+        # Distribute cross_cluster_edges among (num_clusters - 1) target clusters
+        edges_per_target = cross_cluster_edges // (num_clusters - 1)
+        remainder = cross_cluster_edges % (num_clusters - 1)
+
+        # Build list of target clusters
+        target_clusters = [j for j in range(num_clusters) if j != cluster_i]
+
+        for idx, cluster_j in enumerate(target_clusters):
+            # Give remainder edges to first few targets to reach exact total
+            edges_to_add = edges_per_target + (1 if idx < remainder else 0)
+
+            if edges_to_add == 0:
+                continue
+
+            # Randomly sample exactly edges_to_add connections
+            max_possible = neurons_per_cluster * neurons_per_cluster
+            edges_to_add = min(edges_to_add, max_possible)
+
+            # Generate all possible edges and sample
+            all_possible_edges = [
+                (pre, post)
+                for pre in neuron_ids[cluster_i]
+                for post in neuron_ids[cluster_j]
+            ]
+
+            # Randomly select edges_to_add edges without replacement
+            selected_edges = np.random.choice(
+                len(all_possible_edges),
+                size=edges_to_add,
+                replace=False
+            )
+
+            for edge_idx in selected_edges:
+                pre, post = all_possible_edges[edge_idx]
+                pre_type = graph.nodes[pre]["type"]
+                weight = weight_exc if pre_type == "excitatory" else weight_inh
+
+                graph.add_edge(
+                    pre,
+                    post,
+                    synapse_breed=synapse_breed,
+                    config=synapse_config,
+                    overrides={"hyperparameters": {"weight": weight}},
+                    connection_type="inter_cluster"
+                )
+                inter_edges += 1
+
+    # Add external inputs
+    external_inputs = 0
+    for cluster_neurons in neuron_ids:
+        for post in cluster_neurons:
+            if np.random.random() < external_input_prob:
+                graph.add_edge(
+                    -1,  # External input
+                    post,
+                    synapse_breed=synapse_breed,
+                    config=synapse_config,
+                    overrides={"hyperparameters": {"weight": weight_exc}},
+                    connection_type="external",
+                    tags=["input_synapse"]
+                )
+                external_inputs += 1
+
+    # Print statistics
+    total_edges = intra_edges + inter_edges
+    theoretical_edge_cut = inter_edges / total_edges if total_edges > 0 else 0
+
+    print(f"[SyntheticNet] Network statistics:")
+    print(f"  - Total edges: {total_edges}")
+    print(f"  - Intra-cluster edges: {intra_edges} ({100*intra_edges/total_edges:.1f}%)")
+    print(f"  - Inter-cluster edges: {inter_edges} ({100*inter_edges/total_edges:.1f}%)")
+    print(f"  - External inputs: {external_inputs}")
+    print(f"  - Theoretical edge cut (with perfect partition): {theoretical_edge_cut:.4f}")
+
+    return graph
+
+
 def generate_grid_network(
     grid_size: Tuple[int, int],
     connection_radius: int = 1,

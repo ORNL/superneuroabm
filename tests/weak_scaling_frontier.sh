@@ -1,14 +1,16 @@
 #!/bin/bash
 #SBATCH -A lrn088
-#SBATCH -J weak_scaling
-#SBATCH -o /lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/tests/output/weak_scaling_%j.out
+#SBATCH -J weak_scaling_constcomm
+#SBATCH -o /lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/tests/output/weak_scaling_constcomm_%j.out
 #SBATCH -t 01:00:00
 #SBATCH -p batch
 #SBATCH -q debug
 #SBATCH -N 1
 #SBATCH --gpus=2
 
-# Weak scaling test on Frontier
+# Weak scaling test on Frontier - CONSTANT COMMUNICATION MODEL
+# Cross-worker edges per worker remains constant as network scales
+# Uses weak_scaling_lif_constant_comm.py
 # Adjust -N and --gpus based on your needs
 
 unset SLURM_EXPORT_ENV
@@ -36,16 +38,17 @@ mkdir -p output
 # Configuration
 # Memory limit found: 20K neurons max, failed at 30K
 # Using 50% of limit for safety = 10K neurons per worker
-NEURONS_PER_WORKER=10000  # 50% of single-GPU limit (20K max)
-TICKS=10                  # Small number for quick comparison
-UPDATE_TICKS=5            # Sync every 5 ticks
-INTRA_PROB=0.01           # Intra-cluster connection probability (1%)
-INTER_PROB=0.001          # Inter-cluster connection probability (0.1%)
+NEURONS_PER_WORKER=10000    # 50% of single-GPU limit (20K max)
+TICKS=10                    # Small number for quick comparison
+UPDATE_TICKS=5              # Sync every 5 ticks
+INTRA_PROB=0.01             # Intra-cluster connection probability (1%)
+CROSS_CLUSTER_EDGES=2000    # Total outgoing edges per worker (constant)
 
 echo "======================================================================"
-echo "Memory Scaling Test on Frontier"
+echo "Weak Scaling Test - Constant Communication Model"
 echo "======================================================================"
 echo "Goal: Demonstrate that MORE WORKERS enable LARGER NETWORKS"
+echo "      with CONSTANT cross-worker communication overhead"
 echo "======================================================================"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Nodes: $SLURM_JOB_NUM_NODES"
@@ -53,7 +56,7 @@ echo "GPUs: $SLURM_GPUS"
 echo "Neurons per worker: $NEURONS_PER_WORKER (constant)"
 echo "Simulation ticks: $TICKS"
 echo "Intra-cluster prob: $INTRA_PROB"
-echo "Inter-cluster prob: $INTER_PROB"
+echo "Cross-cluster edges per worker: $CROSS_CLUSTER_EDGES (constant)"
 echo "======================================================================"
 
 # Start with smallest configuration that might hit memory limit
@@ -69,12 +72,12 @@ for NWORKERS in 1 2; do
 
     # Use srun for all worker counts (more stable)
     srun -n$NWORKERS -c7 --gpus-per-task=1 --gpu-bind=closest \
-        python weak_scaling_lif.py \
+        python weak_scaling_lif_constant_comm.py \
         --neurons-per-worker $NEURONS_PER_WORKER \
         --ticks $TICKS \
         --update-ticks $UPDATE_TICKS \
         --intra-cluster-prob $INTRA_PROB \
-        --inter-cluster-prob $INTER_PROB
+        --cross-cluster-edges $CROSS_CLUSTER_EDGES
 
     echo ""
 done

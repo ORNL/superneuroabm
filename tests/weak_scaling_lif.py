@@ -5,6 +5,8 @@ Weak scaling test with LIF neurons only - focused on runtime comparison
 import sys
 import time
 import argparse
+import pickle
+import os
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -62,33 +64,78 @@ def main():
         print(f"METIS partitioning: {use_metis}")
         print("="*70)
 
-        # Generate network
-        print("\n[1/4] Generating clustered network...")
+    # Generate or load network from file
+    # Use deterministic filename based on network parameters
+    network_dir = Path(__file__).parent / "output"
+    network_dir.mkdir(exist_ok=True)
+
+    network_filename = (
+        f"network_c{size}_n{neurons_per_worker}_"
+        f"intra{intra_cluster_prob}_inter{inter_cluster_prob}_s42.pkl"
+    )
+    network_path = network_dir / network_filename
+
+    if rank == 0:
+        print("\n[1/4] Loading/generating clustered network...")
+
+    # Check if network file exists
+    file_exists = network_path.exists()
+
+    if file_exists:
+        # Load existing network
+        if rank == 0:
+            print(f"    Loading network from {network_path.name}...")
         t0 = time.time()
-
-        graph = generate_clustered_network(
-            num_clusters=size,
-            neurons_per_cluster=neurons_per_worker,
-            intra_cluster_prob=intra_cluster_prob,
-            inter_cluster_prob=inter_cluster_prob,
-            external_input_prob=0.1,
-            soma_breed="lif_soma",      # LIF only
-            synapse_breed="single_exp_synapse",  # No learning
-            synapse_config="no_learning_config_0",
-            seed=42
-        )
+        with open(network_path, 'rb') as f:
+            graph = pickle.load(f)
         t1 = time.time()
-        print(f"    Network generated in {t1-t0:.2f}s")
-        print(f"    Nodes: {graph.number_of_nodes()}, Edges: {graph.number_of_edges()}")
-
-        if use_metis:
-            print("\n[2/4] Analyzing METIS partition...")
-            partition_dict = generate_metis_partition(graph, size)
-            stats = analyze_network_partition(graph, partition_dict)
-            print(f"    Edge cut ratio: {stats['edge_cut_ratio']:.4f}")
-            print(f"    Node imbalance: {stats['node_imbalance']:.3f}")
+        if rank == 0:
+            print(f"    Network loaded in {t1-t0:.2f}s")
+            print(f"    Nodes: {graph.number_of_nodes()}, Edges: {graph.number_of_edges()}")
     else:
-        graph = None
+        # Generate new network (only rank 0)
+        if rank == 0:
+            print(f"    Generating new network...")
+            t0 = time.time()
+            graph = generate_clustered_network(
+                num_clusters=size,
+                neurons_per_cluster=neurons_per_worker,
+                intra_cluster_prob=intra_cluster_prob,
+                inter_cluster_prob=inter_cluster_prob,
+                external_input_prob=0.1,
+                soma_breed="lif_soma",      # LIF only
+                synapse_breed="single_exp_synapse",  # No learning
+                synapse_config="no_learning_config_0",
+                seed=42
+            )
+            t1 = time.time()
+            print(f"    Network generated in {t1-t0:.2f}s")
+            print(f"    Nodes: {graph.number_of_nodes()}, Edges: {graph.number_of_edges()}")
+
+            # Save to file
+            print(f"    Saving network to {network_path.name}...")
+            t0 = time.time()
+            with open(network_path, 'wb') as f:
+                pickle.dump(graph, f)
+            t1 = time.time()
+            print(f"    Network saved in {t1-t0:.2f}s")
+
+        # Other ranks wait for rank 0 to finish
+        if comm is not None:
+            comm.Barrier()
+
+        # All non-zero ranks load the saved network
+        if rank != 0:
+            with open(network_path, 'rb') as f:
+                graph = pickle.load(f)
+
+    # Analyze METIS partition (after graph is loaded on all ranks)
+    if rank == 0 and use_metis:
+        print("\n[2/4] Analyzing METIS partition...")
+        partition_dict = generate_metis_partition(graph, size)
+        stats = analyze_network_partition(graph, partition_dict)
+        print(f"    Edge cut ratio: {stats['edge_cut_ratio']:.4f}")
+        print(f"    Node imbalance: {stats['node_imbalance']:.3f}")
 
     # Create model
     if rank == 0:
