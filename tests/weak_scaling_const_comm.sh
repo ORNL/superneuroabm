@@ -35,32 +35,33 @@ cd /lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/tests
 # Create output directory
 mkdir -p output
 
-# Configuration
-# Memory limit found: 20K neurons max, failed at 30K
-# Using 50% of limit for safety = 10K neurons per worker
-NEURONS_PER_WORKER=10000    # 50% of single-GPU limit (20K max)
+# Configuration - TEST FOR PROPER WEAK SCALING
+NEURONS_PER_WORKER=2000     # Neurons per worker (constant)
 TICKS=10                    # Small number for quick comparison
 UPDATE_TICKS=5              # Sync every 5 ticks
-INTRA_PROB=0.01             # Intra-cluster connection probability (1%)
-CROSS_CLUSTER_EDGES=2000    # Total outgoing edges per worker (constant)
+INTRA_DEGREE=10             # Constant degree per neuron (O(n) edges!)
+CROSS_CLUSTER_EDGES=100     # Constant cross-cluster edges per worker
 
 echo "======================================================================"
-echo "Weak Scaling Test - Constant Communication Model"
+echo "Weak Scaling Test - PROPER WEAK SCALING"
 echo "======================================================================"
-echo "Goal: Demonstrate that MORE WORKERS enable LARGER NETWORKS"
-echo "      with CONSTANT cross-worker communication overhead"
+echo "Goal: Demonstrate CONSTANT per-worker workload as network scales"
+echo "      - Constant neurons per worker"
+echo "      - Constant edges per worker (O(n), not O(n²)!)"
+echo "      - Constant communication per worker"
 echo "======================================================================"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Nodes: $SLURM_JOB_NUM_NODES"
 echo "GPUs: $SLURM_GPUS"
 echo "Neurons per worker: $NEURONS_PER_WORKER (constant)"
-echo "Simulation ticks: $TICKS"
-echo "Intra-cluster prob: $INTRA_PROB"
+echo "Intra-cluster degree: $INTRA_DEGREE edges/neuron (constant → O(n) scaling!)"
 echo "Cross-cluster edges per worker: $CROSS_CLUSTER_EDGES (constant)"
+echo "Expected edges per worker: ~$((NEURONS_PER_WORKER * INTRA_DEGREE + CROSS_CLUSTER_EDGES))"
+echo "Simulation ticks: $TICKS"
 echo "======================================================================"
 
-# Compare 2 vs 4 workers (both have MPI overhead)
-# Avoid comparing against 1 worker since it bypasses contextualization
+# Test 2 vs 4 workers with small network
+# Both should have similar runtime with constant communication
 
 # Test with progressively more workers
 for NWORKERS in 2 4; do
@@ -76,7 +77,7 @@ for NWORKERS in 2 4; do
         --neurons-per-worker $NEURONS_PER_WORKER \
         --ticks $TICKS \
         --update-ticks $UPDATE_TICKS \
-        --intra-cluster-prob $INTRA_PROB \
+        --intra-cluster-degree $INTRA_DEGREE \
         --cross-cluster-edges $CROSS_CLUSTER_EDGES
 
     echo ""

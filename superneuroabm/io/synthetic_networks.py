@@ -171,7 +171,8 @@ def generate_clustered_network(
 def generate_clustered_network_constant_comm(
     num_clusters: int,
     neurons_per_cluster: int,
-    intra_cluster_prob: float = 0.3,
+    intra_cluster_prob: Optional[float] = None,
+    intra_cluster_degree: Optional[int] = None,
     cross_cluster_edges: int = 2000,
     external_input_prob: float = 0.2,
     soma_breed: str = "lif_soma",
@@ -184,20 +185,21 @@ def generate_clustered_network_constant_comm(
     seed: Optional[int] = None
 ) -> nx.DiGraph:
     """
-    Generate a clustered network with TRULY CONSTANT per-worker communication.
+    Generate a clustered network for PROPER WEAK SCALING with constant per-worker work.
 
-    Unlike generate_clustered_network which uses inter_cluster_prob, this function
-    ensures each cluster sends exactly `cross_cluster_edges` TOTAL (distributed among
-    all other clusters), maintaining constant per-worker communication overhead
-    regardless of network size.
+    This function creates networks suitable for weak scaling tests where:
+    1. Per-worker workload remains constant as workers scale (linear scaling)
+    2. Per-worker communication remains constant (truly constant communication)
 
-    This is ideal for weak scaling tests with the "constant communication" model,
-    where adding more workers should NOT increase per-worker communication.
+    IMPORTANT: For proper weak scaling, use intra_cluster_degree (NOT intra_cluster_prob):
+    - intra_cluster_degree: Each neuron connects to a FIXED number of neurons (O(n) edges per worker)
+    - intra_cluster_prob: Each neuron connects with probability p (O(n²) edges per worker - NOT weak scaling!)
 
     Args:
         num_clusters: Number of clusters (should match number of workers)
         neurons_per_cluster: Number of neurons in each cluster
-        intra_cluster_prob: Connection probability within cluster (default: 0.3)
+        intra_cluster_prob: Connection probability within cluster (creates O(n²) edges - NOT for weak scaling!)
+        intra_cluster_degree: Average degree per neuron (creates O(n) edges - PROPER weak scaling!)
         cross_cluster_edges: Total edges each cluster sends to ALL other clusters (default: 2000)
         external_input_prob: Probability of external input per neuron (default: 0.2)
         soma_breed: Neuron type ("lif_soma" or "izh_soma")
@@ -212,28 +214,43 @@ def generate_clustered_network_constant_comm(
     Returns:
         NetworkX DiGraph with neuron and synapse attributes
 
-    Example:
-        >>> # Create network for 4 workers with constant 2000 outgoing edges per worker
+    Example (PROPER weak scaling):
+        >>> # Create network with constant degree (linear edge count)
         >>> graph = generate_clustered_network_constant_comm(
         ...     num_clusters=4,
         ...     neurons_per_cluster=10000,
-        ...     cross_cluster_edges=2000,  # Each cluster sends 2000 edges TOTAL
+        ...     intra_cluster_degree=10,  # Each neuron connects to 10 others
+        ...     cross_cluster_edges=2000,
         ...     seed=42
         ... )
-        >>> # Per worker: 2000 outgoing edges (constant)
-        >>> # Total cross-cluster edges: 4 × 2000 = 8,000 (scales linearly with workers)
+        >>> # Per worker: 10,000 neurons × 10 degree = 100,000 edges (linear!)
     """
+    # Validate parameters
+    if intra_cluster_prob is None and intra_cluster_degree is None:
+        raise ValueError("Must specify either intra_cluster_prob or intra_cluster_degree")
+    if intra_cluster_prob is not None and intra_cluster_degree is not None:
+        raise ValueError("Cannot specify both intra_cluster_prob and intra_cluster_degree")
+
     if seed is not None:
         np.random.seed(seed)
 
     graph = nx.DiGraph()
     total_neurons = num_clusters * neurons_per_cluster
 
-    print(f"[SyntheticNet] Generating clustered network (constant communication):")
+    print(f"[SyntheticNet] Generating clustered network for WEAK SCALING:")
     print(f"  - Clusters: {num_clusters}")
     print(f"  - Neurons per cluster: {neurons_per_cluster}")
     print(f"  - Total neurons: {total_neurons}")
-    print(f"  - Intra-cluster p: {intra_cluster_prob}")
+
+    if intra_cluster_degree is not None:
+        print(f"  - Intra-cluster degree: {intra_cluster_degree} edges/neuron (O(n) edges - PROPER weak scaling!)")
+        expected_intra_edges = num_clusters * neurons_per_cluster * intra_cluster_degree
+        print(f"  - Expected intra-cluster edges: {expected_intra_edges:,}")
+    else:
+        print(f"  - Intra-cluster prob: {intra_cluster_prob} (O(n²) edges - NOT proper weak scaling!)")
+        expected_intra_edges = int(num_clusters * neurons_per_cluster * (neurons_per_cluster - 1) * intra_cluster_prob)
+        print(f"  - Expected intra-cluster edges: {expected_intra_edges:,}")
+
     print(f"  - Cross-cluster edges per worker: {cross_cluster_edges} (constant)")
 
     # Create neurons organized by cluster
@@ -259,24 +276,50 @@ def generate_clustered_network_constant_comm(
 
         neuron_ids.append(cluster_neurons)
 
-    # Add intra-cluster connections (same as before)
+    # Add intra-cluster connections
     intra_edges = 0
     for cluster_id, cluster_neurons in enumerate(neuron_ids):
-        for pre in cluster_neurons:
-            for post in cluster_neurons:
-                if pre != post and np.random.random() < intra_cluster_prob:
-                    pre_type = graph.nodes[pre]["type"]
-                    weight = weight_exc if pre_type == "excitatory" else weight_inh
+        if intra_cluster_degree is not None:
+            # CONSTANT DEGREE approach (proper weak scaling!)
+            # Each neuron connects to exactly intra_cluster_degree random targets
+            for pre in cluster_neurons:
+                # Sample random targets (excluding self)
+                possible_targets = [n for n in cluster_neurons if n != pre]
+                num_targets = min(intra_cluster_degree, len(possible_targets))
 
-                    graph.add_edge(
-                        pre,
-                        post,
-                        synapse_breed=synapse_breed,
-                        config=synapse_config,
-                        overrides={"hyperparameters": {"weight": weight}},
-                        connection_type="intra_cluster"
-                    )
-                    intra_edges += 1
+                if num_targets > 0:
+                    targets = np.random.choice(possible_targets, size=num_targets, replace=False)
+
+                    for post in targets:
+                        pre_type = graph.nodes[pre]["type"]
+                        weight = weight_exc if pre_type == "excitatory" else weight_inh
+
+                        graph.add_edge(
+                            pre,
+                            post,
+                            synapse_breed=synapse_breed,
+                            config=synapse_config,
+                            overrides={"hyperparameters": {"weight": weight}},
+                            connection_type="intra_cluster"
+                        )
+                        intra_edges += 1
+        else:
+            # PROBABILITY approach (creates O(n²) edges - NOT proper weak scaling!)
+            for pre in cluster_neurons:
+                for post in cluster_neurons:
+                    if pre != post and np.random.random() < intra_cluster_prob:
+                        pre_type = graph.nodes[pre]["type"]
+                        weight = weight_exc if pre_type == "excitatory" else weight_inh
+
+                        graph.add_edge(
+                            pre,
+                            post,
+                            synapse_breed=synapse_breed,
+                            config=synapse_config,
+                            overrides={"hyperparameters": {"weight": weight}},
+                            connection_type="intra_cluster"
+                        )
+                        intra_edges += 1
 
     # Add inter-cluster connections with TRULY CONSTANT per-worker communication
     # Each cluster sends exactly cross_cluster_edges TOTAL, distributed among all other clusters
@@ -352,12 +395,23 @@ def generate_clustered_network_constant_comm(
     total_edges = intra_edges + inter_edges
     theoretical_edge_cut = inter_edges / total_edges if total_edges > 0 else 0
 
+    # Calculate total agent count (neurons + synapses)
+    total_neurons = num_clusters * neurons_per_cluster
+    total_synapses = total_edges + external_inputs  # All edges become synapse agents
+    total_agents = total_neurons + total_synapses
+    agents_per_worker = total_agents / num_clusters if num_clusters > 0 else 0
+
     print(f"[SyntheticNet] Network statistics:")
-    print(f"  - Total edges: {total_edges}")
-    print(f"  - Intra-cluster edges: {intra_edges} ({100*intra_edges/total_edges:.1f}%)")
-    print(f"  - Inter-cluster edges: {inter_edges} ({100*inter_edges/total_edges:.1f}%)")
-    print(f"  - External inputs: {external_inputs}")
+    print(f"  - Total neurons: {total_neurons:,}")
+    print(f"  - Total edges: {total_edges:,}")
+    print(f"    - Intra-cluster: {intra_edges:,} ({100*intra_edges/total_edges:.1f}%)")
+    print(f"    - Inter-cluster: {inter_edges:,} ({100*inter_edges/total_edges:.1f}%)")
+    print(f"  - External inputs: {external_inputs:,}")
     print(f"  - Theoretical edge cut (with perfect partition): {theoretical_edge_cut:.4f}")
+    print(f"\n[SyntheticNet] AGENT COUNT (for weak scaling verification):")
+    print(f"  - Total agents: {total_agents:,} ({total_neurons:,} neurons + {total_synapses:,} synapses)")
+    print(f"  - Agents per worker: {agents_per_worker:,.0f}")
+    print(f"  - Scaling: {agents_per_worker:,.0f} agents/worker × {num_clusters} workers = {total_agents:,} total")
 
     return graph
 
