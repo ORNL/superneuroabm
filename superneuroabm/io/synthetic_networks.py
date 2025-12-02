@@ -140,7 +140,7 @@ def generate_clustered_network(
 
     # Add external inputs
     external_inputs = 0
-    for cluster_neurons in neuron_ids:
+    for cluster_id, cluster_neurons in enumerate(neuron_ids):
         for post in cluster_neurons:
             if np.random.random() < external_input_prob:
                 graph.add_edge(
@@ -150,7 +150,8 @@ def generate_clustered_network(
                     config=synapse_config,
                     overrides={"hyperparameters": {"weight": weight_exc}},
                     connection_type="external",
-                    tags=["input_synapse"]
+                    tags=["input_synapse"],
+                    cluster=cluster_id  # Assign to post-synaptic neuron's cluster
                 )
                 external_inputs += 1
 
@@ -174,6 +175,7 @@ def generate_clustered_network_constant_comm(
     intra_cluster_prob: Optional[float] = None,
     intra_cluster_degree: Optional[int] = None,
     cross_cluster_edges: int = 2000,
+    num_neighbor_clusters: Optional[int] = None,
     external_input_prob: float = 0.2,
     soma_breed: str = "lif_soma",
     soma_config: str = "config_0",
@@ -190,17 +192,24 @@ def generate_clustered_network_constant_comm(
     This function creates networks suitable for weak scaling tests where:
     1. Per-worker workload remains constant as workers scale (linear scaling)
     2. Per-worker communication remains constant (truly constant communication)
+    3. Per-worker contextualization overhead remains constant
 
     IMPORTANT: For proper weak scaling, use intra_cluster_degree (NOT intra_cluster_prob):
     - intra_cluster_degree: Each neuron connects to a FIXED number of neurons (O(n) edges per worker)
     - intra_cluster_prob: Each neuron connects with probability p (O(n²) edges per worker - NOT weak scaling!)
+
+    CRITICAL: Use num_neighbor_clusters to control contextualization overhead:
+    - If None (default), each cluster connects to ALL other clusters (NOT TRUE weak scaling!)
+    - If specified, each cluster forms BIDIRECTIONAL pairs with K neighbors
+    - Recommended: Set to 1 for minimal constant cross-cluster communication
 
     Args:
         num_clusters: Number of clusters (should match number of workers)
         neurons_per_cluster: Number of neurons in each cluster
         intra_cluster_prob: Connection probability within cluster (creates O(n²) edges - NOT for weak scaling!)
         intra_cluster_degree: Average degree per neuron (creates O(n) edges - PROPER weak scaling!)
-        cross_cluster_edges: Total edges each cluster sends to ALL other clusters (default: 2000)
+        cross_cluster_edges: Edges in EACH direction for bidirectional pairs (default: 2000)
+        num_neighbor_clusters: Number of bidirectional neighbor pairs (None = all neighbors)
         external_input_prob: Probability of external input per neuron (default: 0.2)
         soma_breed: Neuron type ("lif_soma" or "izh_soma")
         soma_config: Configuration name for somas
@@ -231,6 +240,18 @@ def generate_clustered_network_constant_comm(
     if intra_cluster_prob is not None and intra_cluster_degree is not None:
         raise ValueError("Cannot specify both intra_cluster_prob and intra_cluster_degree")
 
+    # Set default for num_neighbor_clusters if not specified
+    if num_neighbor_clusters is None:
+        # Default: connect to all other clusters (backward compatibility but NOT true weak scaling)
+        num_neighbor_clusters = num_clusters - 1 if num_clusters > 1 else 0
+        print(f"[Warning] num_neighbor_clusters not specified, using all-to-all ({num_neighbor_clusters} neighbors). For TRUE weak scaling, set num_neighbor_clusters=1.")
+    else:
+        # Validate num_neighbor_clusters
+        max_neighbors = num_clusters - 1
+        if num_neighbor_clusters > max_neighbors:
+            print(f"[Warning] num_neighbor_clusters ({num_neighbor_clusters}) > max possible ({max_neighbors}). Using {max_neighbors}.")
+            num_neighbor_clusters = max_neighbors
+
     if seed is not None:
         np.random.seed(seed)
 
@@ -251,7 +272,13 @@ def generate_clustered_network_constant_comm(
         expected_intra_edges = int(num_clusters * neurons_per_cluster * (neurons_per_cluster - 1) * intra_cluster_prob)
         print(f"  - Expected intra-cluster edges: {expected_intra_edges:,}")
 
-    print(f"  - Cross-cluster edges per worker: {cross_cluster_edges} (constant)")
+    print(f"  - Neighbor clusters per worker: {num_neighbor_clusters} (DIRECTED RING)")
+    print(f"  - Cross-cluster edges per neighbor: {cross_cluster_edges}")
+    # With directed ring, each cluster sends cross_cluster_edges to K neighbors
+    total_cross_edges_per_worker = cross_cluster_edges * num_neighbor_clusters if num_clusters > 1 else 0
+    print(f"  - Total cross-cluster edges per worker (outgoing): {total_cross_edges_per_worker} (constant!)")
+    if num_clusters > 1:
+        print(f"  - Each worker also receives {total_cross_edges_per_worker} edges from {num_neighbor_clusters} sender(s)")
 
     # Create neurons organized by cluster
     neuron_ids = []
@@ -300,7 +327,8 @@ def generate_clustered_network_constant_comm(
                             synapse_breed=synapse_breed,
                             config=synapse_config,
                             overrides={"hyperparameters": {"weight": weight}},
-                            connection_type="intra_cluster"
+                            connection_type="intra_cluster",
+                            cluster=cluster_id
                         )
                         intra_edges += 1
         else:
@@ -317,67 +345,70 @@ def generate_clustered_network_constant_comm(
                             synapse_breed=synapse_breed,
                             config=synapse_config,
                             overrides={"hyperparameters": {"weight": weight}},
-                            connection_type="intra_cluster"
+                            connection_type="intra_cluster",
+                            cluster=cluster_id
                         )
                         intra_edges += 1
 
-    # Add inter-cluster connections with TRULY CONSTANT per-worker communication
-    # Each cluster sends exactly cross_cluster_edges TOTAL, distributed among all other clusters
+    # Add inter-cluster connections with CONSTANT per-worker communication
+    # Using BIDIRECTIONAL PAIRS topology: each cluster pairs with K neighbors bidirectionally
+    # This ensures each cluster has exactly K unique communication partners (not 2K)
     inter_edges = 0
     for cluster_i in range(num_clusters):
-        if num_clusters == 1:
+        if num_clusters == 1 or num_neighbor_clusters == 0:
             continue  # No other clusters to connect to
 
-        # Distribute cross_cluster_edges among (num_clusters - 1) target clusters
-        edges_per_target = cross_cluster_edges // (num_clusters - 1)
-        remainder = cross_cluster_edges % (num_clusters - 1)
+        # Select K neighbor clusters using DIRECTED RING topology
+        # Strategy: cluster i connects to next K clusters in ring (unidirectional)
+        # For K=1: 0→1→2→3→0 (directed ring, keeps network connected)
+        # Each cluster sends to K neighbors and receives from K neighbors
+        # With K=1: each cluster has 2 unique communication partners (send-to, receive-from)
+        #   - 2 workers: same neighbor for send/receive → 1 unique partner
+        #   - 4+ workers: different neighbors for send/receive → 2 unique partners (constant!)
 
-        # Build list of target clusters
-        target_clusters = [j for j in range(num_clusters) if j != cluster_i]
+        target_clusters = []
+        for offset in range(1, num_neighbor_clusters + 1):
+            cluster_j = (cluster_i + offset) % num_clusters
+            target_clusters.append(cluster_j)
 
-        for idx, cluster_j in enumerate(target_clusters):
-            # Give remainder edges to first few targets to reach exact total
-            edges_to_add = edges_per_target + (1 if idx < remainder else 0)
-
-            if edges_to_add == 0:
-                continue
-
-            # Randomly sample exactly edges_to_add connections
+        # Send cross_cluster_edges to each of the K target clusters
+        for cluster_j in target_clusters:
+            edges_to_add = cross_cluster_edges
             max_possible = neurons_per_cluster * neurons_per_cluster
             edges_to_add = min(edges_to_add, max_possible)
 
-            # Generate all possible edges and sample
             all_possible_edges = [
                 (pre, post)
                 for pre in neuron_ids[cluster_i]
                 for post in neuron_ids[cluster_j]
             ]
 
-            # Randomly select edges_to_add edges without replacement
-            selected_edges = np.random.choice(
-                len(all_possible_edges),
-                size=edges_to_add,
-                replace=False
-            )
-
-            for edge_idx in selected_edges:
-                pre, post = all_possible_edges[edge_idx]
-                pre_type = graph.nodes[pre]["type"]
-                weight = weight_exc if pre_type == "excitatory" else weight_inh
-
-                graph.add_edge(
-                    pre,
-                    post,
-                    synapse_breed=synapse_breed,
-                    config=synapse_config,
-                    overrides={"hyperparameters": {"weight": weight}},
-                    connection_type="inter_cluster"
+            if len(all_possible_edges) > 0:
+                selected_edges = np.random.choice(
+                    len(all_possible_edges),
+                    size=min(edges_to_add, len(all_possible_edges)),
+                    replace=False
                 )
-                inter_edges += 1
+
+                for edge_idx in selected_edges:
+                    pre, post = all_possible_edges[edge_idx]
+                    pre_type = graph.nodes[pre]["type"]
+                    weight = weight_exc if pre_type == "excitatory" else weight_inh
+
+                    graph.add_edge(
+                        pre,
+                        post,
+                        synapse_breed=synapse_breed,
+                        config=synapse_config,
+                        overrides={"hyperparameters": {"weight": weight}},
+                        connection_type="inter_cluster",
+                        cluster=cluster_i
+                    )
+                    inter_edges += 1
 
     # Add external inputs
     external_inputs = 0
-    for cluster_neurons in neuron_ids:
+    for cluster_id, cluster_neurons in enumerate(neuron_ids):
         for post in cluster_neurons:
             if np.random.random() < external_input_prob:
                 graph.add_edge(
@@ -387,7 +418,8 @@ def generate_clustered_network_constant_comm(
                     config=synapse_config,
                     overrides={"hyperparameters": {"weight": weight_exc}},
                     connection_type="external",
-                    tags=["input_synapse"]
+                    tags=["input_synapse"],
+                    cluster=cluster_id  # Assign to post-synaptic neuron's cluster
                 )
                 external_inputs += 1
 

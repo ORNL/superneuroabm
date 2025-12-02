@@ -177,10 +177,44 @@ def model_from_nx_graph(
         sorted_nodes = sorted([n for n in graph.nodes() if not ((type(n) == float and np.isnan(n)) or n == -1)])
         agent_id_to_rank = {}
         agent_id = 0
+
+        # First, assign neuron agents (nodes)
+        # CRITICAL: Must assign EVERY agent_id that will be created!
+        neurons_assigned = 0
         for node in sorted_nodes:
+            # Every node in sorted_nodes will create an agent, so every agent_id needs a rank
             if node in node_to_rank:
                 agent_id_to_rank[agent_id] = node_to_rank[node]
-                agent_id += 1
+            else:
+                # Fallback to round-robin for any nodes not in partition
+                agent_id_to_rank[agent_id] = agent_id % size
+            neurons_assigned += 1
+            agent_id += 1
+
+        # Second, assign synapse agents (edges) to keep them with their clusters
+        # Synapses will be created in the order of graph.edges()
+        # Assign each synapse to the same worker as its pre-synaptic neuron
+        synapses_assigned = 0
+        for u, v, data in graph.edges(data=True):
+            # Determine which worker this synapse should be on
+            if u in node_to_rank and u >= 0:
+                # Assign synapse to same worker as pre-synaptic neuron
+                synapse_rank = node_to_rank[u]
+                agent_id_to_rank[agent_id] = synapse_rank
+                synapses_assigned += 1
+            elif v in node_to_rank:
+                # If u is external input (-1), use post-synaptic neuron's worker
+                synapse_rank = node_to_rank[v]
+                agent_id_to_rank[agent_id] = synapse_rank
+                synapses_assigned += 1
+            else:
+                # Fallback to round-robin (shouldn't happen with proper partition)
+                synapse_rank = agent_id % size
+                agent_id_to_rank[agent_id] = synapse_rank
+                synapses_assigned += 1
+
+            # Always increment for every synapse created
+            agent_id += 1
 
         # Load this mapping directly into the model (no file needed)
         model._agent_factory._partition_mapping = agent_id_to_rank
@@ -188,6 +222,8 @@ def model_from_nx_graph(
 
         if rank == 0:
             print(f"[SuperNeuroABM] Converted node partition to agent_id partition")
+            print(f"[SuperNeuroABM] Assigned {neurons_assigned}/{len(sorted_nodes)} neurons, {synapses_assigned} synapses")
+            print(f"[SuperNeuroABM] Total agents with partition: {len(agent_id_to_rank)}")
 
         # Create somas in sorted order to match partition
         for node in sorted_nodes:

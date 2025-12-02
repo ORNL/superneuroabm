@@ -65,7 +65,9 @@ def main():
     parser.add_argument("--intra-cluster-degree", type=int, default=10,
                        help="Average degree per neuron within cluster (default: 10) - for PROPER weak scaling")
     parser.add_argument("--cross-cluster-edges", type=int, default=2000,
-                       help="Number of edges from each cluster to each other cluster (default: 2000)")
+                       help="Number of edges in EACH direction for bidirectional pairs (default: 2000)")
+    parser.add_argument("--num-neighbor-clusters", type=int, default=1,
+                       help="Number of bidirectional neighbor pairs (default: 1 for TRUE weak scaling)")
     args = parser.parse_args()
 
     neurons_per_worker = args.neurons_per_worker
@@ -73,6 +75,7 @@ def main():
     update_ticks = args.update_ticks
     intra_cluster_degree = args.intra_cluster_degree
     cross_cluster_edges = args.cross_cluster_edges
+    num_neighbor_clusters = args.num_neighbor_clusters
 
     if rank == 0:
         print("="*70)
@@ -86,9 +89,14 @@ def main():
         print(f"Workers: {size}")
         print(f"Neurons per worker: {neurons_per_worker} (constant)")
         print(f"Intra-cluster degree: {intra_cluster_degree} edges/neuron (constant → O(n) scaling!)")
-        print(f"Cross-cluster edges per worker: {cross_cluster_edges if size > 1 else 0} (constant)")
+        print(f"Neighbor clusters per worker: {num_neighbor_clusters} (DIRECTED RING)")
+        print(f"Cross-cluster edges per neighbor: {cross_cluster_edges}")
+        total_cross_edges_out = cross_cluster_edges * num_neighbor_clusters if size > 1 else 0
+        print(f"Total outgoing cross-cluster edges per worker: {total_cross_edges_out} (constant!)")
+        print(f"Total incoming cross-cluster edges per worker: {total_cross_edges_out} (constant!)")
         print(f"Total neurons: {size * neurons_per_worker}")
-        print(f"Expected edges per worker: ~{neurons_per_worker * intra_cluster_degree + cross_cluster_edges:,}")
+        expected_edges = neurons_per_worker * intra_cluster_degree + total_cross_edges_out
+        print(f"Expected edges per worker: ~{expected_edges:,}")
         print(f"Simulation ticks: {simulation_ticks}")
         print(f"Update ticks: {update_ticks}")
         print(f"Partitioning: Cluster-based")
@@ -101,7 +109,8 @@ def main():
 
     network_filename = (
         f"network_constcomm_c{size}_n{neurons_per_worker}_"
-        f"deg{intra_cluster_degree}_cross{cross_cluster_edges}_s42.pkl"
+        f"deg{intra_cluster_degree}_cross{cross_cluster_edges}_"
+        f"nbr{num_neighbor_clusters}_s42.pkl"
     )
     network_path = network_dir / network_filename
 
@@ -144,6 +153,7 @@ def main():
                 neurons_per_cluster=neurons_per_worker,
                 intra_cluster_degree=intra_cluster_degree,
                 cross_cluster_edges=cross_cluster_edges,
+                num_neighbor_clusters=num_neighbor_clusters,
                 external_input_prob=0.1,
                 soma_breed="lif_soma",      # LIF only
                 synapse_breed="single_exp_synapse",  # No learning
@@ -175,14 +185,15 @@ def main():
     if rank == 0:
         print("\n[2/4] Analyzing cluster-based partition...")
 
-    # Use cluster-based partition for truly constant communication
-    cluster_partition = create_cluster_partition(graph, size) if size > 1 else None
+    # TEMPORARILY TEST WITH NO PARTITION TO ISOLATE ISSUE
+    cluster_partition = None  # Disable custom partition
+    # cluster_partition = create_cluster_partition(graph, size) if size > 1 else None
 
-    if rank == 0 and cluster_partition:
-        stats = analyze_network_partition(graph, cluster_partition)
-        print(f"    Edge cut ratio: {stats['edge_cut_ratio']:.4f}")
-        print(f"    Node imbalance: {stats['node_imbalance']:.3f}")
-        print(f"    Cross-worker edges: {stats['inter_worker_edges']}")
+    # if rank == 0 and cluster_partition:
+    #     stats = analyze_network_partition(graph, cluster_partition)
+    #     print(f"    Edge cut ratio: {stats['edge_cut_ratio']:.4f}")
+    #     print(f"    Node imbalance: {stats['node_imbalance']:.3f}")
+    #     print(f"    Cross-worker edges: {stats['inter_worker_edges']}")
 
     # Create model
     if rank == 0:

@@ -41,21 +41,24 @@ TICKS=10                    # Small number for quick comparison
 UPDATE_TICKS=5              # Sync every 5 ticks
 INTRA_DEGREE=10             # Constant degree per neuron (O(n) edges!)
 CROSS_CLUSTER_EDGES=100     # Constant cross-cluster edges per worker
+NUM_NEIGHBOR_CLUSTERS=1     # Directed ring topology (1 = TRUE weak scaling)
 
 echo "======================================================================"
-echo "Weak Scaling Test - PROPER WEAK SCALING"
+echo "Weak Scaling Test - PROPER WEAK SCALING (Directed Ring)"
 echo "======================================================================"
 echo "Goal: Demonstrate CONSTANT per-worker workload as network scales"
 echo "      - Constant neurons per worker"
 echo "      - Constant edges per worker (O(n), not O(n²)!)"
 echo "      - Constant communication per worker"
+echo "      - Constant contextualization overhead per worker"
 echo "======================================================================"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Nodes: $SLURM_JOB_NUM_NODES"
 echo "GPUs: $SLURM_GPUS"
 echo "Neurons per worker: $NEURONS_PER_WORKER (constant)"
 echo "Intra-cluster degree: $INTRA_DEGREE edges/neuron (constant → O(n) scaling!)"
-echo "Cross-cluster edges per worker: $CROSS_CLUSTER_EDGES (constant)"
+echo "Neighbor clusters: $NUM_NEIGHBOR_CLUSTERS (directed ring)"
+echo "Cross-cluster edges per neighbor: $CROSS_CLUSTER_EDGES (constant)"
 echo "Expected edges per worker: ~$((NEURONS_PER_WORKER * INTRA_DEGREE + CROSS_CLUSTER_EDGES))"
 echo "Simulation ticks: $TICKS"
 echo "======================================================================"
@@ -78,7 +81,8 @@ for NWORKERS in 2 4; do
         --ticks $TICKS \
         --update-ticks $UPDATE_TICKS \
         --intra-cluster-degree $INTRA_DEGREE \
-        --cross-cluster-edges $CROSS_CLUSTER_EDGES
+        --cross-cluster-edges $CROSS_CLUSTER_EDGES \
+        --num-neighbor-clusters $NUM_NEIGHBOR_CLUSTERS
 
     echo ""
 done
