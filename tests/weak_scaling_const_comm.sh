@@ -2,11 +2,10 @@
 #SBATCH -A lrn088
 #SBATCH -J weak_scaling_constcomm
 #SBATCH -o /lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/tests/output/weak_scaling_constcomm_%j.out
-#SBATCH -t 01:00:00
-#SBATCH -p batch
-#SBATCH -q debug
-#SBATCH -N 1
-#SBATCH --gpus=4
+#SBATCH -t 03:00:00
+#SBATCH -p extended
+#SBATCH -N 10
+#SBATCH --contiguous
 
 # Weak scaling test on Frontier - CONSTANT COMMUNICATION MODEL
 # Cross-worker edges per worker remains constant as network scales
@@ -35,9 +34,9 @@ cd /lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/tests
 # Create output directory
 mkdir -p output
 
-# Configuration - TEST FOR PROPER WEAK SCALING
-NEURONS_PER_WORKER=2000     # Neurons per worker (constant)
-TICKS=10                    # Small number for quick comparison
+# Configuration - FULL WEAK SCALING TEST (1-10 nodes, 8-80 GPUs)
+NEURONS_PER_WORKER=5000     # Neurons per worker (constant)
+TICKS=10                    # Quick test
 UPDATE_TICKS=5              # Sync every 5 ticks
 INTRA_DEGREE=10             # Constant degree per neuron (O(n) edges!)
 CROSS_CLUSTER_EDGES=100     # Constant cross-cluster edges per worker
@@ -63,26 +62,26 @@ echo "Expected edges per worker: ~$((NEURONS_PER_WORKER * INTRA_DEGREE + CROSS_C
 echo "Simulation ticks: $TICKS"
 echo "======================================================================"
 
-# Test 2 vs 4 workers with small network
-# Both should have similar runtime with constant communication
-
-# Test with progressively more workers
-for NWORKERS in 2 4; do
+# Test with 1 to 10 nodes (8 to 80 GPUs)
+# Each node has 8 GPUs on Frontier
+for NNODES in 1 2 3 4 5 6 7 8 9 10; do
+    NWORKERS=$((NNODES * 8))
     TOTAL_NEURONS=$((NWORKERS * NEURONS_PER_WORKER))
     echo ""
     echo "======================================================================"
-    echo "Test: $NWORKERS worker(s) -> ${TOTAL_NEURONS} neurons total"
+    echo "Test: $NNODES node(s), $NWORKERS GPUs -> $((TOTAL_NEURONS / 1000))K neurons"
     echo "======================================================================"
 
-    # Use srun for all worker counts (more stable)
-    srun -n$NWORKERS -c7 --gpus-per-task=1 --gpu-bind=closest \
+    # Run with output filtered to show only important info
+    srun -N$NNODES -n$NWORKERS -c7 --ntasks-per-gpu=1 --gpu-bind=closest \
         python weak_scaling_const_comm.py \
         --neurons-per-worker $NEURONS_PER_WORKER \
         --ticks $TICKS \
         --update-ticks $UPDATE_TICKS \
         --intra-cluster-degree $INTRA_DEGREE \
         --cross-cluster-edges $CROSS_CLUSTER_EDGES \
-        --num-neighbor-clusters $NUM_NEIGHBOR_CLUSTERS
+        --num-neighbor-clusters $NUM_NEIGHBOR_CLUSTERS \
+        2>&1 | grep -E "(WEAK SCALING|Network Size|Simulation time|SUCCESS|ERROR|Edge cut|agents \()"
 
     echo ""
 done

@@ -185,15 +185,14 @@ def main():
     if rank == 0:
         print("\n[2/4] Analyzing cluster-based partition...")
 
-    # TEMPORARILY TEST WITH NO PARTITION TO ISOLATE ISSUE
-    cluster_partition = None  # Disable custom partition
-    # cluster_partition = create_cluster_partition(graph, size) if size > 1 else None
+    # Use cluster-based partition for ring topology
+    cluster_partition = create_cluster_partition(graph, size) if size > 1 else None
 
-    # if rank == 0 and cluster_partition:
-    #     stats = analyze_network_partition(graph, cluster_partition)
-    #     print(f"    Edge cut ratio: {stats['edge_cut_ratio']:.4f}")
-    #     print(f"    Node imbalance: {stats['node_imbalance']:.3f}")
-    #     print(f"    Cross-worker edges: {stats['inter_worker_edges']}")
+    if rank == 0 and cluster_partition:
+        stats = analyze_network_partition(graph, cluster_partition)
+        print(f"    Edge cut ratio: {stats['edge_cut_ratio']:.4f}")
+        print(f"    Node imbalance: {stats['node_imbalance']:.3f}")
+        print(f"    Cross-worker edges: {stats['inter_worker_edges']}")
 
     # Create model
     if rank == 0:
