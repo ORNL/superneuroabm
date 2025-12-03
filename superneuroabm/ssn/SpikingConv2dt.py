@@ -12,6 +12,7 @@ from itertools import combinations
 import tonic.transforms as transforms
 from tonic.datasets import NMNIST
 import matplotlib.pyplot as plt
+#small change
 import tempfile
 from collections import defaultdict
 
@@ -55,7 +56,7 @@ class Conv2dtNet:
         t_ms = (t / 1000.0).astype(np.int32)
 
         # Filter ON events only
-        time_mask = t_ms <= 50
+        time_mask = t_ms <= 100
         x, y, t_ms = x[time_mask], y[time_mask], t_ms[time_mask]
 
 
@@ -75,7 +76,7 @@ class Conv2dtNet:
                 hyperparameters_overrides = {
                     'C':      np.float64(np.random.uniform(5e-9, 15e-9)),
                     'R':      np.float64(np.random.uniform(0.5e6, 2e6)),
-                    'vthr':  -40,
+                    'vthr':  -45,
                     'tref':   np.float64(5e-3),
                     'vrest':  -60,
                     'vreset': -65,
@@ -121,7 +122,7 @@ class Conv2dtNet:
             post_soma_id=post_soma,
             config_name="exp_pair_wise_stdp_config_0",
             hyperparameters_overrides={
-                "weight": np.random.uniform(-5,20),
+                "weight": np.random.uniform(0, 10),
                 "synaptic_delay": 1.0,
                 "scale": 1.0,
                 "tau_fall": 1e-2,
@@ -134,8 +135,8 @@ class Conv2dtNet:
                 "stdp_type": 0.0,
                 "tau_pre_stdp": 20e-3,
                 "tau_post_stdp": 20e-3,
-                "a_exp_pre": 0.03,
-                "a_exp_post": 0.04,
+                "a_exp_pre": 0.005,
+                "a_exp_post": 0.005,
                 "stdp_history_length": 100,
             },
             default_internal_learning_state_overrides={
@@ -171,26 +172,26 @@ class Conv2dtNet:
         self.ConvLayers[layer_idx].append([KernelSynapses, Kernel, Stride, num_input_channels])
     
     def Lateral_Inhibition(self, Layer_Tensor, p=0.8, inhibition_strength=-15):
-        N = len(Layer_Tensor)
+        # Flatten arbitrary tensor of somas to 1D list
+        flat = np.array(Layer_Tensor).flatten()
+
+        N = len(flat)
 
         for i in range(N):
-            # Choose a random 20% subset of OTHER neurons
+            # Choose random set of targets
             possible_targets = [j for j in range(N) if j != i]
             num_targets = max(1, int(p * len(possible_targets)))
 
-            chosen_indices = np.random.choice(
-                possible_targets,
-                size=num_targets,
-                replace=False
-            )
+            chosen = np.random.choice(possible_targets, size=num_targets, replace=False)
 
-            # Create inhibitory connections
-            for j in chosen_indices:
+            # Connect inhibitory synapses
+            for j in chosen:
                 self.CreateSynapseNoSTDP(
-                    Layer_Tensor[i],
-                    Layer_Tensor[j],
-                    -10
+                    flat[i],
+                    flat[j],
+                    inhibition_strength
                 )
+
         
     def Output_Channel_Construction(self, Layer_idx, N, Input_W, Input_H):
         kernels = self.ConvLayers[Layer_idx]
@@ -211,67 +212,72 @@ class Conv2dtNet:
 
         # Store both somas and synapses for this layer
         self.Output_Channel[Layer_idx] = [Output_Channel_Somas, Output_Channel_Synapses]
+        #self.Lateral_Inhibition(Output_Channel_Somas, p=0.2, inhibition_strength=-1)
 
 
-    def Downsample_Construction(self, Layer_idx, pool_size=2, connection_prob=0.5):
+    def Downsample_Construction(self, Layer_idx, pool_size=2):
 
         Output_Channel_Somas = self.Output_Channel[Layer_idx][0]
         K, N, _ = Output_Channel_Somas.shape
-        
-        # Downsampled size
-        M = N - 1  # or: M = N // pool_size
-        
+
+        # Downsampled spatial size
+        M = N // pool_size
+
         Downsample_Somas = np.empty((K, M, M), dtype=object)
-        Downsample_Synapses = np.empty((K, M, M), dtype=object)  # input synapses
-        Downsample_Connections = {}  # {(k, x, y): [list of connection synapses from output channel]}
-        
-        for k in range(K):
-            for x in range(M):
-                for y in range(M):
-                    # Create downsampled neuron
-                    soma = self.CreateSoma()
-                    Downsample_Somas[k, x, y] = soma
-                    
-                    # Create input synapse (for external input if needed)
-                    input_syn = self.CreateSynapseNoSTDP(-1, soma, 10)
-                    Downsample_Synapses[k, x, y] = input_syn
-                    
-                    # Create partial connections from output channel to this downsampled neuron
-                    # Connect from a pooling window in the output channel
+        Downsample_Synapses = np.empty((K, M, M), dtype=object)
+        Downsample_Connections = {}
+
+        for f in range(K):               # feature channels
+            for px in range(M):          # pooled x
+                for py in range(M):      # pooled y
+
+                    # Create pooled neuron
+                    pooled = self.CreateSoma()
+                    Downsample_Somas[f, px, py] = pooled
+
+                    # Optional external input
+                    inp = self.CreateSynapseNoSTDP(-1, pooled, 10)
+                    Downsample_Synapses[f, px, py] = inp
+
                     connections = []
-                    
-                    # Define the pooling region in the output channel
-                    # Maps (x, y) in downsampled to a region in output channel
-                    start_x = x
-                    start_y = y
-                    end_x = min(start_x + pool_size, N)
-                    end_y = min(start_y + pool_size, N)
-                    
-                    for ox in range(start_x, end_x):
-                        for oy in range(start_y, end_y):
-                            # Partial connectivity - randomly connect based on probability
-                            if np.random.random() < connection_prob:
-                                pre_soma = Output_Channel_Somas[k, ox, oy]
-                                syn = self.CreateSynapseNoSTDP(pre_soma, soma, 10)
-                                connections.append(syn)
-                    
-                    Downsample_Connections[(k, x, y)] = connections
-        
-        # Store the downsampled layer
+
+                    # Determine pooling window coordinates
+                    sx = px * pool_size
+                    sy = py * pool_size
+                    ex = sx + pool_size
+                    ey = sy + pool_size
+
+                    # FULLY connect all neurons in this block
+                    for ox in range(sx, ex):
+                        for oy in range(sy, ey):
+                            pre = Output_Channel_Somas[f, ox, oy]
+                            syn = self.CreateSynapseNoSTDP(pre, pooled, 10)
+                            connections.append(syn)
+
+                    # store all synapses for this pooled neuron
+                    Downsample_Connections[(f, px, py)] = connections
+
+        # Optional lateral inhibition within the downsampled layer
+        self.Lateral_Inhibition(
+            Downsample_Somas,
+            p=0.5,
+            inhibition_strength=-10
+        )
+
+        # Store result
         if not hasattr(self, 'Downsample'):
             self.Downsample = {}
-        
+
         self.Downsample[Layer_idx] = {
             'somas': Downsample_Somas,
             'input_synapses': Downsample_Synapses,
             'connections': Downsample_Connections,
             'dims': (K, M, M)
         }
-        
-        # Also store dimensions for next layer input
+
         self.Downsample_Dim = getattr(self, 'Downsample_Dim', {})
         self.Downsample_Dim[Layer_idx] = [M, M]
-        
+
         return Downsample_Somas, Downsample_Synapses
 
 
@@ -287,8 +293,8 @@ class Conv2dtNet:
             input_synapses.append(synapse)
         InputToHidden,InputToHidden_Dict=self.FullyConnected(InputLayer,HiddenLayer)
         HiddenToOutput, HiddenToOutput_Dict=self.FullyConnected(HiddenLayer,OutputLayer)
-        self.Lateral_Inhibition(HiddenLayer, p=.8, inhibition_strength=-15)
-        self.Lateral_Inhibition(OutputLayer, p=.8, inhibition_strength=-15)
+        self.Lateral_Inhibition(HiddenLayer, p=.8, inhibition_strength=-10)
+        self.Lateral_Inhibition(OutputLayer, p=.8, inhibition_strength=-10)
 
         return [input_synapses,OutputLayer, HiddenToOutput_Dict]
 
@@ -332,7 +338,7 @@ class Conv2dtNet:
                 Max_Output_W = max(Max_Output_W, Output_W)
 
             self.Output_Channel_Construction(layer_id, Max_Output_H, Max_Output_W, Max_Output_H)
-            self.Downsample_Construction(layer_id, pool_size=2, connection_prob=0.5)
+            self.Downsample_Construction(layer_id, pool_size=2)
             self.Output_Channel_Dim[layer_id] = [Max_Output_W, Max_Output_H]
 
             # Update for next layer
@@ -572,12 +578,12 @@ class Conv2dtNet:
         print('Start Forward Pass')
         start=clocktime.time()
         Dataset = self.load_bin_as_spike_dict(SpikeData)
-        print(Dataset)
+        #print(Dataset)
         # Fix conv kernel list so that is uses self.layers instead as not passed in anymore
         for layer_id in range(len(self.ConvLayers)):
             print(layer_id)
             Dataset = self.Full_Convolution_And_Extraction(layer_id, Dataset, Total_Sim_Time)
-            print(Dataset)
+            #print(Dataset)
             # Reset after each layer EXCEPT the last
             self.model.reset()
 
@@ -806,41 +812,35 @@ class Conv2dtNet:
 
 
 
-    def extract_full_network(self, save_path):
-
+    def extract_full_network_with_topology(self, save_path):
+        """Save network with full topology for reconstruction."""
+        
         # Helper to convert numpy values → JSON-safe Python types
         def to_py(obj):
             if isinstance(obj, np.ndarray):
                 return [to_py(x) for x in obj]
-
             if isinstance(obj, (np.float32, np.float64, float)):
                 return float(obj)
-
             if isinstance(obj, (np.int32, np.int64, int)):
                 return int(obj)
-
             if isinstance(obj, set):
                 return [to_py(x) for x in obj]
-
             if isinstance(obj, (list, tuple)):
                 return [to_py(x) for x in obj]
-
             return obj
 
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        # Handle empty directory path
+        dir_path = os.path.dirname(save_path)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
 
         structure = {}
 
         # ---- Somas ----
         soma_data = []
         for soma in self.model._soma_ids:
-
-            hyper = self.model.get_agent_property_value(
-                id=soma, property_name="hyperparameters"
-            )
-            internal = self.model.get_agent_property_value(
-                id=soma, property_name="internal_state"
-            )
+            hyper = self.model.get_agent_property_value(id=soma, property_name="hyperparameters")
+            internal = self.model.get_agent_property_value(id=soma, property_name="internal_state")
 
             soma_data.append({
                 "soma_id": int(soma),
@@ -849,29 +849,18 @@ class Conv2dtNet:
                 "incoming_synapses": to_py(self.model.soma2synapse_map[soma]["pre"]),
                 "outgoing_synapses": to_py(self.model.soma2synapse_map[soma]["post"])
             })
-
         structure["somas"] = soma_data
 
         # ---- Synapses ----
         syn_data = []
         for syn in self.model._synapse_ids:
-
             conn = self.model.get_synapse_connectivity(syn)
-            pre = int(conn[0])
-            post = int(conn[1])
+            pre, post = int(conn[0]), int(conn[1])
 
-            hyper = self.model.get_agent_property_value(
-                id=syn, property_name="hyperparameters"
-            )
-            lhyper = self.model.get_agent_property_value(
-                id=syn, property_name="learning_hyperparameters"
-            )
-            internal = self.model.get_agent_property_value(
-                id=syn, property_name="internal_state"
-            )
-            lint = self.model.get_agent_property_value(
-                id=syn, property_name="internal_learning_state"
-            )
+            hyper = self.model.get_agent_property_value(id=syn, property_name="hyperparameters")
+            lhyper = self.model.get_agent_property_value(id=syn, property_name="learning_hyperparameters")
+            internal = self.model.get_agent_property_value(id=syn, property_name="internal_state")
+            lint = self.model.get_agent_property_value(id=syn, property_name="internal_learning_state")
 
             syn_data.append({
                 "synapse_id": int(syn),
@@ -882,15 +871,62 @@ class Conv2dtNet:
                 "internal_state": to_py(internal),
                 "internal_learning_state": to_py(lint)
             })
-
         structure["synapses"] = syn_data
 
-        # ---- Write JSON ----
-        with open(save_path, "w") as outfile:
-            json.dump(structure, outfile, indent=2)
+        # ---- Topology ----
+        topology = {
+            "ConvLayers": {},
+            "Output_Channel": {},
+            "Output_Channel_Dim": {str(k): v for k, v in self.Output_Channel_Dim.items()},
+            "Downsample": {},
+            "Downsample_Dim": {str(k): v for k, v in self.Downsample_Dim.items()},
+            "FF": {
+                "input_synapses": [int(s) for s in self.FF[0]],
+                "output_somas": [int(s) for s in self.FF[1]],
+                "hidden_to_output_dict": {
+                    str(k): [int(s) for s in v] 
+                    for k, v in self.FF[2].items()
+                }
+            }
+        }
+
+        # ConvLayers
+        for layer_idx, kernels in self.ConvLayers.items():
+            topology["ConvLayers"][str(layer_idx)] = []
+            for kernel in kernels:
+                synapses, neurons, stride, num_channels = kernel
+                topology["ConvLayers"][str(layer_idx)].append({
+                    "synapses": to_py(synapses),
+                    "neurons": to_py(neurons),
+                    "stride": stride,
+                    "num_input_channels": num_channels
+                })
+
+        # Output_Channel
+        for layer_idx, (somas, synapses) in self.Output_Channel.items():
+            topology["Output_Channel"][str(layer_idx)] = {
+                "somas": to_py(somas),
+                "synapses": to_py(synapses)
+            }
+
+        # Downsample
+        for layer_idx, ds in self.Downsample.items():
+            topology["Downsample"][str(layer_idx)] = {
+                "somas": to_py(ds["somas"]),
+                "input_synapses": to_py(ds["input_synapses"]),
+                "dims": list(ds["dims"]),
+                "connections": {
+                    str(k): [int(s) for s in v] 
+                    for k, v in ds["connections"].items()
+                }
+            }
+
+        structure["topology"] = topology
+
+        with open(save_path, "w") as f:
+            json.dump(structure, f, indent=2)
 
         return structure
-
 
 if __name__ == "__main__":
     # -------------------------
@@ -904,14 +940,13 @@ if __name__ == "__main__":
     #  Build convolutional network
     # -------------------------
     Conv_Kernel_List = [
-
-        [(3, 3, 2), (3, 3, 2)],
-        
-        [(5, 5, 1), (5, 5, 1)],
+    [(5, 5, 1)] * 1,     # Layer 1
+    [(5, 5, 1)] * 1     # Layer 2
     ]
+
     Model.NetworkConstruction(
         Conv_Kernel_List=Conv_Kernel_List,
-        output_classes=30,
+        output_classes=20,
         Input_W=28,
         Input_H=28,
     )
@@ -948,7 +983,7 @@ if __name__ == "__main__":
 
         print(f"\n=== RUN {run_idx} | Digit {digit} | File {bin_file} ===")
 
-        pred = Model.ForwardPass(dataset_path, Total_Sim_Time=50)
+        pred = Model.ForwardPass(dataset_path, Total_Sim_Time=100)
         # Extract Hidden→Output weight matrix DF for this run
         current_df = Model.extract_ff_weights_df()
 
@@ -971,7 +1006,7 @@ if __name__ == "__main__":
         #  Save full network structure
         # -------------------------
         json_path = f"./network_run_{run_idx}.json"
-        Model.extract_full_network(json_path)
+        Model.extract_full_network_with_topology(json_path)
         print(f"Saved full network JSON for run {run_idx} to {json_path}")
 
         # Reset SNN before next run
