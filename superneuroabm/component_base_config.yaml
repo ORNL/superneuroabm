@@ -48,6 +48,27 @@ soma:
         v: -60  # Initial membrane voltage
         u: 0  # Initial recovery variable
 
+  lif_soma_adaptive_thr:
+    config_0:
+      hyperparameters:
+        C: 10e-9  # Membrane capacitance in Farads (10 nF)
+        R: 1e6  # Membrane resistance in Ohms (1 TΩ)
+        vthr_initial: -45  # Spike threshold voltage (mV)
+        tref: 5e-3  # Refractory period (5 ms)
+        vrest: -60  # Resting potential (mV)
+        vreset: -60  # Reset potential after spike (mV)
+        tref_allows_integration: 1  # Whether to allow integration during refractory period
+        I_in: 0  # Input current (40 nA)
+        scaling_factor: 1e-5  # Scaling factor for synaptic current
+        delta_thr: 100.0  # Threshold increase after spike (mV)
+        tau_decay_thr: 30e-3  # Time constant for threshold decay (100 ms)
+      internal_state:
+        v: -60.0  # Initial membrane voltage
+        tcount: 0.0  # Time counter
+        tlast: 0.0  # Last spike time
+        vthr: -45.0  # Initial spike threshold voltage
+
+
 synapse:
   single_exp_synapse:
     no_learning_config_0:
@@ -78,6 +99,30 @@ synapse:
         a_exp_pre: 0.005  # Pre-synaptic STDP learning rate
         a_exp_post: 0.005  # Post-synaptic STDP learning rate
         stdp_history_length: 100  # Length of STDP history buffer
+      internal_learning_state:
+        pre_trace: 0 # Pre-synaptic trace
+        post_trace: 0 # Post-synaptic trace
+        dW: 0 # Weight change accumulator
+
+    three_bit_exp_pair_wise_stdp_config_0:
+      hyperparameters:
+        weight: 14.0  # Synaptic weight (strength)
+        synaptic_delay: 1.0  # Transmission delay (ms)
+        scale: 1.0  # Scaling factor
+        tau_fall: 1e-2  # Decay time constant (1 ms)
+        tau_rise: 0  # Rise time constant (instantaneous)
+      internal_state:
+        I_synapse: 0.0  # Initial synaptic current
+      learning_hyperparameters:
+        stdp_type: 1.0   # Exp pair-wise STDP
+        tau_pre_stdp: 10e-3  # Pre-synaptic STDP time constant (10 ms)
+        tau_post_stdp: 10e-3  # Post-synaptic STDP time constant (10 ms)
+        a_exp_pre: 0.005  # Pre-synaptic STDP learning rate
+        a_exp_post: 0.005  # Post-synaptic STDP learning rate
+        stdp_history_length: 100  # Length of STDP history buffer
+        wmin: 0.0  # Minimum synaptic weight
+        wmax: 24.0  # Maximum synaptic weight
+        num_levels: 8  # Number of quantization levels (3 bits)
       internal_learning_state:
         pre_trace: 0 # Pre-synaptic trace
         post_trace: 0 # Post-synaptic trace
