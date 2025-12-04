@@ -15,6 +15,7 @@ from pathlib import Path
 
 from superneuroabm.step_functions.soma.izh import izh_soma_step_func
 from superneuroabm.step_functions.soma.lif import lif_soma_step_func
+from superneuroabm.step_functions.soma.lif_soma_adaptive_thr import lif_soma_adaptive_thr_step_func
 from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
 from superneuroabm.step_functions.synapse.stdp.learning_rule_selector import (
     learning_rule_selector,
@@ -39,6 +40,12 @@ class NeuromorphicModel(Model):
                 (
                     lif_soma_step_func,
                     CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif.py",
+                )
+            ],
+            "lif_soma_adaptive_thr": [
+                (
+                    lif_soma_adaptive_thr_step_func,
+                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif_soma_adaptive_thr.py",
                 )
             ],
         },
@@ -640,7 +647,7 @@ class NeuromorphicModel(Model):
         :param value: spike value
         """
         spikes = self.get_agent_property_value(
-            id=synapse_id, 
+            id=synapse_id,
             property_name="input_spikes_tensor",
         )
         spikes.append([tick, value])
