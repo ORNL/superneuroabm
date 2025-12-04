@@ -55,6 +55,8 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     # Adaptive threshold parameters
     delta_thr      = neuron_params[agent_index][9]     # threshold increment
     tau_decay_thr  = neuron_params[agent_index][10]    # threshold decay constant
+    vthr_initial = neuron_params[agent_index][11]      # initial threshold
+
 
     # vreset = neuron_params[agent_index][8]
     # I_in = neuron_params[agent_index][9]
@@ -86,7 +88,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
         vthr += delta_thr
     else:
         # Exponential decay: vthr ← vrest_thr + (vthr - vrest_thr)*exp(-dt/tau)
-        vthr = vrest + (vthr - vrest) * exp(-dt / tau_decay_thr)
+        vthr = vthr_initial + (vthr - vrest) * exp(-dt / tau_decay_thr)
 
     # Write back updated threshold state
     neuron_params[agent_index][2] = vthr
