@@ -60,7 +60,7 @@ soma:
         tref_allows_integration: 1  # Whether to allow integration during refractory period
         I_in: 0  # Input current (40 nA)
         scaling_factor: 1e-5  # Scaling factor for synaptic current
-        delta_thr: 100.0  # Threshold increase after spike (mV)
+        delta_thr: 1.0  # Threshold increase after spike (mV)
         tau_decay_thr: 30e-3  # Time constant for threshold decay (100 ms)
       internal_state:
         v: -60.0  # Initial membrane voltage
