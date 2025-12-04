@@ -45,7 +45,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     # Neuron Parameter
     C = neuron_params[agent_index][0]  # membrane capacitance
     R = neuron_params[agent_index][1]  # Leak resistance
-    vthr = neuron_params[agent_index][2]  # spike threshold
+    vthr_initial = neuron_params[agent_index][2]  # inital spike threshold
     tref = neuron_params[agent_index][3]  # refractory period
     vrest = neuron_params[agent_index][4]  # resting potential
     vreset = neuron_params[agent_index][5]  # reset potential
@@ -55,7 +55,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     # Adaptive threshold parameters
     delta_thr      = neuron_params[agent_index][9]     # threshold increment
     tau_decay_thr  = neuron_params[agent_index][10]    # threshold decay constant
-    vthr_initial = neuron_params[agent_index][11]      # initial threshold
+
 
 
     # vreset = neuron_params[agent_index][8]
@@ -68,7 +68,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
         1
     ]  # time count from the start of the simulation
     tlast = internal_state[agent_index][2]  # last spike time
-
+    vthr = internal_state[agent_index][3]  # spike threshold (updated value)
     # Calculate the membrane potential update
     dv = (vrest - v) / (R * C) + (I_synapse * scaling_factor + I_bias + I_in) / C
 
