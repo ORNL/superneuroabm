@@ -67,26 +67,52 @@ class Conv2dtNet:
         return spike_dict
 
 
+    '''
+lif_soma_adaptive_thr:
+    config_0:
+      hyperparameters:
+        C: 10e-9  # Membrane capacitance in Farads (10 nF)
+        R: 1e6  # Membrane resistance in Ohms (1 TΩ)
+        vthr_initial: -45  # Spike threshold voltage (mV)
+        tref: 5e-3  # Refractory period (5 ms)
+        vrest: -60  # Resting potential (mV)
+        vreset: -60  # Reset potential after spike (mV)
+        tref_allows_integration: 1  # Whether to allow integration during refractory period
+        I_in: 0  # Input current (40 nA)
+        scaling_factor: 1e-5  # Scaling factor for synaptic current
+        delta_thr: 1.0  # Threshold increase after spike (mV)
+        tau_decay_thr: 30e-3  # Time constant for threshold decay (100 ms)
+      internal_state:
+        v: -60.0  # Initial membrane voltage
+        tcount: 0.0  # Time counter
+        tlast: 0.0  # Last spike time
+        vthr: -45.0  # Initial spike threshold voltage
 
-    def CreateSoma(self):
+    '''
+
+    def CreateSoma(self, delta_thr=0):
             Soma= self.model.create_soma(
-                breed="lif_soma",
+                breed="lif_soma_adaptive_thr",
                 config_name="config_0",
                 hyperparameters_overrides = {
                     'C':      np.float64(np.random.uniform(5e-9, 15e-9)),
                     'R':      np.float64(np.random.uniform(0.5e6, 2e6)),
-                    'vthr':  -45,
+                    'vthr_initial': -45,
                     'tref':   np.float64(5e-3),
                     'vrest':  -60,
                     'vreset': -65,
                     'tref_integration':1,
                     'I_in': 0,
                     'scaling_factor':1e-6,
+                    'delta_thr': delta_thr,
+                    'tau_decay_thr': 30e-3
+
                 },
                 default_internal_state_overrides={
                     'v':-60,
                     'tcount':0.0,
-                    'tlast':0.0
+                    'tlast':0.0,
+                    'vthr':-45.0
                 }
             )
             return Soma
@@ -155,7 +181,7 @@ class Conv2dtNet:
         for c in range(num_input_channels):
             for i in range(W):
                 for j in range(H):
-                    Kernel_Neuron = self.CreateSoma()
+                    Kernel_Neuron = self.CreateSoma(delta_thr=1)
                     Kernel[c, i, j] = Kernel_Neuron
                     
         for c in range(num_input_channels):
@@ -282,9 +308,9 @@ class Conv2dtNet:
 
 
     def FeedForwardLayerNN(self, InputSize, HiddenSize, OutputSize):
-        InputLayer=np.array([self.CreateSoma() for _ in range(InputSize)])
-        HiddenLayer=np.array([self.CreateSoma() for _ in range(HiddenSize)])
-        OutputLayer=np.array([self.CreateSoma() for _ in range(OutputSize)])
+        InputLayer=np.array([self.CreateSoma(delta_thr=1) for _ in range(InputSize)])
+        HiddenLayer=np.array([self.CreateSoma(delta_thr=1) for _ in range(HiddenSize)])
+        OutputLayer=np.array([self.CreateSoma(delta_thr=1) for _ in range(OutputSize)])
         #initialize in input synapses
         input_synapses=[]
         for post_soma in InputLayer:
@@ -945,7 +971,7 @@ if __name__ == "__main__":
 
     Model.NetworkConstruction(
         Conv_Kernel_List=Conv_Kernel_List,
-        output_classes=20,
+        output_classes=30,
         Input_W=28,
         Input_H=28,
     )
@@ -955,6 +981,9 @@ if __name__ == "__main__":
     print("Number of synapses:", len(Model.model._synapse_ids))
     print("Total agents:", len(Model.model._soma_ids) + len(Model.model._synapse_ids))
 
+    print('MODEL',Model.ConvLayers[0][0][0][0][0][0])
+    print(Model.model.get_agent_property_value(id=Model.ConvLayers[0][0][0][0][0][0], property_name="hyperparameters"))
+    sys.exit()
     # -------------------------
     #  Data folder (NMNIST)
     # -------------------------
