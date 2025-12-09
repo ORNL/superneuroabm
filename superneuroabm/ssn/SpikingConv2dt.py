@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import tempfile
 from collections import defaultdict
 
+
 class Conv2dtNet:
     def __init__(self, SpikeData=None):
 

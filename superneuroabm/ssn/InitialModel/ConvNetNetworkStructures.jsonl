@@ -1,0 +1,6 @@
+{"ModelName": "2_Layer_2_Kernel_Vanilla_ConvNet", "Conv_Kernel_List": [[[5, 5, 1]], [[5, 5, 1]]], "Output_Classes": 30, "Input_W": 28, "Input_H": 28}
+{"ModelName": "2_Layer_6_Kernel_2_4_ConvNet", "Conv_Kernel_List": [[[5, 5, 1], [5, 5, 1]], [[5, 5, 1], [5, 5, 1], [5, 5, 1], [5, 5, 1]]], "Output_Classes": 30, "Input_W": 28, "Input_H": 28}
+{"ModelName": "2_Layer_4_Kernel_2_2_ConvNet", "Conv_Kernel_List": [[[5, 5, 1], [5, 5, 1]], [[5, 5, 1], [5, 5, 1]]], "Output_Classes": 30, "Input_W": 28, "Input_H": 28}
+{"ModelName": "4_Layer_6_Kernel_4_2_ConvNet", "Conv_Kernel_List": [[[5, 5, 1], [5, 5, 1], [5, 5, 1], [5, 5, 1]], [[5, 5, 1], [5, 5, 1]]], "Output_Classes": 30, "Input_W": 28, "Input_H": 28}
+{"ModelName": "4_Layer_6_Kernel_3_3_ConvNet", "Conv_Kernel_List": [[[5, 5, 1], [5, 5, 1], [5, 5, 1]], [[5, 5, 1], [5, 5, 1], [5, 5, 1]]], "Output_Classes": 30, "Input_W": 28, "Input_H": 28}
+{"ModelName": "4_Layer_3_Kernel_1_2_ConvNet", "Conv_Kernel_List": [[[5, 5, 1]], [[5, 5, 1], [5, 5, 1]]], "Output_Classes": 30, "Input_W": 28, "Input_H": 28}
