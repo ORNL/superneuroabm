@@ -101,7 +101,7 @@ lif_soma_adaptive_thr:
                     'tref':   np.float64(5e-3),
                     'vrest':  -60,
                     'vreset': -65,
-                    'tref_integration':1,
+                    'tref_allows_integration':1,
                     'I_in': 0,
                     'scaling_factor':1e-6,
                     'delta_thr': delta_thr,
@@ -658,7 +658,8 @@ lif_soma_adaptive_thr:
 
         # pick winner
         max_index = max(range(len(Spike_Times)), key=lambda i: Spike_Times[i][0])
-
+        end=clocktime.time()
+        print("\n================",end-start,"============= TIME")
         print("\n=== Output Layer Spike Times ===")
         for idx, (count, times) in enumerate(Spike_Times):
             print(f"Output neuron {idx}: {count} spikes → {list(times)}")
@@ -981,12 +982,6 @@ if __name__ == "__main__":
     print("Number of synapses:", len(Model.model._synapse_ids))
     print("Total agents:", len(Model.model._soma_ids) + len(Model.model._synapse_ids))
 
-    print('MODEL',Model.ConvLayers[0][0][0][0][0][0])
-    print(Model.model.get_agent_property_value(id=Model.ConvLayers[0][0][0][0][0][0], property_name="hyperparameters"))
-    sys.exit()
-    # -------------------------
-    #  Data folder (NMNIST)
-    # -------------------------
     root = "./data/NMNIST/Test"
     assert os.path.isdir(root), f"NMNIST Test directory not found: {root}"
 

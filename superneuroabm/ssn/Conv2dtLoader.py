@@ -50,23 +50,26 @@ def load_network_from_json(json_path, use_gpu=True):
         internal = [0.0 if (isinstance(v, float) and math.isnan(v)) else v for v in internal]
         
         new_soma = net.model.create_soma(
-            breed="lif_soma",
+            breed="lif_soma_adaptive_thr",  # ← FIXED
             config_name="config_0",
             hyperparameters_overrides={
                 'C':               hyper[0],
                 'R':               hyper[1],
-                'vthr':            hyper[2],
+                'vthr_initial':    hyper[2],  
                 'tref':            hyper[3],
                 'vrest':           hyper[4],
                 'vreset':          hyper[5],
-                'tref_integration': hyper[6],
+                'tref_allows_integration': hyper[6],
                 'I_in':            hyper[7],
                 'scaling_factor':  hyper[8],
+                'delta_thr':       hyper[9],   
+                'tau_decay_thr':   hyper[10],  
             },
             default_internal_state_overrides={
                 'v':      internal[0],
                 'tcount': internal[1],
                 'tlast':  internal[2],
+                'vthr':   internal[3], 
             }
         )
         soma_id_map[old_id] = new_soma
@@ -287,7 +290,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         json_path = sys.argv[1]
     else:
-        json_path = "./network_run_2.json"
+        json_path = "/lustre/orion/lrn088/proj-shared/objective3/wfishell/superneuroabm/superneuroabm/ssn/network_run_0.json"
     
     print(f"Loading network from: {json_path}")
     
@@ -298,5 +301,4 @@ if __name__ == "__main__":
     print("Network loaded and ready for inference!")
     print("="*50)
     
-
     
