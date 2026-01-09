@@ -1,6 +1,6 @@
 import unittest
 
-import numpy as np
+# import numpy as np  # Commented out - not currently used
 import csv
 import yaml
 import inspect
@@ -11,7 +11,14 @@ matplotlib.use('Agg')  # Use non-interactive backend for headless environments
 from matplotlib import pyplot as plt
 
 from superneuroabm.model import NeuromorphicModel
-from tests.util import vizualize_responses
+
+# Import utilities - handle both running from tests/ and from parent directory
+try:
+    from util import vizualize_responses
+    from baseline_utils import BaselineComparator
+except ImportError:
+    from tests.util import vizualize_responses
+    from tests.baseline_utils import BaselineComparator
 
 CURRENT_DIR = Path(__file__).resolve().parent
 COMPONENT_CONFIG_FPATH = CURRENT_DIR / ".." / "superneuroabm" / "component_base_config.yaml"
@@ -24,7 +31,15 @@ class TestSynapseAndSomaModels(unittest.TestCase):
     This test suite validates the core functionality of neuromorphic simulations
     by creating minimal neural circuits (single soma + synapse) and verifying
     their response to input stimulation.
+
+    Baseline Comparison:
+    - Each test saves/compares spike times against baseline to detect breaking changes
+    - Run save_all_baselines() to create initial baselines
+    - Run normally to compare against baselines
     """
+
+    # Class variable to control baseline saving mode
+    SAVE_BASELINE_MODE = False
 
     def __init__(self, methodName: str = ..., enable_internal_state_tracking: bool = True) -> None:
         """
@@ -41,6 +56,9 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         # Set to use CPU for base test (GPU variant in separate class)
         self._use_gpu = True
 
+        # Initialize baseline comparator
+        self._baseline_comparator = BaselineComparator()
+
         with open(COMPONENT_CONFIG_FPATH, "r", encoding="utf-8") as f:
             self._component_configurations = yaml.safe_load(f)
 
@@ -54,6 +72,25 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         # Define simulation duration
         self._simulation_duration = 200  # Total simulation time in ticks
         self._sync_every_n_ticks = 1  # Synchronization interval for updates
+
+    def _check_baseline(self, test_name: str) -> None:
+        """
+        Compare current model spike times against baseline or save as baseline.
+
+        Args:
+            test_name: Name of the test for baseline file
+        """
+        if self.SAVE_BASELINE_MODE:
+            self._baseline_comparator.save_baseline(self._model, test_name)
+        else:
+            passed, message = self._baseline_comparator.compare_with_baseline(self._model, test_name)
+            print(f"\n{'='*70}")
+            print(f"Baseline Comparison: {test_name}")
+            print(f"{'='*70}")
+            print(message)
+            if not passed:
+                print("\n⚠ WARNING: Spike times differ from baseline!")
+                print("  If this is intentional, run save_all_baselines() to update baselines")
 
     def test_lif_soma_single_exp_synapse(self) -> None:
         """
@@ -69,6 +106,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         self.micro_model_test_helper(
             "lif_soma", "config_0", "single_exp_synapse", "no_learning_config_0"
         )
+        self._check_baseline("test_lif_soma_single_exp_synapse")
 
     def test_izh_soma_single_exp_synapse(self) -> None:
         """
@@ -84,6 +122,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         self.micro_model_test_helper(
             "izh_soma", "config_0", "single_exp_synapse", "no_learning_config_0"
         )
+        self._check_baseline("test_izh_soma_single_exp_synapse")
 
 
     def test_lif_soma_two_external_synapses(self) -> None:
@@ -131,6 +170,9 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         # Generate visualization
         caller_name = inspect.stack()[0].function
         vizualize_responses(self._model, vthr=-45, fig_name=f"{caller_name}.png")
+
+        # Baseline comparison
+        self._check_baseline("test_lif_soma_two_external_synapses")
 
     def test_lif_soma_two_internal_synapses(self) -> None:
         """
@@ -204,21 +246,24 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         )
 
         # Debug: Check internal states history
-        soma_ids = self._model.soma2synapse_map.keys()
-        for soma_id in soma_ids:
-            states = self._model.get_internal_states_history(agent_id=soma_id)
-            print(f"Soma {soma_id}: max voltage = {max([s[0] for s in states]) if states else 'no data'}")
-            print(f"Soma {soma_id}: first 10 voltages = {[s[0] for s in states[:10]] if states else 'no data'}")
+        # soma_ids = self._model.soma2synapse_map.keys()
+        # for soma_id in soma_ids:
+        #     states = self._model.get_internal_states_history(agent_id=soma_id)
+        #     print(f"Soma {soma_id}: max voltage = {max([s[0] for s in states]) if states else 'no data'}")
+        #     print(f"Soma {soma_id}: first 10 voltages = {[s[0] for s in states[:10]] if states else 'no data'}")
 
-        synapse_ids = self._model.synapse2soma_map.keys()
-        for synapse_id in synapse_ids:
-            states = self._model.get_internal_states_history(agent_id=synapse_id)
-            print(f"Synapse {synapse_id}: max current = {max([s[0] for s in states]) if states else 'no data'}")
-            print(f"Synapse {synapse_id}: first 10 currents = {[s[0] for s in states[:10]] if states else 'no data'}")
+        # synapse_ids = self._model.synapse2soma_map.keys()
+        # for synapse_id in synapse_ids:
+        #     states = self._model.get_internal_states_history(agent_id=synapse_id)
+        #     print(f"Synapse {synapse_id}: max current = {max([s[0] for s in states]) if states else 'no data'}")
+        #     print(f"Synapse {synapse_id}: first 10 currents = {[s[0] for s in states[:10]] if states else 'no data'}")
 
         # Generate visualization
         caller_name = inspect.stack()[0].function
         vizualize_responses(self._model, vthr=-45, fig_name=f"{caller_name}.png")
+
+        # Baseline comparison
+        self._check_baseline("test_lif_soma_two_internal_synapses")
 
 
 
@@ -301,6 +346,9 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         caller_name = inspect.stack()[0].function
         vizualize_responses(self._model, vthr=-45, fig_name=f"{caller_name}.png")
 
+        # Baseline comparison
+        self._check_baseline("test_lif_soma_mixed_synapses")
+
 
 
 
@@ -351,11 +399,11 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         minimum_expected_spikes = 2
 
         # Extract the synaptic current history from synapse_0 (if tracking is enabled)
-        if self._model.enable_internal_state_tracking:
-            internal_states_history_syn0 = np.array(
-                self._model.get_internal_states_history(agent_id=synapse_0)
-            )
-            print(f"Internal states history from synapse 0: {internal_states_history_syn0}")
+        # if self._model.enable_internal_state_tracking:
+        #     internal_states_history_syn0 = np.array(
+        #         self._model.get_internal_states_history(agent_id=synapse_0)
+        #     )
+        #     print(f"Internal states history from synapse 0: {internal_states_history_syn0}")
 
         # Generate visualization of responses over time (or print spikes if tracking disabled)
         caller_name = inspect.stack()[1].function
@@ -366,6 +414,56 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         assert (
             actual_spikes >= minimum_expected_spikes
         ), f"Total number of spikes are {actual_spikes} but should be at least {minimum_expected_spikes}"'''
+
+
+def save_all_baselines():
+    """
+    Save baselines for all tests in TestSynapseAndSomaModels.
+
+    This function runs all tests in SAVE_BASELINE_MODE to create initial baselines.
+    Run this once, then commit the baseline files to version control.
+
+    Usage:
+        python -c "from test_synapse_and_soma_models import save_all_baselines; save_all_baselines()"
+
+    Or add this to the if __name__ == "__main__" section and run:
+        python test_synapse_and_soma_models.py
+    """
+    import sys
+
+    print("\n" + "=" * 70)
+    print("SAVING ALL BASELINES")
+    print("=" * 70)
+    print("This will run all tests and save their spike times as baselines.\n")
+
+    # Enable baseline saving mode
+    TestSynapseAndSomaModels.SAVE_BASELINE_MODE = True
+
+    # Create test suite with all tests
+    loader = unittest.TestLoader()
+    suite = loader.loadTestsFromTestCase(TestSynapseAndSomaModels)
+
+    # Run tests
+    runner = unittest.TextTestRunner(verbosity=2)
+    result = runner.run(suite)
+
+    # Restore normal mode
+    TestSynapseAndSomaModels.SAVE_BASELINE_MODE = False
+
+    if result.wasSuccessful():
+        print("\n" + "=" * 70)
+        print("✓ ALL BASELINES SAVED SUCCESSFULLY")
+        print("=" * 70)
+        print("Baseline files created in: tests/baselines/")
+        print("\nNext steps:")
+        print("  1. Review the baseline files")
+        print("  2. Commit them to version control")
+        print("  3. Run tests normally to compare: python -m unittest test_synapse_and_soma_models")
+    else:
+        print("\n" + "=" * 70)
+        print("❌ SOME TESTS FAILED - Baselines may be incomplete")
+        print("=" * 70)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
