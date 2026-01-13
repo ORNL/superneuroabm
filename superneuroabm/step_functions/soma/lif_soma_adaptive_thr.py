@@ -8,7 +8,7 @@ import cupy as cp
 
 
 @jit.rawkernel(device="cuda")
-def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_step_func
+def lif_soma_adaptive_thr_step_func(  # NOTE: update the name to soma_step_func from neuron_step_func
     tick,
     agent_index,
     globals,
@@ -45,17 +45,19 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     # Neuron Parameter
     C = neuron_params[agent_index][0]  # membrane capacitance
     R = neuron_params[agent_index][1]  # Leak resistance
-    vthr = neuron_params[agent_index][2]  # spike threshold
+    vthr_initial = neuron_params[agent_index][2]  # inital spike threshold
     tref = neuron_params[agent_index][3]  # refractory period
     vrest = neuron_params[agent_index][4]  # resting potential
     vreset = neuron_params[agent_index][5]  # reset potential
-    tref_allows_integration = neuron_params[agent_index][
-        6
-    ]  # whether to allow integration during refractory period
+    tref_allows_integration = neuron_params[agent_index][6]  # whether to allow integration during refractory period
     I_in = neuron_params[agent_index][7]  # input current
-    scaling_factor = neuron_params[agent_index][
-        8
-    ]  # scaling factor for synaptic current
+    scaling_factor = neuron_params[agent_index][8]  # scaling factor for synaptic current
+    # Adaptive threshold parameters
+    delta_thr      = neuron_params[agent_index][9]     # threshold increment
+    tau_decay_thr  = neuron_params[agent_index][10]    # threshold decay constant
+
+
+
     # vreset = neuron_params[agent_index][8]
     # I_in = neuron_params[agent_index][9]
 
@@ -66,7 +68,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
         1
     ]  # time count from the start of the simulation
     tlast = internal_state[agent_index][2]  # last spike time
-
+    vthr = internal_state[agent_index][3]  # spike threshold (updated value)
     # Calculate the membrane potential update
     dv = (vrest - v) / (R * C) + (I_synapse * scaling_factor + I_bias + I_in) / C
 
@@ -78,6 +80,15 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
 
     #if tlast > 0 else 1 # output spike only happens if the membrane potential exceeds the threshold and the neuron is not in refractory period.
     s = 1.0 * ((v >= vthr) and (( dt * tcount > tlast + tref) if tlast > 0 else True))
+    # -----------------------------
+    # ADAPTIVE THRESHOLD UPDATE
+    # -----------------------------
+    if s == 1.0:
+        # Increase threshold after spike
+        vthr += delta_thr
+    else:
+        # Exponential decay: vthr ← vrest_thr + (vthr - vrest_thr)*exp(-dt/tau)
+        vthr = vthr_initial + (vthr - vthr_initial) * cp.exp(-dt / tau_decay_thr)
 
 
     tlast = tlast * (1 - s) + dt * tcount * s
@@ -86,6 +97,8 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     internal_state[agent_index][0] = v
     internal_state[agent_index][1] += 1
     internal_state[agent_index][2] = tlast
+    # Write back updated threshold state
+    internal_state[agent_index][3] =vthr
 
     output_spikes_tensor[agent_index][t_current] = s
 
@@ -95,4 +108,4 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     internal_states_buffer[agent_index][buffer_idx][0] = v
     internal_states_buffer[agent_index][buffer_idx][1] = internal_state[agent_index][1] + 1
     internal_states_buffer[agent_index][buffer_idx][2] = tlast
- 
+    internal_states_buffer[agent_index][buffer_idx][3] = vthr

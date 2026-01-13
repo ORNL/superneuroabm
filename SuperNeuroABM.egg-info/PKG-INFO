@@ -1,0 +1,27 @@
+Metadata-Version: 2.4
+Name: SuperNeuroABM
+Version: 1.0.0.dev1
+Summary: A GPU-based multi-agent simulation framework for neuromorphic computing.
+Home-page: https://code.ornl.gov/superneuro/superneuroabm
+Author: Chathika Gunaratne, Shruti Kulkarni, Ashish Gautam, Xi Zhang, Prasanna Date
+Author-email: gunaratnecs@ornl.gov
+License: GPL
+Project-URL: Source, https://github.com/ORNL/superneuroabm
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: sagesim
+Requires-Dist: pyyaml
+Requires-Dist: networkx
+Requires-Dist: matplotlib
+Dynamic: author
+Dynamic: author-email
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: license
+Dynamic: license-file
+Dynamic: project-url
+Dynamic: requires-dist
+Dynamic: summary
+
+A GPU-based multi-agent simulation framework for neuromorphic computing.
