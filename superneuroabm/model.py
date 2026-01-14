@@ -650,8 +650,7 @@ class NeuromorphicModel(Model):
             id=synapse_id,
             property_name="input_spikes_tensor",
         )
-        # OPTIMIZED: Store as flattened [tick, value, tick, value, ...] (depth 2)
-        # instead of [[tick, value], ...] (depth 3) for 450x faster GPU transfer
+        # OPTIMIZED: Store as flattened [tick, value, tick, value, ...] (depth 2) instead of [[tick, value], ...] (depth 3) 
         spikes.append(tick)
         spikes.append(value)
         self.set_agent_property_value(
