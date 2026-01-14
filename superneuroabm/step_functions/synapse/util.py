@@ -41,9 +41,8 @@ def get_soma_spike(
         spike_buffer_max_len = len(input_spikes_tensor[agent_index])
         i = 0
 
-        # OPTIMIZED: input_spikes_tensor is now flattened as [tick, value, tick, value, ...]
-        # instead of [[tick, value], [tick, value], ...] for 450x faster GPU transfer
-        # CRITICAL: Check i+1 < max_len to avoid reading past array bounds!
+        # input_spikes_tensor is now flattened as [tick, value, tick, value, ...]
+        # Check i+1 < max_len to avoid reading past array bounds!
         while i + 1 < spike_buffer_max_len and not cp.isnan(input_spikes_tensor[agent_index][i]):
             if input_spikes_tensor[agent_index][i] == t_current:      # tick at even index
                 spike += input_spikes_tensor[agent_index][i+1]        # value at odd index

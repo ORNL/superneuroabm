@@ -281,9 +281,7 @@ class NeuromorphicModel(Model):
         """
         # Reset all synapses
         for synapse_id in self._synapse_ids:
-            # Clear input spikes
-            # OPTIMIZED: Use depth-2 flattened format [tick, value, tick, value, ...]
-            # instead of depth-3 [[tick, value], ...] for 450x faster GPU transfer
+            # OPTIMIZED: Use depth-2 flattened format [tick, value, tick, value, ...] instead of depth-3 [[tick, value], ...]
             super().set_agent_property_value(
                 id=synapse_id,
                 property_name="input_spikes_tensor",
