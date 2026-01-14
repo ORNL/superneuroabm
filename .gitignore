@@ -61,3 +61,21 @@ venv.bak/
 # OS
 .DS_Store
 Thumbs.db
+
+# Test outputs and generated files
+tests/output/
+tests/output_archieve/
+tests/baselines/
+*.png
+*.csv
+
+# Documentation builds
+docs/
+
+# Generated data and networks
+superneuroabm/ssn/data/
+**/network_run_*.json
+**/ff_plots_run_*.png
+
+# Temporary test files
+step_func_code.py
