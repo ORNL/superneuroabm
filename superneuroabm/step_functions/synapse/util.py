@@ -40,12 +40,11 @@ def get_soma_spike(
         spike = 0.0
         spike_buffer_max_len = len(input_spikes_tensor[agent_index])
         i = 0
-        while i < spike_buffer_max_len and not cp.isnan(
-            input_spikes_tensor[agent_index][i][0]
-        ):
-            if input_spikes_tensor[agent_index][i][0] == t_current:
-                spike += input_spikes_tensor[agent_index][i][
-                    1
-                ]  # TODO: check if we need analog values for spikes
-            i += 1
+
+        # input_spikes_tensor is now flattened as [tick, value, tick, value, ...]
+        # Check i+1 < max_len to avoid reading past array bounds!
+        while i + 1 < spike_buffer_max_len and not cp.isnan(input_spikes_tensor[agent_index][i]):
+            if input_spikes_tensor[agent_index][i] == t_current:      # tick at even index
+                spike += input_spikes_tensor[agent_index][i+1]        # value at odd index
+            i += 2  # Skip by 2 to move to next tick (not i+1!)
     return spike
