@@ -39,8 +39,8 @@ def generate_metis_partition(graph: nx.DiGraph, num_workers: int) -> Dict[int, i
             "METIS not installed."
         )
 
-    # Filter out external input nodes (-1 and NaN for backward compatibility)
-    nodes_to_remove = [n for n in graph.nodes() if (type(n) == float and np.isnan(n)) or n == -1]
+    # Filter out external input nodes (-1)
+    nodes_to_remove = [n for n in graph.nodes() if n == -1]
     G_filtered = graph.copy()
     G_filtered.remove_nodes_from(nodes_to_remove)
 
@@ -172,9 +172,8 @@ def model_from_nx_graph(
     if node_to_rank:
         # Create mapping from agent_id (creation order) to rank
         # We'll create nodes in sorted order to ensure consistency across all ranks
-        # -1 indicates an input or output node; NaNs are what *used*
-        # to signal such, so we check for that for backward compatibility.
-        sorted_nodes = sorted([n for n in graph.nodes() if not ((type(n) == float and np.isnan(n)) or n == -1)])
+        # -1 indicates an input or output node
+        sorted_nodes = sorted([n for n in graph.nodes() if n != -1])
         agent_id_to_rank = {}
         agent_id = 0
 
@@ -246,10 +245,8 @@ def model_from_nx_graph(
     else:
         # Create somas from graph nodes (original behavior)
         for node, data in graph.nodes(data=True):
-            # -1 indicates an input or output node; NaNs are what *used*
-            # to signal such, so we check for that for backward compatibility.
-            # TODO -1 is a magic number and should be a defined constant.
-            if (type(node) == float and np.isnan(node)) or node == -1:
+            # -1 indicates an input or output node (external synapse)
+            if node == -1:
                 continue
             soma_breed = data.get("soma_breed")
             config_name = data.get("config", "config_0")
@@ -320,8 +317,6 @@ def nx_graph_from_model(
         soma_breed = model.get_agent_breed(soma_id).name
         config = model.get_agent_config_name(soma_id)
         overrides = model.get_agent_config_diff(soma_id)
-        # TODO: implement tags writing
-        tags = model.get_agent_tags(soma_id)
 
         if not override_internal_state:
             # Remove internal state overrides if not needed

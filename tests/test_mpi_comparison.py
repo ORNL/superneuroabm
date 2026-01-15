@@ -256,4 +256,16 @@ class TestMPIComparison(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    # Usage:
+    #   python test_mpi_comparison.py                 # Run tests normally
+    #   python test_mpi_comparison.py --save-baselines # Save baseline
+    #   mpirun -n 4 python test_mpi_comparison.py     # Run with MPI
+    import sys
+
+    if "--save-baselines" in sys.argv:
+        sys.argv.remove("--save-baselines")
+        # Run the save_baseline method
+        test = TestMPIComparison()
+        test.save_baseline()
+    else:
+        unittest.main()

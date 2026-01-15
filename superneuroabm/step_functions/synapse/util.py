@@ -18,7 +18,7 @@ def get_soma_spike(
     Get spike from pre-soma using its local index (already converted by SAGESim).
 
     Args:
-        pre_soma_index: Local index of the pre-synaptic soma (-1 if NaN/external input)
+        pre_soma_index: Local index of the pre-synaptic soma (-1 for external input)
         globals, agent_ids: Kept for signature compatibility, not used anymore
 
     NOTE: Due to double buffering, this reads from the PREVIOUS tick's spikes.

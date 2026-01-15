@@ -457,7 +457,7 @@ class NeuromorphicModel(Model):
         ]
 
         soma_id = super().create_agent_of_breed(
-            breed=self._soma_breeds[breed],  # TODO fix
+            breed=self._soma_breeds[breed],
             hyperparameters=hyperparameters,
             internal_state=default_internal_state,
         )
@@ -475,7 +475,7 @@ class NeuromorphicModel(Model):
     def create_synapse(
         self,
         breed: str,
-        pre_soma_id: int,  # TODO edit
+        pre_soma_id: int,
         post_soma_id: int,
         config_name: str,
         hyperparameters_overrides: Dict[str, float] = None,
@@ -489,8 +489,8 @@ class NeuromorphicModel(Model):
 
         Parameters:
             breed (str): Synapse breed name (e.g., 'single_exp_synapse').
-            pre_soma_id (int): Presynaptic soma agent ID (or np.nan for external input).
-            post_soma_id (int): Postsynaptic soma agent ID (or np.nan for external output).
+            pre_soma_id (int): Presynaptic soma agent ID (or -1 for external input).
+            post_soma_id (int): Postsynaptic soma agent ID (or -1 for external output).
             config_name (str): Name of the configuration to use for this synapse.
             hyperparameters_overrides (dict, optional): Dict of hyperparameter overrides.
             default_internal_state_overrides (dict, optional): Dict of internal state overrides.

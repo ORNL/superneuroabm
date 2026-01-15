@@ -18,7 +18,7 @@ setup(
     },
     include_package_data=True,
     url="https://code.ornl.gov/superneuro/superneuroabm",
-    license="GPL",
+    license="BSD 3-Clause",
     description="A GPU-based multi-agent simulation framework for neuromorphic computing.",
     long_description="""A GPU-based multi-agent simulation framework for neuromorphic computing.""",
     long_description_content_type="text/markdown",

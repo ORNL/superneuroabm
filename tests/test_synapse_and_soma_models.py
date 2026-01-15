@@ -469,15 +469,14 @@ def save_all_baselines():
 if __name__ == "__main__":
     # Run all test cases when script is executed directly
     #
-    # To run with internal state tracking enabled (default - generates plots):
-    #   python test_synapse_and_soma_models.py
+    # Usage:
+    #   python test_synapse_and_soma_models.py                 # Run tests normally
+    #   python test_synapse_and_soma_models.py --save-baselines # Save baselines
     #
-    # To run a specific test with tracking disabled (prints spike times only):
-    #   test = TestSynapseAndSomaModels('test_lif_soma_single_exp_synapse', enable_internal_state_tracking=False)
-    #   test.test_lif_soma_single_exp_synapse()
-    #
-    # Example: Quick test with tracking disabled for performance
-    # test = TestSynapseAndSomaModels('test_lif_soma_single_exp_synapse', enable_internal_state_tracking=False)
-    # test.test_lif_soma_single_exp_synapse()
+    import sys
 
-    unittest.main()
+    if "--save-baselines" in sys.argv:
+        sys.argv.remove("--save-baselines")
+        save_all_baselines()
+    else:
+        unittest.main()

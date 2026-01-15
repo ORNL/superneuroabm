@@ -29,7 +29,6 @@ matplotlib.use('Agg')
 
 from superneuroabm.model import NeuromorphicModel
 from tests.util import vizualize_responses
-from tests.baseline_utils import BaselineComparator
 
 
 def test_lif_soma_mixed_synapses(enable_internal_state_tracking=True, use_gpu=True):
@@ -163,9 +162,13 @@ class TestInternalStateTracking(unittest.TestCase):
             use_gpu=True
         )
 
-        # Only prints spike times (no visualization when tracking disabled)
-        comparator = BaselineComparator()
-        comparator.print_spike_times(model_without_tracking)
+        # Print spike times (no visualization when tracking disabled)
+        print("\nSpike times without tracking:")
+        all_soma_ids_without = model_without_tracking.soma2synapse_map.keys()
+        soma_ids_without = [sid for sid in all_soma_ids_without if sid >= 0]
+        for soma_id in sorted(soma_ids_without):
+            spike_times = list(model_without_tracking.get_spike_times(soma_id=soma_id))
+            print(f"  Soma {soma_id}: {spike_times}")
 
         # Compare spike times between both runs
         print("\n" + "=" * 70)
@@ -190,39 +193,8 @@ class TestInternalStateTracking(unittest.TestCase):
 
         print("\n✓ TEST PASSED: Spike times identical regardless of tracking mode")
 
-        # Baseline comparison
-        print("\n" + "=" * 70)
-        print("Baseline Comparison")
-        print("=" * 70)
-
-        test_name = "test_lif_soma_mixed_synapses_tracking"
-        passed, message = comparator.compare_with_baseline(model_with_tracking, test_name)
-        print(message)
-
-        if not passed:
-            print("\n⚠ WARNING: Spike times differ from baseline!")
-            print("  If this is intentional, run: python test_internal_state_tracking.py TestInternalStateTracking.save_baseline")
-            # Don't fail the test on baseline mismatch, just warn
-            # This allows running tests even when baseline doesn't exist yet
-
-    def save_baseline(self):
-        """Save current spike times as baseline."""
-        print("\n" + "=" * 70)
-        print("Saving Baseline")
-        print("=" * 70)
-
-        model = test_lif_soma_mixed_synapses(
-            enable_internal_state_tracking=True,
-            use_gpu=True
-        )
-
-        comparator = BaselineComparator()
-        test_name = "test_lif_soma_mixed_synapses_tracking"
-        comparator.save_baseline(model, test_name)
-
-        print("\nℹ Baseline saved successfully!")
-        print("  Next run: python -m unittest test_internal_state_tracking.TestInternalStateTracking")
-
 
 if __name__ == "__main__":
+    # Usage:
+    #   python test_internal_state_tracking.py  # Run test
     unittest.main()

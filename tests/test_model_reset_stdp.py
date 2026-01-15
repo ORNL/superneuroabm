@@ -42,7 +42,7 @@ class TestModelResetWithSTDP(unittest.TestCase):
         # External input synapse to trigger pre-synaptic soma
         synapse_input = self.model.create_synapse(
             breed="single_exp_synapse",
-            pre_soma_id=np.nan,  # External input
+            pre_soma_id=-1,  # External input
             post_soma_id=soma_pre,
             config_name="no_learning_config_0",
         )
@@ -112,7 +112,7 @@ class TestModelResetWithSTDP(unittest.TestCase):
 
         synapse_input = self.model.create_synapse(
             breed="single_exp_synapse",
-            pre_soma_id=np.nan,
+            pre_soma_id=-1,
             post_soma_id=soma_pre,
             config_name="no_learning_config_0",
         )
@@ -203,7 +203,7 @@ class TestModelResetWithSTDP(unittest.TestCase):
 
         synapse_input = self.model.create_synapse(
             breed="single_exp_synapse",
-            pre_soma_id=np.nan,
+            pre_soma_id=-1,
             post_soma_id=soma_pre,
             config_name="no_learning_config_0",
         )
@@ -303,7 +303,7 @@ class TestModelResetWithSTDP(unittest.TestCase):
 
         synapse_input = self.model.create_synapse(
             breed="single_exp_synapse",
-            pre_soma_id=np.nan,
+            pre_soma_id=-1,
             post_soma_id=soma_pre,
             config_name="no_learning_config_0",
         )

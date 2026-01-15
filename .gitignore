@@ -73,7 +73,6 @@ tests/baselines/
 docs/
 
 # Generated data and networks
-superneuroabm/ssn/data/
 **/network_run_*.json
 **/ff_plots_run_*.png
 
