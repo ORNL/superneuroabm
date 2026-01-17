@@ -1,25 +1,23 @@
-#!/usr/bin/env python
 """
-Baseline comparison utilities for SuperNeuroABM tests.
+Baseline utilities for saving and comparing spike times.
 
-This module provides utilities for saving and comparing spike times against
-baseline files to detect breaking changes in model behavior.
+This module provides functions to:
+1. Save spike times from a model run as a baseline
+2. Compare current spike times against saved baseline
+3. Report differences to detect model breaking changes
 """
 
 import json
 from pathlib import Path
-from typing import Tuple, Dict, List
+from typing import Dict, List, Tuple
+import numpy as np
+from superneuroabm.model import NeuromorphicModel
 
 
 class BaselineComparator:
-    """
-    Utility class for comparing test results against saved baselines.
+    """Handles saving and comparing spike time baselines."""
 
-    Baselines are saved as JSON files in tests/baselines/ directory.
-    Each baseline contains spike times for all somas in the model.
-    """
-
-    def __init__(self, baseline_dir: str = None):
+    def __init__(self, baseline_dir: Path = None):
         """
         Initialize baseline comparator.
 
@@ -28,140 +26,150 @@ class BaselineComparator:
                          Defaults to tests/baselines/
         """
         if baseline_dir is None:
-            self.baseline_dir = Path(__file__).parent / "baselines"
+            self.baseline_dir = Path(__file__).resolve().parent / "baselines"
         else:
             self.baseline_dir = Path(baseline_dir)
 
-        # Create baseline directory if it doesn't exist
-        self.baseline_dir.mkdir(exist_ok=True)
+        self.baseline_dir.mkdir(parents=True, exist_ok=True)
 
-    def save_baseline(self, model, test_name: str) -> None:
+    def save_baseline(self, model: NeuromorphicModel, test_name: str) -> Dict:
         """
         Save spike times from model as baseline.
 
         Args:
-            model: NeuromorphicModel instance
+            model: NeuromorphicModel instance after simulation
             test_name: Name of the test (used as filename)
+
+        Returns:
+            Dictionary of spike times saved
+        """
+        # Get all valid soma IDs
+        all_soma_ids = model.soma2synapse_map.keys()
+        soma_ids = [sid for sid in all_soma_ids if sid >= 0 and not np.isnan(sid)]
+
+        # Collect spike times
+        baseline_data = {}
+        for soma_id in sorted(soma_ids):
+            spike_times = model.get_spike_times(soma_id=soma_id)
+            # Convert numpy arrays to lists for JSON serialization
+            baseline_data[str(soma_id)] = [int(t) for t in spike_times]
+
+        # Save to file
+        baseline_file = self.baseline_dir / f"{test_name}.json"
+        with open(baseline_file, 'w') as f:
+            json.dump(baseline_data, f, indent=2)
+
+        print(f"\n✓ Baseline saved: {baseline_file}")
+        print(f"  Somas tracked: {len(baseline_data)}")
+        total_spikes = sum(len(times) for times in baseline_data.values())
+        print(f"  Total spikes: {total_spikes}")
+
+        return baseline_data
+
+    def load_baseline(self, test_name: str) -> Dict:
+        """
+        Load baseline spike times from file.
+
+        Args:
+            test_name: Name of the test
+
+        Returns:
+            Dictionary of spike times, or None if baseline doesn't exist
         """
         baseline_file = self.baseline_dir / f"{test_name}.json"
 
-        # Extract spike times for all somas
-        spike_data = {}
+        if not baseline_file.exists():
+            return None
 
-        # Get all soma IDs from model
-        all_soma_ids = sorted([
-            sid for sid in model.soma2synapse_map.keys()
-            if sid >= 0  # Filter out external inputs (-1)
-        ])
+        with open(baseline_file, 'r') as f:
+            return json.load(f)
 
-        for soma_id in all_soma_ids:
-            spike_times = list(model.get_spike_times(soma_id=soma_id))
-            spike_data[str(soma_id)] = spike_times
-
-        # Save to JSON
-        with open(baseline_file, 'w') as f:
-            json.dump(spike_data, f, indent=2)
-
-        print(f"✓ Baseline saved: {baseline_file}")
-        print(f"  Somas: {len(spike_data)}")
-        total_spikes = sum(len(spikes) for spikes in spike_data.values())
-        print(f"  Total spikes: {total_spikes}")
-
-    def compare_with_baseline(self, model, test_name: str) -> Tuple[bool, str]:
+    def compare_with_baseline(self, model: NeuromorphicModel, test_name: str,
+                             tolerance: float = 0) -> Tuple[bool, str]:
         """
-        Compare model spike times against saved baseline.
+        Compare current model spike times with saved baseline.
 
         Args:
-            model: NeuromorphicModel instance
-            test_name: Name of the test (used to find baseline file)
+            model: NeuromorphicModel instance after simulation
+            test_name: Name of the test
+            tolerance: Allowed difference in spike times (default: 0 for exact match)
 
         Returns:
             Tuple of (passed: bool, message: str)
         """
-        baseline_file = self.baseline_dir / f"{test_name}.json"
-
-        # Check if baseline exists
-        if not baseline_file.exists():
-            return False, f"❌ Baseline not found: {baseline_file}\n" \
-                         f"   Run save_all_baselines() to create it."
-
         # Load baseline
-        with open(baseline_file, 'r') as f:
-            baseline_data = json.load(f)
+        baseline = self.load_baseline(test_name)
 
-        # Extract current spike times
-        all_soma_ids = sorted([
-            sid for sid in model.soma2synapse_map.keys()
-            if sid >= 0
-        ])
+        if baseline is None:
+            return False, f"❌ No baseline found for '{test_name}'. Run with --save-baseline first."
+
+        # Get current spike times
+        all_soma_ids = model.soma2synapse_map.keys()
+        soma_ids = [sid for sid in all_soma_ids if sid >= 0 and not np.isnan(sid)]
 
         current_data = {}
-        for soma_id in all_soma_ids:
-            spike_times = list(model.get_spike_times(soma_id=soma_id))
-            current_data[str(soma_id)] = spike_times
+        for soma_id in sorted(soma_ids):
+            spike_times = model.get_spike_times(soma_id=soma_id)
+            current_data[str(soma_id)] = [int(t) for t in spike_times]
 
         # Compare
-        passed = True
         differences = []
 
         # Check for missing/extra somas
-        baseline_somas = set(baseline_data.keys())
+        baseline_somas = set(baseline.keys())
         current_somas = set(current_data.keys())
 
         if baseline_somas != current_somas:
-            passed = False
             missing = baseline_somas - current_somas
             extra = current_somas - baseline_somas
             if missing:
-                differences.append(f"  Missing somas: {missing}")
+                differences.append(f"  Missing somas: {sorted(missing)}")
             if extra:
-                differences.append(f"  Extra somas: {extra}")
+                differences.append(f"  Extra somas: {sorted(extra)}")
 
-        # Compare spike times for common somas
+        # Compare spike times for each soma
         for soma_id in baseline_somas & current_somas:
-            baseline_spikes = baseline_data[soma_id]
+            baseline_spikes = baseline[soma_id]
             current_spikes = current_data[soma_id]
 
-            if baseline_spikes != current_spikes:
-                passed = False
+            if len(baseline_spikes) != len(current_spikes):
                 differences.append(
-                    f"  Soma {soma_id}:\n"
-                    f"    Baseline: {baseline_spikes}\n"
-                    f"    Current:  {current_spikes}"
+                    f"  Soma {soma_id}: spike count mismatch "
+                    f"(baseline: {len(baseline_spikes)}, current: {len(current_spikes)})"
                 )
+            else:
+                # Check individual spike times
+                for i, (b_time, c_time) in enumerate(zip(baseline_spikes, current_spikes)):
+                    if abs(b_time - c_time) > tolerance:
+                        differences.append(
+                            f"  Soma {soma_id}, spike #{i}: time mismatch "
+                            f"(baseline: {b_time}, current: {c_time})"
+                        )
 
-        # Build message
-        if passed:
-            total_spikes = sum(len(spikes) for spikes in current_data.values())
-            message = f"✓ PASSED: Spike times match baseline\n" \
-                     f"  Baseline: {baseline_file}\n" \
-                     f"  Somas: {len(current_data)}\n" \
-                     f"  Total spikes: {total_spikes}"
+        # Generate report
+        if differences:
+            message = f"❌ FAILED: Spike times differ from baseline\n"
+            message += "\n".join(differences)
+            return False, message
         else:
-            message = f"❌ FAILED: Spike times differ from baseline\n" \
-                     f"  Baseline: {baseline_file}\n" \
-                     f"  Differences:\n" + "\n".join(differences)
+            total_spikes = sum(len(times) for times in current_data.values())
+            message = f"✓ PASSED: All spike times match baseline\n"
+            message += f"  Somas checked: {len(current_data)}\n"
+            message += f"  Total spikes verified: {total_spikes}"
+            return True, message
 
-        return passed, message
-
-    def print_spike_times(self, model) -> None:
+    def print_spike_times(self, model: NeuromorphicModel) -> None:
         """
         Print spike times for all somas in the model.
 
         Args:
-            model: NeuromorphicModel instance
+            model: NeuromorphicModel instance after simulation
         """
-        print("\n" + "=" * 70)
-        print("SPIKE TIMES")
-        print("=" * 70)
+        all_soma_ids = model.soma2synapse_map.keys()
+        soma_ids = [sid for sid in all_soma_ids if sid >= 0 and not np.isnan(sid)]
 
-        all_soma_ids = sorted([
-            sid for sid in model.soma2synapse_map.keys()
-            if sid >= 0
-        ])
-
-        for soma_id in all_soma_ids:
-            spike_times = list(model.get_spike_times(soma_id=soma_id))
-            print(f"Soma {soma_id}: {spike_times}")
-
-        print("=" * 70 + "\n")
+        print("\n=== Spike Times ===")
+        for soma_id in sorted(soma_ids):
+            spike_times = model.get_spike_times(soma_id=soma_id)
+            print(f"Soma {soma_id} spike times: {list(spike_times)}")
+        print("===================\n")
