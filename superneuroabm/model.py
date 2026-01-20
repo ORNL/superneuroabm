@@ -95,39 +95,44 @@ class NeuromorphicModel(Model):
         self.register_global_property("dt", 1e-3)  # Time step (100 μs)
         self.register_global_property("I_bias", 0)  # No bias current
 
+        # Soma properties: (default_value, neighbor_visible)
+        # neighbor_visible=True means the property is sent to neighbors during MPI sync
+        # Only output_spikes_tensor is read by neighbors (synapses read soma spikes)
         soma_properties = {
-            "hyperparameters": [0.0, 0.0, 0.0, 0.0, 0.0],  # k, vth, C, a, b,
-            "learning_hyperparameters": [
-                0.0 for _ in range(5)
-            ],  # STDP_function name, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, Wmax, Wmin
-            "internal_state": [0.0, 0.0, 0.0, 0.0],  # v, u
-            "internal_learning_state": [
-                0.0 for _ in range(3)
-            ],  # pre_trace, post_trace, dW
-            "synapse_delay_reg": [],  # Synapse delay
-            "input_spikes_tensor": [],  # input spikes tensor
-            "output_spikes_tensor": [],
-            "internal_states_buffer": [],
-            "internal_learning_states_buffer": [],  # learning states buffer
+            "hyperparameters": ([0.0, 0.0, 0.0, 0.0, 0.0], False),  # k, vth, C, a, b,
+            "learning_hyperparameters": (
+                [0.0 for _ in range(5)], False
+            ),  # STDP_function name, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, Wmax, Wmin
+            "internal_state": ([0.0, 0.0, 0.0, 0.0], False),  # v, u
+            "internal_learning_state": (
+                [0.0 for _ in range(3)], False
+            ),  # pre_trace, post_trace, dW
+            "synapse_delay_reg": ([], False),  # Synapse delay
+            "input_spikes_tensor": ([], False),  # input spikes tensor
+            "output_spikes_tensor": ([], True),  # NEIGHBOR-VISIBLE: synapses read soma spikes
+            "internal_states_buffer": ([], False),
+            "internal_learning_states_buffer": ([], False),  # learning states buffer
         }
+        # Synapse properties: (default_value, neighbor_visible)
+        # Only internal_state is read by neighbors (somas read I_synapse from synapses)
         synapse_properties = {
-            "hyperparameters": [
-                0.0 for _ in range(10)
-            ],  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
-            "learning_hyperparameters": [
-                0.0 for _ in range(5)
-            ],  # STDP_function name, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, Wmax, Wmin
-            "internal_state": [
-                0.0 for _ in range(4)
-            ],  # Isyn, Isyn_supp, pre_trace, post_trace
-            "internal_learning_state": [
-                0.0 for _ in range(3)
-            ],  # pre_trace, post_trace, dW
-            "synapse_delay_reg": [],  # Synapse delay
-            "input_spikes_tensor": [],  # input spikes tensor
-            "output_spikes_tensor": [],
-            "internal_states_buffer": [],
-            "internal_learning_states_buffer": [],  # learning states buffer
+            "hyperparameters": (
+                [0.0 for _ in range(10)], False
+            ),  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
+            "learning_hyperparameters": (
+                [0.0 for _ in range(5)], False
+            ),  # STDP_function name, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, Wmax, Wmin
+            "internal_state": (
+                [0.0 for _ in range(4)], True
+            ),  # NEIGHBOR-VISIBLE: somas read Isyn; Isyn, Isyn_supp, pre_trace, post_trace
+            "internal_learning_state": (
+                [0.0 for _ in range(3)], False
+            ),  # pre_trace, post_trace, dW
+            "synapse_delay_reg": ([], False),  # Synapse delay
+            "input_spikes_tensor": ([], False),  # input spikes tensor
+            "output_spikes_tensor": ([], False),
+            "internal_states_buffer": ([], False),
+            "internal_learning_states_buffer": ([], False),  # learning states buffer
         }
         self._synapse_ids = []
         self._soma_ids = []
@@ -136,8 +141,8 @@ class NeuromorphicModel(Model):
         self._soma_breeds: Dict[str, Breed] = {}
         for breed_name, step_funcs in soma_breed_info.items():
             soma_breed = Breed(breed_name)  # Strt here Ashish
-            for prop_name, default_val in soma_properties.items():
-                soma_breed.register_property(prop_name, default_val)
+            for prop_name, (default_val, neighbor_visible) in soma_properties.items():
+                soma_breed.register_property(prop_name, default_val, neighbor_visible=neighbor_visible)
             for step_func_order, (step_func, module_fpath) in enumerate(step_funcs):
                 module_fpath = (
                     CURRENT_DIR_ABSPATH / "izh_soma.py"
@@ -155,8 +160,8 @@ class NeuromorphicModel(Model):
         self._synapse_breeds: Dict[str, Breed] = {}
         for breed_name, step_funcs in synapse_breed_info.items():
             synapse_breed = Breed(breed_name)  # Strt here Ashish
-            for prop_name, default_val in synapse_properties.items():
-                synapse_breed.register_property(prop_name, default_val)
+            for prop_name, (default_val, neighbor_visible) in synapse_properties.items():
+                synapse_breed.register_property(prop_name, default_val, neighbor_visible=neighbor_visible)
             for step_func_order, (step_func, module_fpath) in enumerate(step_funcs):
                 module_fpath = (
                     CURRENT_DIR_ABSPATH / "izh_soma.py"
@@ -388,6 +393,23 @@ class NeuromorphicModel(Model):
                 id=soma_id,
                 property_name="internal_states_buffer",
                 value=internal_states_buffer,
+            )
+            # Allocate internal_learning_states_buffer for somas too (for MPI consistency)
+            # Somas don't use this, but having consistent structure across agent types
+            # prevents issues when MPI workers have different agent type distributions
+            initial_internal_learning_state = super().get_agent_property_value(
+                id=soma_id, property_name="internal_learning_state"
+            )
+            if self.enable_internal_state_tracking:
+                internal_learning_states_buffer = [
+                    initial_internal_learning_state[::] for _ in range(ticks)
+                ]
+            else:
+                internal_learning_states_buffer = [initial_internal_learning_state[::]]
+            super().set_agent_property_value(
+                id=soma_id,
+                property_name="internal_learning_states_buffer",
+                value=internal_learning_states_buffer,
             )
         for synapse_id in self._synapse_ids:
             initial_internal_state = super().get_agent_property_value(
