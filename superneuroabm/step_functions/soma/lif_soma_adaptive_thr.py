@@ -87,7 +87,7 @@ def lif_soma_adaptive_thr_step_func(  # NOTE: update the name to soma_step_func 
         # Increase threshold after spike
         vthr += delta_thr
     else:
-        # Exponential decay: vthr ← vrest_thr + (vthr - vrest_thr)*exp(-dt/tau)
+        # Exponential decay: vthr = vrest_thr + (vthr - vrest_thr)*exp(-dt/tau)
         vthr = vthr_initial + (vthr - vthr_initial) * cp.exp(-dt / tau_decay_thr)
 
 

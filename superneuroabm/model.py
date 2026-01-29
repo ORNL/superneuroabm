@@ -138,6 +138,16 @@ class NeuromorphicModel(Model):
         self._soma_ids = []
         self._soma_reset_states = {}
 
+        # Disable double buffering for properties written by soma:
+        # - internal_state: self-access only (v, tcount, tlast)
+        # - output_spikes_tensor: synapse reads [t-1], soma writes [t] (different indices)
+        # - internal_states_buffer: self-access only, no cross-agent reads
+        soma_no_double_buffer = [
+            "internal_state",
+            "output_spikes_tensor",
+            "internal_states_buffer",
+        ]
+
         self._soma_breeds: Dict[str, Breed] = {}
         for breed_name, step_funcs in soma_breed_info.items():
             soma_breed = Breed(breed_name)  # Strt here Ashish
@@ -153,9 +163,18 @@ class NeuromorphicModel(Model):
                     step_func=step_func,
                     module_fpath=module_fpath,
                     priority=step_func_order,
+                    no_double_buffer=soma_no_double_buffer,
                 )
             self.register_breed(soma_breed)
             self._soma_breeds[breed_name] = soma_breed
+
+        # Disable double buffering for properties written by synapse:
+        # - internal_state: soma reads at P0 before synapse writes at P100
+        # - internal_states_buffer: self-access only, no cross-agent reads
+        synapse_no_double_buffer = [
+            "internal_state",
+            "internal_states_buffer",
+        ]
 
         self._synapse_breeds: Dict[str, Breed] = {}
         for breed_name, step_funcs in synapse_breed_info.items():
@@ -172,6 +191,7 @@ class NeuromorphicModel(Model):
                     step_func=step_func,
                     module_fpath=module_fpath,
                     priority=100 + step_func_order,
+                    no_double_buffer=synapse_no_double_buffer,
                 )
             self.register_breed(synapse_breed)
             self._synapse_breeds[breed_name] = synapse_breed
