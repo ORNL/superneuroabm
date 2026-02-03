@@ -3,6 +3,7 @@ Izhikevich Neuron and weighted synapse step functions for spiking neural network
 
 """
 
+import cupy as cp
 from cupyx import jit
 
 
@@ -15,29 +16,30 @@ def izh_soma_step_func(
     breeds,
     locations,
     neuron_params,  # k, vth, C, a, b,
+    learning_params,
     internal_state,  # v, u
+    internal_learning_state,
     synapse_history,  # Synapse delay
     input_spikes_tensor,  # input spikes
     output_spikes_tensor,
     internal_states_buffer,
+    internal_learning_states_buffer,
 ):
-    synapse_ids = locations[agent_index]  # network location is defined by neighbors
+    synapse_indices = locations[agent_index]  # network location is defined by neighbors
 
     I_synapse = 0.0
-    for i in range(len(synapse_ids)):
 
-        synapse_index = -1  # synapse index local to the current mpi rank
-        i = 0
-        while i < len(agent_ids) and agent_ids[i] != synapse_ids[0]:
-            i += 1
-        if i < len(agent_ids):
-            synapse_index = i
+    # synapse_indices now contains pre-computed local indices (converted in SAGESim)
+    # No linear search needed!
+    for i in range(len(synapse_indices)):
+        synapse_index = int(synapse_indices[i])
+        if synapse_index >= 0 and not cp.isnan(synapse_indices[i]):
             I_synapse += internal_state[synapse_index][0]
 
     # Get the current time step value:
     t_current = int(tick)
-
     dt = globals[0]  # time step size
+    I_bias = globals[1]  # bias current
 
     # NOTE: neuron_params would need to be as long as the max number of params in any spiking neuron model
     k = neuron_params[agent_index][0]
@@ -58,24 +60,27 @@ def izh_soma_step_func(
 
     # dv = (k*(internal_state[my_idx]-vrest)*(internal_state[my_idx]-vthr)-u[my_idx]+I) / C
     # internal_state: [0] - v, [1] - u
-    # NOTE: size of internal_state would need to be set as the maximum possible state varaibles of any spiking neuron
+    # NOTE: size of internal_state would need to be set as the maximum possible state variables of any spiking neuron
 
     v = internal_state[agent_index][0]
     u = internal_state[agent_index][1]
 
-    I_bias = globals[1]  # bias current
-
     dv = (k * (v - vrest) * (v - vthr) - u + I_synapse + I_bias + I_in) / C
-    v = v + dt * dv *1e3
+    v = v + dt * dv * 1e3
 
     u += dt * 1e3 * (a * (b * (v - vrest) - u))
-    s = 1 * (v >= vthr)  # output spike
-    u = u + d * s   # If spiked, update recovery variable
+    # s = 1 * (v >= vthr)  # output spike
+    s = 1 * (v >= vpeak)  # output spike
+    u = u + d * s  # If spiked, update recovery variable
     v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
 
     internal_state[agent_index][0] = v
     internal_state[agent_index][1] = u
 
     output_spikes_tensor[agent_index][t_current] = s
-    internal_states_buffer[agent_index][t_current][0] = v
-    internal_states_buffer[agent_index][t_current][1] = u
+
+    # Safe buffer indexing: use modulo to prevent out-of-bounds access
+    # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always
+    buffer_idx = t_current % len(internal_states_buffer[agent_index])
+    internal_states_buffer[agent_index][buffer_idx][0] = v
+    internal_states_buffer[agent_index][buffer_idx][1] = u

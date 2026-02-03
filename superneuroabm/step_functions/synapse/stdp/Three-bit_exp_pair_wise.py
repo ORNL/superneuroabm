@@ -10,13 +10,14 @@ from superneuroabm.step_functions.synapse.util import get_soma_spike
 
 
 @jit.rawkernel(device="cuda")
-def exp_pair_wise_stdp(
+def exp_pair_wise_stdp_quantized(
     tick,
     agent_index,
     globals,
     agent_ids,
     breeds,
     locations,
+    connectivity,
     synapse_params,  # scale, time constant (tau_rise and tau_fall)
     learning_params,
     internal_state,  #
@@ -48,10 +49,9 @@ def exp_pair_wise_stdp(
     post_trace = internal_learning_state[agent_index][1]
     dW = internal_learning_state[agent_index][2]
 
-    # locations[agent_index] = [pre_soma_index, post_soma_index]
-    # SAGESim has already converted agent IDs to local indices
-    pre_soma_index = locations[agent_index][0]
-    post_soma_index = locations[agent_index][1]
+    # Get pre and post soma IDs from connectivity (contains agent IDs, not converted by SAGESim)
+    pre_soma_id = connectivity[agent_index][0]
+    post_soma_id = connectivity[agent_index][1]
 
     # Get the pre-soma spike
     pre_soma_spike = get_soma_spike(
@@ -59,7 +59,7 @@ def exp_pair_wise_stdp(
         agent_index,
         globals,
         agent_ids,
-        pre_soma_index,
+        pre_soma_id,
         t_current,
         input_spikes_tensor,
         output_spikes_tensor,
@@ -70,7 +70,7 @@ def exp_pair_wise_stdp(
         agent_index,
         globals,
         agent_ids,
-        post_soma_index,
+        post_soma_id,
         t_current,
         input_spikes_tensor,
         output_spikes_tensor,
@@ -81,7 +81,18 @@ def exp_pair_wise_stdp(
     dW = pre_trace * post_soma_spike - post_trace * pre_soma_spike
 
     weight += dW  # Update the weight
-    synapse_params[agent_index][0] = weight  # Update the weight in synapse_params
+
+    # === 3-bit quantization ===
+    wmin = 0#learning_params[agent_index][6]  # assuming stored in learning_params
+    wmax = 14#learning_params[agent_index][7]
+    num_levels = 8  # 3 bits -> 8 quantization levels#learning_params[agent_index][8]
+    delta = (wmax - wmin) / (num_levels - 1)
+    weight = cp.clip(weight, wmin, wmax)
+    quantized_weight = cp.round((weight - wmin) / delta) * delta + wmin
+    weight = quantized_weight
+    # ==========================
+
+    synapse_params[agent_index][0] = weight  # Update quantized weight
 
     internal_learning_state[agent_index][0] = pre_trace
     internal_learning_state[agent_index][1] = post_trace

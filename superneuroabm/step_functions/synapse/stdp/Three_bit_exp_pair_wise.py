@@ -10,7 +10,7 @@ from superneuroabm.step_functions.synapse.util import get_soma_spike
 
 
 @jit.rawkernel(device="cuda")
-def exp_pair_wise_stdp(
+def exp_pair_wise_stdp_quantized(
     tick,
     agent_index,
     globals,
@@ -48,8 +48,7 @@ def exp_pair_wise_stdp(
     post_trace = internal_learning_state[agent_index][1]
     dW = internal_learning_state[agent_index][2]
 
-    # locations[agent_index] = [pre_soma_index, post_soma_index]
-    # SAGESim has already converted agent IDs to local indices
+    # Get pre and post soma IDs from connectivity (contains agent IDs, not converted by SAGESim)
     pre_soma_index = locations[agent_index][0]
     post_soma_index = locations[agent_index][1]
 
@@ -81,7 +80,22 @@ def exp_pair_wise_stdp(
     dW = pre_trace * post_soma_spike - post_trace * pre_soma_spike
 
     weight += dW  # Update the weight
-    synapse_params[agent_index][0] = weight  # Update the weight in synapse_params
+
+    # === 3-bit quantization ===
+    wmin = learning_params[agent_index][6]  #0.0 #learning_params[agent_index][6]  # assuming stored in learning_params
+    wmax = learning_params[agent_index][7]  #14.0 #learning_params[agent_index][7]
+    num_levels = learning_params[agent_index][8] #8  # 3 bits -> 8 quantization levels#learning_params[agent_index][8]
+    delta = (wmax - wmin) / (num_levels - 1)
+    # weight = cp.clip(weight, wmin, wmax)
+    weight = weight if weight <= wmax else wmax
+    weight = weight if weight >= wmin else wmin
+    # quantized_weight = cp.round((weight - wmin) / delta) * delta + wmin
+    quantized_weight = cp.rint((weight - wmin) / delta) * delta + wmin
+    # quantized_weight = int((weight - wmin) / delta + 0.5) * delta + wmin
+    weight = quantized_weight
+    # ==========================
+
+    synapse_params[agent_index][0] = weight  # Update quantized weight
 
     internal_learning_state[agent_index][0] = pre_trace
     internal_learning_state[agent_index][1] = post_trace
