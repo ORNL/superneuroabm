@@ -7,7 +7,7 @@ long_description = (this_directory / "README.md").read_text()
 
 setup(
     name="superneuroabm",
-    version="1.0.0.dev1",
+    version="1.0.0",
     author="Chathika Gunaratne, Shruti Kulkarni, Ashish Gautam, Xi Zhang, Prasanna Date",
     author_email="gunaratnecs@ornl.gov",
     packages=[
@@ -31,16 +31,14 @@ setup(
         "Source": "https://github.com/ORNL/superneuroabm",
         "Bug Tracker": "https://github.com/ORNL/superneuroabm/issues",
     },
-    install_requires=["sagesim", "pyyaml", "networkx", "matplotlib"],
-    python_requires=">=3.9",
+    install_requires=["sagesim==0.5.0", "pyyaml", "networkx", "matplotlib"],
+    python_requires=">=3.11",
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Science/Research",
         "License :: OSI Approved :: BSD License",
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
