@@ -59,7 +59,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     # vreset = neuron_params[agent_index][8]
     # I_in = neuron_params[agent_index][9]
 
-    # NOTE: size of internal_state would need to be set as the maximum possible state varaibles of any spiking neuron
+    # NOTE: size of internal_state would need to be set as the maximum possible state variables of any spiking neuron
     # Internal state variables
     v = internal_state[agent_index][0]  # membrane potential
     tcount = internal_state[agent_index][

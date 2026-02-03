@@ -60,7 +60,7 @@ def izh_soma_step_func(
 
     # dv = (k*(internal_state[my_idx]-vrest)*(internal_state[my_idx]-vthr)-u[my_idx]+I) / C
     # internal_state: [0] - v, [1] - u
-    # NOTE: size of internal_state would need to be set as the maximum possible state varaibles of any spiking neuron
+    # NOTE: size of internal_state would need to be set as the maximum possible state variables of any spiking neuron
 
     v = internal_state[agent_index][0]
     u = internal_state[agent_index][1]

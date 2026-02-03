@@ -88,4 +88,4 @@ pip install superneuroabm==1.0.0dev1
 
 Arxiv Preprint available at: 
 
-[Date. P., Gunaratne, C., Kulkarni, S., Patton, R., Coletti, M., & Potok, T. (2023). SuperNeuro: A Fast and Scalable Simulator for Neuromorphic Computing. arXiv preprint arXiv:2305.02510.](https://arxiv.org/abs/2109.12894)
+[Date, P., Gunaratne, C., Kulkarni, S., Patton, R., Coletti, M., & Potok, T. (2023). SuperNeuro: A Fast and Scalable Simulator for Neuromorphic Computing. arXiv preprint arXiv:2305.02510.](https://arxiv.org/abs/2305.02510)

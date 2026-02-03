@@ -4,7 +4,6 @@ Saves and loads NetworkX graphs and parses them into SuperNeuroABM networks.
 """
 
 import warnings
-import pickle
 from typing import Dict, Optional
 
 import networkx as nx

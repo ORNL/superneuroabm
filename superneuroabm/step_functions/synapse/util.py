@@ -30,7 +30,6 @@ def get_soma_spike(
 
     if pre_soma_index >= 0:
         # pre_soma_index is already a local index (no search needed!)
-        # Read from previous tick due to double buffering
         # At tick 0, there are no previous spikes, so spike will be 0
         if t_current > 0:
             spike = output_spikes_tensor[pre_soma_index][t_current - 1]
