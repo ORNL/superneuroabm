@@ -78,3 +78,10 @@ docs/
 
 # Temporary test files
 step_func_code.py
+
+# Auto-generated code (environment-specific)
+superneuroabm/ssn/
+
+# Local test scripts (not for release)
+tests/plot_weak_scaling_*.py
+tests/test_lif_mixed_synapses_stdp_mpi.py

@@ -1,91 +1,61 @@
 # SuperNeuroABM
-A GPU-based multi-agent simulation framework for neuromorphic computing 
 
+**SuperNeuroABM** is a GPU-based multi-agent simulation framework for neuromorphic computing. Built on top of [SAGESim](https://github.com/ORNL/SAGESim), it enables fast and scalable simulation of spiking neural networks on both NVIDIA and AMD GPUs.
 
-# Requirements
-For GPU mode:
-- NVIDIA GPU with compute capability 6.0+ with CUDA toolkit and drivers
-- Or: AMD GPU (tested on AMD MI250X on Frontier) with ROCm 5.7.1 drivers
-- `pip install git+https://github.com/ORNL/SAGESim` 
+## Key Features
 
-# Unit Tests
-To run unit tests, `cd` to root dir and run:
+- **GPU Acceleration**: Leverages CUDA (NVIDIA) or ROCm (AMD) for high-performance simulation
+- **Scalable**: From single GPU to multi-GPU HPC clusters via MPI
+- **Flexible Neuron Models**: Support for various soma and synapse step functions
+- **STDP Support**: Built-in spike-timing-dependent plasticity mechanisms
+- **Network I/O**: Import/export neural network topologies
 
-`python -m unittest tests.logic_gates_test`
+## Requirements
 
-# Installing Cupy for GCP Using NVIDIA GPU
-* Make sure that there is enough space on your disk for your VM
-## Install NVIDIA-Driver, any over 550 should work. This example used 570
+- Python 3.11+
+- NVIDIA GPU with CUDA drivers **or** AMD GPU with ROCm 5.7.1+
+- MPI implementation (OpenMPI, MPICH, etc.) for multi-GPU execution
+
+## Installation
+
+Your system might require specific steps to install `mpi4py` and/or `cupy` depending on your hardware. In that case, use your system's recommended instructions to install these dependencies first.
 
 ```bash
-sudo apt install nvidia-driver-570
-sudo reboot
+pip install superneuroabm
 ```
-## Get CUDA runtime libraries 
+
+## Quick Start
+
+```python
+from superneuroabm.model import SuperNeuroModel
+
+# Create model
+model = SuperNeuroModel()
+
+# Create neurons
+n1 = model.create_neuron()
+n2 = model.create_neuron()
+
+# Connect with synapse
+model.create_synapse(n1, n2, weight=1.0)
+
+# Setup and run
+model.setup(use_gpu=True)
+model.simulate(ticks=100)
+```
+
+## Unit Tests
+
+To run unit tests:
+
 ```bash
-wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-ubuntu2204.pin
-sudo mv cuda-ubuntu2204.pin /etc/apt/preferences.d/cuda-repository-pin-600
-
-sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub
-
-sudo add-apt-repository -y "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /"
-
-sudo apt-get update
-
-sudo apt-get -y install cuda
-
-sudo apt-get -y install libcudnn8
-
-export PATH=/usr/local/cuda/bin:$PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-
-source ~/.bashrc
-
-nvcc --version
-```
-## Install Conda using MiniConda
-```bash
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh
-bash ~/miniconda.sh -b -p $HOME/miniconda
-#ADD TO PATH
-echo 'export PATH=$HOME/miniconda/bin:$PATH' >> ~/.bashrc
-source ~/.bashrc
-```
-## Create an enviorment directory for your conda enviorment and enviorment
-```bash
-mkdir envs
-cd envs
-# MAKE ENV
-conda create --prefix <Path for env> python=3.11.0
-source activate <Path for env>
-```
-## Cupy installation instructions
-Using nvidia-smi check your cuda version. Version tested with is 12.8
-Install cupy-cuda12x using pip; modify for cuda version<12 & >12
-```bash
-python -m pip install --no-cache-dir cupy-cuda12x==13.6.0
-#check installation done correctly
-python -c "import cupy; print(cupy.__file__)"
-#run this as a test to make sure it works
-python -c "import cupy as cp; x=cp.array([1,2,3]); print('Array test:', x*2)"
-```
-### Install Superneuroabm
-Clone repo and install dependencies
-install mpi4py
-```bash 
-sudo apt-get update
-sudo apt-get install -y libopenmpi-dev openmpi-bin
-pip install --no-cache-dir --force-reinstall mpi4py
-```
-install all other dependencies 
-```bash
-pip install sagesim==0.4.0dev1
-pip install networkx matplotlib pyyaml
-pip install superneuroabm==1.0.0dev1
+python -m unittest tests.test_synapse_and_soma_models
 ```
 
-# Publications
+## Publications
 
-Arxiv Preprint available at: 
+[Date, Prasanna, Chathika Gunaratne, Shruti R. Kulkarni, Robert Patton, Mark Coletti, and Thomas Potok. "SuperNeuro: A fast and scalable simulator for neuromorphic computing." In Proceedings of the 2023 International Conference on Neuromorphic Systems, pp. 1-4. 2023.](https://dl.acm.org/doi/abs/10.1145/3589737.3606000)
 
-[Date. P., Gunaratne, C., Kulkarni, S., Patton, R., Coletti, M., & Potok, T. (2023). SuperNeuro: A Fast and Scalable Simulator for Neuromorphic Computing. arXiv preprint arXiv:2305.02510.](https://arxiv.org/abs/2109.12894)
+## License
+
+BSD-3-Clause License - Oak Ridge National Laboratory

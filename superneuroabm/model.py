@@ -11,7 +11,6 @@ import cupy as cp
 from sagesim.space import NetworkSpace
 from sagesim.model import Model
 from sagesim.breed import Breed
-from pathlib import Path
 
 from superneuroabm.step_functions.soma.izh import izh_soma_step_func
 from superneuroabm.step_functions.soma.lif import lif_soma_step_func
@@ -150,7 +149,7 @@ class NeuromorphicModel(Model):
 
         self._soma_breeds: Dict[str, Breed] = {}
         for breed_name, step_funcs in soma_breed_info.items():
-            soma_breed = Breed(breed_name)  # Strt here Ashish
+            soma_breed = Breed(breed_name)
             for prop_name, (default_val, neighbor_visible) in soma_properties.items():
                 soma_breed.register_property(prop_name, default_val, neighbor_visible=neighbor_visible)
             for step_func_order, (step_func, module_fpath) in enumerate(step_funcs):
@@ -178,7 +177,7 @@ class NeuromorphicModel(Model):
 
         self._synapse_breeds: Dict[str, Breed] = {}
         for breed_name, step_funcs in synapse_breed_info.items():
-            synapse_breed = Breed(breed_name)  # Strt here Ashish
+            synapse_breed = Breed(breed_name)
             for prop_name, (default_val, neighbor_visible) in synapse_properties.items():
                 synapse_breed.register_property(prop_name, default_val, neighbor_visible=neighbor_visible)
             for step_func_order, (step_func, module_fpath) in enumerate(step_funcs):
@@ -212,15 +211,6 @@ class NeuromorphicModel(Model):
         self._synapse2defaultlearningparameters: Dict[int, List[float]] = {}
         self._synapse2defaultinternalstate: Dict[int, List[float]] = {}
         self._synapse2defaultinternallearningstate: Dict[int, List[float]] = {}
-
-    def set_global_property_value(name: str, value: float) -> None:
-        if name in super().globals:
-            super().set_global_property_value(name, value)
-        else:
-            super().register_global_property(name, value)
-
-    def get_global_property_value(name: str) -> float:
-        return super().get_global_property_value(name)
 
     def get_agent_config_name(self, agent_id: int) -> Dict[str, any]:
         """
@@ -639,48 +629,6 @@ class NeuromorphicModel(Model):
             self.tag2component[tag].add(synapse_id)
         return synapse_id
 
-    def update_synapse(
-        self,
-        pre_soma_id: int,
-        post_soma_id: int,
-        parameters: List[float] = None,
-    ):
-        raise NotImplementedError("update_synapse is not implemented.")
-        if pre_soma_id in self._synapse_index_map:
-            output_synapse_index_map = self._synapse_index_map[pre_soma_id]
-            if post_soma_id in output_synapse_index_map:
-                synapse_idx = output_synapse_index_map[post_soma_id]
-            else:
-                raise ValueError(
-                    f"Synapse {pre_soma_id} -> {post_soma_id} does not exist"
-                )
-        else:
-            raise ValueError(f"Synapse {pre_soma_id} -> {post_soma_id} does not exist")
-
-        # Update new synapse params
-        if weight != None:
-            output_synapses = self.get_agent_property_value(
-                pre_soma_id, "output_synapses"
-            )
-            output_synapses[synapse_idx][1] = weight
-            self.set_agent_property_value(
-                pre_soma_id,
-                "output_synapses",
-                output_synapses,
-            )
-
-        # Update or enter learning params
-        if synapse_learning_params:
-            synapses_learning_params = self.get_agent_property_value(
-                pre_soma_id, "output_synapses_learning_params"
-            )
-            synapses_learning_params[synapse_idx] = synapse_learning_params
-            self.set_agent_property_value(
-                id=pre_soma_id,
-                property_name="output_synapses_learning_params",
-                value=synapses_learning_params,
-            )
-
     def add_spike(self, synapse_id: int, tick: int, value: float) -> None:
         """
         Schedules an external input spike to this soma.
@@ -738,40 +686,4 @@ class NeuromorphicModel(Model):
         return super().get_agent_property_value(
             id=agent_id, property_name="internal_learning_states_buffer"
         )
-
-    def summary(self) -> str:
-        """
-        Verbose summary of the network structure.
-
-        :return: str information of netowkr struture
-        """
-        raise NotImplementedError("summary is not implemented.")
-        summary = []
-        summary.append("soma information:")
-        for soma_id in range(self._agent_factory.num_agents):
-            spikes = self.get_agent_property_value(soma_id, "output_spikes")
-            summary.append(f"soma: {soma_id} Spike Train: {str(spikes)}")
-
-        summary.append("\n\n\nSynapse information:")
-        for presynaptic_soma_id in range(self._agent_factory.num_agents):
-            synapses = self.get_agent_property_value(
-                presynaptic_soma_id, "output_synapses"
-            )
-            for synapse in synapses:
-                postsynaptic_soma_id = synapse[0]
-                weight = synapse[1]
-                summary.append(
-                    (
-                        f"soma {presynaptic_soma_id} -> {postsynaptic_soma_id}"
-                        f": weight: {weight}"
-                    )
-                )
-
-        return "\n".join(summary)
-
-    def save(self, fpath: str):
-        super().save(self, fpath)
-
-    def load(self, fpath: str):
-        self = super().load(fpath)
 

@@ -45,7 +45,7 @@ def lif_soma_adaptive_thr_step_func(  # NOTE: update the name to soma_step_func 
     # Neuron Parameter
     C = neuron_params[agent_index][0]  # membrane capacitance
     R = neuron_params[agent_index][1]  # Leak resistance
-    vthr_initial = neuron_params[agent_index][2]  # inital spike threshold
+    vthr_initial = neuron_params[agent_index][2]  # initial spike threshold
     tref = neuron_params[agent_index][3]  # refractory period
     vrest = neuron_params[agent_index][4]  # resting potential
     vreset = neuron_params[agent_index][5]  # reset potential
@@ -61,7 +61,7 @@ def lif_soma_adaptive_thr_step_func(  # NOTE: update the name to soma_step_func 
     # vreset = neuron_params[agent_index][8]
     # I_in = neuron_params[agent_index][9]
 
-    # NOTE: size of internal_state would need to be set as the maximum possible state varaibles of any spiking neuron
+    # NOTE: size of internal_state would need to be set as the maximum possible state variables of any spiking neuron
     # Internal state variables
     v = internal_state[agent_index][0]  # membrane potential
     tcount = internal_state[agent_index][
