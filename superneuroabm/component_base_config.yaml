@@ -48,6 +48,23 @@ soma:
         v: -60  # Initial membrane voltage
         u: 0  # Initial recovery variable
 
+  hg_lif_soma:
+    config_0:
+      hyperparameters:
+        T: 10.0         # Spike threshold
+        tref: 1e-3      # Absolute refractory period (s)
+        X: 6.3496       # PSP normalization = (taus/taum)^(taum/(taus-taum))
+        A: -40.0        # Afterhyperpolarization amplitude = -K2 * T  (K2=4)
+        taus: 2.5e-3    # Afterhyperpolarization / synaptic time constant (s)
+        taum: 10e-3     # Membrane time constant (s)
+        deltaa: 1.0     # Afterhyperpolarization reset value on spike
+        I_in: 0.0       # Constant external input current
+      internal_state:
+        u: 0.0          # Membrane potential
+        tcount: 0.0     # Time counter (ticks since start)
+        tlast: 0.0      # Time of last spike (seconds)
+        a: 0.0          # Afterhyperpolarization variable
+
   lif_soma_adaptive_thr:
     config_0:
       hyperparameters:

@@ -59,7 +59,7 @@ def synapse_single_exp_step_func(
 
     I_synapse = internal_state[agent_index][0]
 
-    I_synapse = I_synapse * (1 - dt / tau_fall) + spike * scale * weight
+    I_synapse = I_synapse * cp.exp(-dt / tau_fall) + spike * scale * weight
 
     internal_state[agent_index][0] = I_synapse
 

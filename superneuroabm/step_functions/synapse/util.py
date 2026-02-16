@@ -21,16 +21,14 @@ def get_soma_spike(
         pre_soma_index: Local index of the pre-synaptic soma (-1 for external input)
         globals, agent_ids: Kept for signature compatibility, not used anymore
 
-    NOTE: Due to double buffering, this reads from the PREVIOUS tick's spikes.
-    Somas write spikes at priority 0, synapses read at priority 1, but the
-    write buffer isn't copied to read buffer until after all priorities complete.
-    This introduces a 1-tick synaptic delay, which is actually realistic.
+    NOTE: output_spikes_tensor is NOT double-buffered. Reading t_current-1
+    introduces a 1-tick synaptic delay (0.1ms at dt=1e-4), which is
+    biologically realistic and negligible at fine dt.
     """
     t_current = int(tick)
 
     if pre_soma_index >= 0:
         # pre_soma_index is already a local index (no search needed!)
-        # At tick 0, there are no previous spikes, so spike will be 0
         if t_current > 0:
             spike = output_spikes_tensor[pre_soma_index][t_current - 1]
         else:
