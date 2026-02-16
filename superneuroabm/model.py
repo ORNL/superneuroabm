@@ -173,6 +173,7 @@ class NeuromorphicModel(Model):
         synapse_no_double_buffer = [
             "internal_state",
             "internal_states_buffer",
+            "input_spikes_tensor",  # offset stored in sentinel value slot; no double buffer needed
         ]
 
         self._synapse_breeds: Dict[str, Breed] = {}
