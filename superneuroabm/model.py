@@ -423,6 +423,25 @@ class NeuromorphicModel(Model):
                 value=internal_learning_states_buffer,
             )
         for synapse_id in self._synapse_ids:
+            # Sort input spikes by tick so the running-pointer optimization
+            # in get_soma_spike works regardless of insertion order.
+            # Layout: [-1, offset, tick, val, tick, val, ...]
+            spikes = super().get_agent_property_value(
+                id=synapse_id, property_name="input_spikes_tensor"
+            )
+            if len(spikes) > 2:
+                pairs = [(spikes[i], spikes[i + 1]) for i in range(2, len(spikes), 2)]
+                pairs.sort(key=lambda p: p[0])
+                sorted_spikes = [spikes[0], spikes[1]]
+                for t, v in pairs:
+                    sorted_spikes.append(t)
+                    sorted_spikes.append(v)
+                super().set_agent_property_value(
+                    id=synapse_id,
+                    property_name="input_spikes_tensor",
+                    value=sorted_spikes,
+                )
+
             initial_internal_state = super().get_agent_property_value(
                 id=synapse_id, property_name="internal_state"
             )
