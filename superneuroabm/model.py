@@ -205,7 +205,6 @@ class NeuromorphicModel(Model):
         synapse_no_double_buffer = [
             "internal_state",
             "internal_states_buffer",
-            "input_spikes_tensor",  # offset stored in sentinel value slot; no double buffer needed
         ]
 
         self._synapse_breeds: Dict[str, Breed] = {}
@@ -455,9 +454,9 @@ class NeuromorphicModel(Model):
                 value=internal_learning_states_buffer,
             )
         for synapse_id in self._synapse_ids:
-            # Sort input spikes by tick so the running-pointer optimization
-            # in get_soma_spike works regardless of insertion order.
-            # Layout: [-1, offset, tick, val, tick, val, ...]
+            # Sort input spikes by tick for early-exit optimization in
+            # get_soma_spike — scan stops once past t_current.
+            # Layout: [-1, 0.0, tick, val, tick, val, ...]
             spikes = super().get_agent_property_value(
                 id=synapse_id, property_name="input_spikes_tensor"
             )

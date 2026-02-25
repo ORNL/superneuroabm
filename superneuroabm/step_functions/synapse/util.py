@@ -37,20 +37,15 @@ def get_soma_spike(
         spike = 0.0
         spike_buffer_max_len = len(input_spikes_tensor[agent_index])
 
-        # Running pointer: offset stored in sentinel value slot (index 1).
-        # input_spikes_tensor layout: [-1, offset, tick, value, tick, value, ...]
-        # The sentinel tick=-1 never matches t_current; its value slot stores
-        # the scan offset so we skip already-processed spikes each tick.
-        i = int(input_spikes_tensor[agent_index][1])
-
-        # Phase 1: Advance past stale entries (tick < t_current)
-        while i + 1 < spike_buffer_max_len and not cp.isnan(input_spikes_tensor[agent_index][i]) and int(input_spikes_tensor[agent_index][i]) < t_current:
+        # input_spikes_tensor layout: [-1, 0.0, tick, value, tick, value, ...]
+        # Spikes are sorted by tick in setup(). Scan sequentially and
+        # stop once past t_current — read-only, no warp divergence.
+        i = 0
+        done = False
+        while not done and i + 1 < spike_buffer_max_len and not cp.isnan(input_spikes_tensor[agent_index][i]):
+            if input_spikes_tensor[agent_index][i] == t_current:
+                spike += input_spikes_tensor[agent_index][i + 1]
+            elif input_spikes_tensor[agent_index][i] > t_current:
+                done = True
             i += 2
-        input_spikes_tensor[agent_index][1] = float(i)  # persist for next call/tick
-
-        # Phase 2: Sum entries at t_current (don't advance offset)
-        j = i
-        while j + 1 < spike_buffer_max_len and not cp.isnan(input_spikes_tensor[agent_index][j]) and int(input_spikes_tensor[agent_index][j]) == t_current:
-            spike += input_spikes_tensor[agent_index][j + 1]
-            j += 2
     return spike
