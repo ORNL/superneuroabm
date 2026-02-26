@@ -112,74 +112,77 @@ def exp_pair_wise_stdp_memristive(
     # =========================
     # ---- Deterministic Update
     # =========================
-    delta_det = step_fraction * (G_target - G)
+    if (pre_spike ==1 or post_spike == 1) and dW != 0.0:
+        delta_det = step_fraction * (G_target - G)
 
-    if delta_det > 0.0:
-        gamma = (1.0 - (G - Gmin) / (Gmax - Gmin)) ** alpha
+        if delta_det > 0.0:
+            gamma = (1.0 - (G - Gmin) / (Gmax - Gmin)) ** alpha
+        else:
+            gamma = ((G - Gmin) / (Gmax - Gmin)) ** alpha
+
+        delta_det = delta_det * gamma
+
+        # =========================
+        # ---- Gaussian Noise -----
+        # Box-Muller using simple LCG RNG
+        # =========================
+        seed = t_current * 1103515245 + agent_index * 12345
+        seed = (seed ^ 1234567) & 0xFFFFFFFF
+
+        u1 = (seed & 0xFFFF) / 65535.0
+        u2 = ((seed >> 16) & 0xFFFF) / 65535.0
+
+        if u1 < 1e-6:
+            u1 = 1e-6
+
+        randn = (-2.0 * cp.log(u1)) ** 0.5 * cp.cos(6.2831853 * u2)
+
+        eps_write = mu_write + sigma_write * randn
+
+        delta_G = delta_det + eps_write
+
+        # =========================
+        # ---- Apply + Clip -------
+        # =========================
+        G_new = G + delta_G
+
+        if G_new > Gmax:
+            G_new = Gmax
+        if G_new < Gmin:
+            G_new = Gmin
+
+        # =========================
+        # ---- Read Noise ---------
+        # =========================
+        eps_read = sigma_read * randn
+        G_observed = G_new + eps_read
+
+        # =========================
+        # ---- Conductance → Weight
+        # =========================
+        weight_new = wmin + (G_observed - Gmin) * (wmax - wmin) / (Gmax - Gmin)
+
+        if weight_new > wmax:
+            weight_new = wmax
+        if weight_new < wmin:
+            weight_new = wmin
     else:
-        gamma = ((G - Gmin) / (Gmax - Gmin)) ** alpha
-
-    delta_det = delta_det * gamma
-
-    # =========================
-    # ---- Gaussian Noise -----
-    # Box-Muller using simple LCG RNG
-    # =========================
-    seed = t_current * 1103515245 + agent_index * 12345
-    seed = (seed ^ 1234567) & 0xFFFFFFFF
-
-    u1 = (seed & 0xFFFF) / 65535.0
-    u2 = ((seed >> 16) & 0xFFFF) / 65535.0
-
-    if u1 < 1e-6:
-        u1 = 1e-6
-
-    randn = (-2.0 * cp.log(u1)) ** 0.5 * cp.cos(6.2831853 * u2)
-
-    eps_write = mu_write + sigma_write * randn
-
-    delta_G = delta_det + eps_write
-
-    # =========================
-    # ---- Apply + Clip -------
-    # =========================
-    G_new = G + delta_G
-
-    if G_new > Gmax:
-        G_new = Gmax
-    if G_new < Gmin:
-        G_new = Gmin
-
-    # =========================
-    # ---- Read Noise ---------
-    # =========================
-    eps_read = sigma_read * randn
-    G_observed = G_new + eps_read
-
-    # =========================
-    # ---- Conductance → Weight
-    # =========================
-    weight_new = wmin + (G_observed - Gmin) * (wmax - wmin) / (Gmax - Gmin)
-
-    if weight_new > wmax:
-        weight_new = wmax
-    if weight_new < wmin:
-        weight_new = wmin
+        weight_new = weight
 
     synapse_params[agent_index][0] = weight_new
 
     # =========================
     # ---- Energy Calculation --
     # =========================
-    G_avg = 0.5 * (G + G_new) * 1e-6
-    I_write = pulse_V * G_avg
-    E_write = pulse_V * I_write * pulse_t
+    # G_avg = 0.5 * (G + G_new) * 1e-6
+    # I_write = pulse_V * G_avg
+    # E_write = pulse_V * I_write * pulse_t
 
-    I_read = read_V * (G_new * 1e-6)
-    E_read = read_V * I_read * read_t
+    # I_read = read_V * (G_new * 1e-6)
+    # E_read = read_V * I_read * read_t
 
-    internal_state[agent_index][4] += E_write
-    internal_state[agent_index][5] += E_read
+    # internal_state[agent_index][4] += E_write
+    # internal_state[agent_index][5] += E_read
 
     # =========================
     # ---- Update Learning ----
@@ -193,9 +196,6 @@ def exp_pair_wise_stdp_memristive(
     internal_learning_states_buffer[agent_index][buffer_idx][1] = post_trace
     internal_learning_states_buffer[agent_index][buffer_idx][2] = dW
 
-    internal_state[agent_index][2] = pre_trace
-    internal_state[agent_index][3] = post_trace
-
-    state_buffer_idx = t_current % len(internal_states_buffer[agent_index])
-    internal_states_buffer[agent_index][state_buffer_idx][2] = post_spike
-    internal_states_buffer[agent_index][state_buffer_idx][3] = post_trace
+    # Learning state (pre_trace, post_trace, dW) is tracked exclusively
+    # in internal_learning_states_buffer above — no need to duplicate
+    # into internal_states_buffer or internal_state.

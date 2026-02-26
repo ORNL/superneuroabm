@@ -111,7 +111,7 @@ def synapse_single_exp_step_func(
     I_synapse = I_synapse * (1 - dt / tau_fall) + spike * scale * w_eff
 
     internal_state[agent_index][0] = I_synapse
-    internal_states_buffer[agent_index][t_current][0] = I_synapse
-    internal_states_buffer[agent_index][t_current][1] = spike
-    internal_states_buffer[agent_index][t_current][2] = t_current
-    internal_states_buffer[agent_index][t_current][3] = pre_soma_id
+    # Record I_synapse to history buffer. Only [0] is used — buffer width
+    # is determined by the max internal_state size across all agent types.
+    buffer_idx = t_current % len(internal_states_buffer[agent_index])
+    internal_states_buffer[agent_index][buffer_idx][0] = I_synapse

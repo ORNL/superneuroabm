@@ -110,10 +110,6 @@ def exp_pair_wise_stdp(
     #     trace_pre_ = cp.zeros((stdp_history_length, number_of_input_neurons), dtype=cp.float32)
     #     trace_post_ = cp.zeros((number_of_output_neurons, stdp_history_length), dtype=cp.float32)
 
-    internal_state[agent_index][2] = pre_trace
-    internal_state[agent_index][3] = post_trace
-
-    # Safe buffer indexing for internal_states_buffer (reuse buffer_idx from above)
-    state_buffer_idx = t_current % len(internal_states_buffer[agent_index])
-    internal_states_buffer[agent_index][state_buffer_idx][2] = post_soma_spike
-    internal_states_buffer[agent_index][state_buffer_idx][3] = post_trace
+    # Learning state (pre_trace, post_trace, dW) is tracked exclusively
+    # in internal_learning_states_buffer above — no need to duplicate
+    # into internal_states_buffer or internal_state.

@@ -63,9 +63,8 @@ def synapse_single_exp_step_func(
 
     internal_state[agent_index][0] = I_synapse
 
-    # Safe buffer indexing: use modulo to prevent out-of-bounds access
-    # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always
+    # Record I_synapse to history buffer. Only [0] is used — buffer width
+    # is determined by the max internal_state size across all agent types
+    # (e.g. soma has 3), so higher indices belong to other agent types.
     buffer_idx = t_current % len(internal_states_buffer[agent_index])
     internal_states_buffer[agent_index][buffer_idx][0] = I_synapse
-    internal_states_buffer[agent_index][buffer_idx][1] = spike
-    internal_states_buffer[agent_index][buffer_idx][2] = t_current

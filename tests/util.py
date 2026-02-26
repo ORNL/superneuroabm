@@ -17,6 +17,10 @@ def vizualize_responses(model: NeuromorphicModel, vthr: int, fig_name: str, figs
     for soma_id in soma_ids:
         spike_times = model.get_spike_times(soma_id=soma_id)
         print(f"Soma {soma_id} spike times: {spike_times}")
+
+    for synapse_id in synapse_ids:
+        weight_new = model.get_internal_states_history(agent_id=synapse_id) # Assuming weight is stored in the 4th column
+        print(f"Synapse {synapse_id} weight history: {weight_new}")
     print("===================\n")
 
     # Check if internal state tracking is enabled

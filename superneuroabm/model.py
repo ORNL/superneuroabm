@@ -15,6 +15,7 @@ from sagesim.breed import Breed
 from superneuroabm.step_functions.soma.izh import izh_soma_step_func
 from superneuroabm.step_functions.soma.lif import lif_soma_step_func
 from superneuroabm.step_functions.soma.lif_soma_adaptive_thr import lif_soma_adaptive_thr_step_func
+from superneuroabm.step_functions.synapse.stdp.Daffodil_memristive_synapse import exp_pair_wise_stdp_memristive
 from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
 from superneuroabm.step_functions.synapse.stdp.learning_rule_selector import (
     learning_rule_selector,
