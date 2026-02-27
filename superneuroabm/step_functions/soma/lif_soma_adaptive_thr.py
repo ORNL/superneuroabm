@@ -100,7 +100,7 @@ def lif_soma_adaptive_thr_step_func(  # NOTE: update the name to soma_step_func 
     # Write back updated threshold state
     internal_state[agent_index][3] =vthr
 
-    output_spikes_tensor[agent_index][t_current] = s
+    output_spikes_tensor[agent_index][t_current % 2] = s
 
     # Safe buffer indexing: use modulo to prevent out-of-bounds access
     # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always
