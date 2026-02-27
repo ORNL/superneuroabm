@@ -195,6 +195,11 @@ class NeuromorphicModel(Model):
             self.register_breed(synapse_breed)
             self._synapse_breeds[breed_name] = synapse_breed
 
+        # Spike recording state (GPU buffers allocated lazily)
+        self._recorded_spikes = []
+        self._spike_record_gpu = None
+        self._spike_record_count_gpu = None
+
         self.tag2component = defaultdict(set)  # tag -> agent_id
 
         # Load and hold configurations
@@ -361,6 +366,10 @@ class NeuromorphicModel(Model):
             If False, resets parameters to their default values.
         """
         self._reset_agents(retain_parameters=retain_parameters)
+        # Clear spike recording state
+        self._recorded_spikes = []
+        self._spike_record_gpu = None
+        self._spike_record_count_gpu = None
         # Clear SAGESim's agent data cache to avoid expensive comparisons on next simulation
         self._agent_factory._prev_agent_data.clear()
         super().reset()
@@ -378,8 +387,10 @@ class NeuromorphicModel(Model):
         """
         # Reset all agents using the shared helper function
         self._reset_agents(retain_parameters=retain_parameters)
-        # Tell SAGESim which property index holds output_spikes_tensor for spike recording
-        self._spike_record_property_index = self._agent_factory._property_name_2_index["output_spikes_tensor"]
+        # Reset spike recording state
+        self._recorded_spikes = []
+        self._spike_record_gpu = None
+        self._spike_record_count_gpu = None
         super().setup(use_gpu=use_gpu)
 
     def simulate(
@@ -473,6 +484,7 @@ class NeuromorphicModel(Model):
                 property_name="internal_learning_states_buffer",
                 value=internal_learning_states_buffer,
             )
+        self._recorded_spikes = []
         super().simulate(ticks, update_data_ticks)  # , num_cpu_proc)
 
     def create_soma(
@@ -685,10 +697,47 @@ class NeuromorphicModel(Model):
             synapse_id, "input_spikes_tensor", spikes
         )
 
+    # ------------------------------------------------------------------
+    # GPU kernel extension hooks for spike recording
+    # ------------------------------------------------------------------
+
+    def _get_extra_kernel_config(self) -> dict:
+        prop_idx = self._agent_factory._property_name_2_index["output_spikes_tensor"]
+        return {
+            'extra_kernel_params': ['spike_record', 'spike_record_count'],
+            'post_breed_step_code': [
+                (
+                    [
+                        f'_sv = a{prop_idx}[_real_idx][thread_local_tick % 2]',
+                        'if _sv > 0.0:',
+                        '\t_slot = jit.atomic_add(spike_record_count, 0, 1)',
+                        '\tspike_record[_slot * 2] = agent_ids[_real_idx]',
+                        '\tspike_record[_slot * 2 + 1] = float(thread_local_tick)',
+                    ],
+                    True,  # once_per_breed
+                )
+            ],
+        }
+
+    def _prepare_kernel_extras(self, num_local_agents, sync_ticks):
+        import cupy as cp
+        if self._spike_record_gpu is None:
+            max_slots = max(10000, num_local_agents * sync_ticks // 100)
+            self._spike_record_gpu = cp.full(max_slots * 2, cp.nan, dtype=cp.float32)
+            self._spike_record_count_gpu = cp.zeros(1, dtype=cp.int32)
+        self._spike_record_count_gpu[0] = 0
+        return (self._spike_record_gpu, self._spike_record_count_gpu)
+
+    def _process_kernel_extras(self):
+        count = int(self._spike_record_count_gpu[0].get())
+        if count > 0:
+            self._recorded_spikes.extend(
+                self._spike_record_gpu[:count * 2].get().tolist()
+            )
+
     def get_spike_times(self, soma_id: int) -> list:
-        buf = self._gpu_buffers
         spikes = []
-        data = buf.recorded_spikes
+        data = self._recorded_spikes
         for i in range(0, len(data), 2):
             if int(data[i]) == soma_id:
                 spikes.append(int(data[i + 1]))
