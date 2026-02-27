@@ -30,7 +30,7 @@ def get_soma_spike(
     if pre_soma_index >= 0:
         # pre_soma_index is already a local index (no search needed!)
         if t_current > 0:
-            spike = output_spikes_tensor[pre_soma_index][t_current - 1]
+            spike = output_spikes_tensor[pre_soma_index][(t_current - 1) % 2]
         else:
             spike = 0.0
     else:

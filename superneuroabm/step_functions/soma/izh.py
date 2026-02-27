@@ -77,7 +77,7 @@ def izh_soma_step_func(
     internal_state[agent_index][0] = v
     internal_state[agent_index][1] = u
 
-    output_spikes_tensor[agent_index][t_current] = s
+    output_spikes_tensor[agent_index][t_current % 2] = s
 
     # Safe buffer indexing: use modulo to prevent out-of-bounds access
     # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always

@@ -378,6 +378,12 @@ class NeuromorphicModel(Model):
                 property_name="internal_state",
                 value=self._soma_reset_states[soma_id].copy(),
             )
+            # Circular buffer: only 2 slots needed (soma writes [t%2], synapse reads [(t-1)%2])
+            super().set_agent_property_value(
+                id=soma_id,
+                property_name="output_spikes_tensor",
+                value=[0.0, 0.0],
+            )
         
     def reset(self, retain_parameters: bool = True) -> None:
         """
@@ -404,6 +410,8 @@ class NeuromorphicModel(Model):
         """
         # Reset all agents using the shared helper function
         self._reset_agents(retain_parameters=retain_parameters)
+        # Tell SAGESim which property index holds output_spikes_tensor for spike recording
+        self._spike_record_property_index = self._agent_factory._property_name_2_index["output_spikes_tensor"]
         super().setup(use_gpu=use_gpu)
 
     def simulate(
@@ -415,13 +423,6 @@ class NeuromorphicModel(Model):
 
         """
         for soma_id in self._soma_ids:
-            # Clear output buffer
-            output_buffer = [0 for _ in range(ticks)]
-            super().set_agent_property_value(
-                id=soma_id,
-                property_name="output_spikes_tensor",
-                value=output_buffer,
-            )
             initial_internal_state = super().get_agent_property_value(
                 id=soma_id, property_name="internal_state"
             )
@@ -716,13 +717,14 @@ class NeuromorphicModel(Model):
             synapse_id, "input_spikes_tensor", spikes
         )
 
-    def get_spike_times(self, soma_id: int) -> np.array:
-        spike_train = super().get_agent_property_value(
-            id=soma_id,
-            property_name="output_spikes_tensor",
-        )
-        spike_times = [i for i in range(len(spike_train)) if spike_train[i] > 0]
-        return spike_times
+    def get_spike_times(self, soma_id: int) -> list:
+        buf = self._gpu_buffers
+        spikes = []
+        data = buf.recorded_spikes
+        for i in range(0, len(data), 2):
+            if int(data[i]) == soma_id:
+                spikes.append(int(data[i + 1]))
+        return spikes
 
     def get_internal_states_history(self, agent_id: int) -> np.array:
         if not self.enable_internal_state_tracking:

@@ -125,7 +125,7 @@ def hg_lif_soma_step_func(
     internal_state[agent_index][2] = tlast
     internal_state[agent_index][3] = a
 
-    output_spikes_tensor[agent_index][t_current] = s
+    output_spikes_tensor[agent_index][t_current % 2] = s
 
     # Safe buffer indexing
     buffer_idx = t_current % len(internal_states_buffer[agent_index])
