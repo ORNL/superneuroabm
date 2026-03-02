@@ -15,7 +15,10 @@ from sagesim.breed import Breed
 from superneuroabm.step_functions.soma.izh import izh_soma_step_func
 from superneuroabm.step_functions.soma.lif import lif_soma_step_func
 from superneuroabm.step_functions.soma.lif_soma_adaptive_thr import lif_soma_adaptive_thr_step_func
+from superneuroabm.step_functions.soma.srm import srm_soma_step_func
+from superneuroabm.step_functions.soma.hg_lif import hg_lif_soma_step_func
 from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
+from superneuroabm.step_functions.synapse.double_exp import synapse_double_exp_step_func
 from superneuroabm.step_functions.synapse.stdp.learning_rule_selector import (
     learning_rule_selector,
 )
@@ -47,6 +50,18 @@ class NeuromorphicModel(Model):
                     CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif_soma_adaptive_thr.py",
                 )
             ],
+            "srm_soma": [
+                (
+                    srm_soma_step_func,
+                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "srm.py",
+                )
+            ],
+            "hg_lif_soma": [
+                (
+                    hg_lif_soma_step_func,
+                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "hg_lif.py",
+                )
+            ],
         },
         synapse_breed_info: Dict[str, List[Callable]] = {
             "single_exp_synapse": [
@@ -56,6 +71,23 @@ class NeuromorphicModel(Model):
                     / "step_functions"
                     / "synapse"
                     / "single_exp.py",
+                ),
+                (
+                    learning_rule_selector,
+                    CURRENT_DIR_ABSPATH
+                    / "step_functions"
+                    / "synapse"
+                    / "stdp"
+                    / "learning_rule_selector.py",
+                ),
+            ],
+            "double_exp_synapse": [
+                (
+                    synapse_double_exp_step_func,
+                    CURRENT_DIR_ABSPATH
+                    / "step_functions"
+                    / "synapse"
+                    / "double_exp.py",
                 ),
                 (
                     learning_rule_selector,
@@ -362,32 +394,34 @@ class NeuromorphicModel(Model):
         """
         Resets all soma and synapse agents to their initial states.
 
-        :param retain_parameters: If True, keeps current learned parameters.
-            If False, resets parameters to their default values.
+        :param retain_parameters: If True, keeps current learned parameters
+            (e.g. STDP weights). If False, resets parameters to defaults.
         """
+        # Step 1: SAGESim syncs GPU->AgentFactory, regenerates tensors, frees GPU
+        # After this, AgentFactory has all GPU-learned values (including weights)
+        super().reset()
+
+        # Step 2: Reset agent states on AgentFactory (keeps hyperparameters if retain=True)
         self._reset_agents(retain_parameters=retain_parameters)
-        # Clear spike recording state
+
+        # Step 3: Regenerate data tensors to reflect the reset states
+        super()._regenerate_data_tensors()
+
+        # Step 4: Clear recording state + caches
         self._recorded_spikes = []
         self._spike_record_gpu = None
         self._spike_record_count_gpu = None
-        # Clear SAGESim's agent data cache to avoid expensive comparisons on next simulation
         self._agent_factory._prev_agent_data.clear()
-        super().reset()
         
     def setup(
         self,
         use_gpu: bool = True,
-        retain_parameters=True,
     ) -> None:
         """
-        Resets the simulation and initializes agents.
-
-        :param retain_parameters: False by default. If True, parameters are
-            reset to their default values upon setup.
+        One-time heavy initialization: code gen, JIT, priority analysis.
+        Always resets to default state. Call once before simulation loop.
         """
-        # Reset all agents using the shared helper function
-        self._reset_agents(retain_parameters=retain_parameters)
-        # Reset spike recording state
+        self._reset_agents(retain_parameters=False)
         self._recorded_spikes = []
         self._spike_record_gpu = None
         self._spike_record_count_gpu = None
@@ -715,6 +749,7 @@ class NeuromorphicModel(Model):
                         '\tspike_record[_slot * 2 + 1] = float(thread_local_tick)',
                     ],
                     True,  # once_per_breed
+                    0,     # only_priority — only emit for soma priority
                 )
             ],
         }
