@@ -34,19 +34,6 @@ def learning_rule_selector(
     internal_learning_states_buffer,
 ):
 
-    # Always zero synaptic currents on post-spike (Brian2's x=0 reset).
-    # This must run regardless of STDP type so that calibration and
-    # experiment have the same neuron dynamics.
-    t_current = int(tick)
-    post_soma_index = locations[agent_index][1]
-    post_soma_spike = get_soma_spike(
-        tick, agent_index, globals, agent_ids,
-        post_soma_index, t_current,
-        input_spikes_tensor, output_spikes_tensor,
-    )
-    internal_state[agent_index][0] *= (1.0 - post_soma_spike)
-    internal_state[agent_index][1] *= (1.0 - post_soma_spike)
-
     stdpType = learning_params[agent_index][0]  # 0 for None, 1 for exp_pair_wise_stdp
     # Wmax, Wmin
     if stdpType == -1:
