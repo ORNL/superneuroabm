@@ -231,6 +231,8 @@ class NeuromorphicModel(Model):
         self._recorded_spikes = []
         self._spike_record_gpu = None
         self._spike_record_count_gpu = None
+        self._recorded_soma_ids = None   # None = record all, list = subset
+        self._spike_mask_gpu = None      # CuPy float32 bitmask, built lazily
 
         self.tag2component = defaultdict(set)  # tag -> agent_id
 
@@ -324,6 +326,17 @@ class NeuromorphicModel(Model):
         """
         return self.tag2component.get(tag, set())
 
+    def set_recorded_somas(self, soma_ids: list):
+        """
+        Set a subset of soma IDs whose spikes should be recorded on GPU.
+        Non-target somas are filtered out at the kernel level (O(1) bitmask).
+        If never called, all somas are recorded (default behavior).
+
+        :param soma_ids: List of soma agent IDs to record.
+        """
+        self._recorded_soma_ids = soma_ids
+        self._spike_mask_gpu = None  # force rebuild on next prepare
+
     def _reset_agents(self, retain_parameters: bool = True) -> None:
         """
         Internal method to reset all soma and synapse agents to their initial states.
@@ -411,6 +424,7 @@ class NeuromorphicModel(Model):
         self._recorded_spikes = []
         self._spike_record_gpu = None
         self._spike_record_count_gpu = None
+        self._spike_mask_gpu = None  # rebuild mask on next prepare
         self._agent_factory._prev_agent_data.clear()
         
     def setup(
@@ -425,6 +439,7 @@ class NeuromorphicModel(Model):
         self._recorded_spikes = []
         self._spike_record_gpu = None
         self._spike_record_count_gpu = None
+        self._spike_mask_gpu = None  # rebuild mask on next prepare
         super().setup(use_gpu=use_gpu)
 
     def simulate(
@@ -738,12 +753,12 @@ class NeuromorphicModel(Model):
     def _get_extra_kernel_config(self) -> dict:
         prop_idx = self._agent_factory._property_name_2_index["output_spikes_tensor"]
         return {
-            'extra_kernel_params': ['spike_record', 'spike_record_count'],
+            'extra_kernel_params': ['spike_record', 'spike_record_count', 'spike_mask'],
             'post_breed_step_code': [
                 (
                     [
                         f'_sv = a{prop_idx}[_real_idx][thread_local_tick % 2]',
-                        'if _sv > 0.0:',
+                        'if _sv > 0.0 and spike_mask[_real_idx] > 0.0:',
                         '\t_slot = jit.atomic_add(spike_record_count, 0, 1)',
                         '\tspike_record[_slot * 2] = agent_ids[_real_idx]',
                         '\tspike_record[_slot * 2 + 1] = float(thread_local_tick)',
@@ -761,7 +776,19 @@ class NeuromorphicModel(Model):
             self._spike_record_gpu = cp.full(max_slots * 2, cp.nan, dtype=cp.float32)
             self._spike_record_count_gpu = cp.zeros(1, dtype=cp.int32)
         self._spike_record_count_gpu[0] = 0
-        return (self._spike_record_gpu, self._spike_record_count_gpu)
+        # Build spike mask: 1.0 for target somas, 0.0 for others
+        if self._spike_mask_gpu is None:
+            buf = self._gpu_buffers
+            mask = cp.zeros(buf.agent_capacity, dtype=cp.float32)
+            if self._recorded_soma_ids is None:
+                mask[:num_local_agents] = 1.0  # record all
+            else:
+                for sid in self._recorded_soma_ids:
+                    idx = buf.agent_id_to_index.get(sid, -1)
+                    if 0 <= idx < num_local_agents:
+                        mask[idx] = 1.0
+            self._spike_mask_gpu = mask
+        return (self._spike_record_gpu, self._spike_record_count_gpu, self._spike_mask_gpu)
 
     def _process_kernel_extras(self):
         count = int(self._spike_record_count_gpu[0].get())
@@ -777,6 +804,14 @@ class NeuromorphicModel(Model):
             if int(data[i]) == soma_id:
                 spikes.append(int(data[i + 1]))
         return spikes
+
+    def get_all_spike_times(self) -> dict:
+        """Return {soma_id: [tick, ...]} for all recorded spikes."""
+        result = defaultdict(list)
+        data = self._recorded_spikes
+        for i in range(0, len(data), 2):
+            result[int(data[i])].append(int(data[i + 1]))
+        return dict(result)
 
     def get_internal_states_history(self, agent_id: int) -> np.array:
         if not self.enable_internal_state_tracking:
