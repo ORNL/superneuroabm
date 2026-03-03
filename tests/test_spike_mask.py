@@ -10,8 +10,6 @@ from superneuroabm.model import NeuromorphicModel
 class TestSpikeMask(unittest.TestCase):
     """Tests that set_recorded_somas filters spike recording on GPU."""
 
-    TAUS = 2.5e-3
-
     def test_only_target_soma_recorded(self):
         """
         Chain: external -> soma_0 -> soma_1 (via internal synapse).
@@ -21,8 +19,8 @@ class TestSpikeMask(unittest.TestCase):
         """
         model = NeuromorphicModel(enable_internal_state_tracking=False)
 
-        soma_0 = model.create_soma(breed="hg_lif_soma", config_name="config_0")
-        soma_1 = model.create_soma(breed="hg_lif_soma", config_name="config_0")
+        soma_0 = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma_1 = model.create_soma(breed="lif_soma", config_name="config_0")
 
         # External -> soma_0
         syn_ext = model.create_synapse(
@@ -30,7 +28,6 @@ class TestSpikeMask(unittest.TestCase):
             pre_soma_id=-1,
             post_soma_id=soma_0,
             config_name="no_learning_config_0",
-            hyperparameters_overrides={"tau_fall": self.TAUS},
         )
         # soma_0 -> soma_1
         syn_int = model.create_synapse(
@@ -38,7 +35,6 @@ class TestSpikeMask(unittest.TestCase):
             pre_soma_id=soma_0,
             post_soma_id=soma_1,
             config_name="no_learning_config_0",
-            hyperparameters_overrides={"tau_fall": self.TAUS},
         )
 
         model.setup(use_gpu=True)
@@ -70,22 +66,20 @@ class TestSpikeMask(unittest.TestCase):
         """
         model = NeuromorphicModel(enable_internal_state_tracking=False)
 
-        soma_0 = model.create_soma(breed="hg_lif_soma", config_name="config_0")
-        soma_1 = model.create_soma(breed="hg_lif_soma", config_name="config_0")
+        soma_0 = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma_1 = model.create_soma(breed="lif_soma", config_name="config_0")
 
         syn_ext = model.create_synapse(
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_0,
             config_name="no_learning_config_0",
-            hyperparameters_overrides={"tau_fall": self.TAUS},
         )
         syn_int = model.create_synapse(
             breed="single_exp_synapse",
             pre_soma_id=soma_0,
             post_soma_id=soma_1,
             config_name="no_learning_config_0",
-            hyperparameters_overrides={"tau_fall": self.TAUS},
         )
 
         model.setup(use_gpu=True)
@@ -108,22 +102,20 @@ class TestSpikeMask(unittest.TestCase):
         """
         model = NeuromorphicModel(enable_internal_state_tracking=False)
 
-        soma_0 = model.create_soma(breed="hg_lif_soma", config_name="config_0")
-        soma_1 = model.create_soma(breed="hg_lif_soma", config_name="config_0")
+        soma_0 = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma_1 = model.create_soma(breed="lif_soma", config_name="config_0")
 
         syn_ext = model.create_synapse(
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_0,
             config_name="no_learning_config_0",
-            hyperparameters_overrides={"tau_fall": self.TAUS},
         )
         syn_int = model.create_synapse(
             breed="single_exp_synapse",
             pre_soma_id=soma_0,
             post_soma_id=soma_1,
             config_name="no_learning_config_0",
-            hyperparameters_overrides={"tau_fall": self.TAUS},
         )
 
         model.setup(use_gpu=True)
