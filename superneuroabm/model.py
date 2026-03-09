@@ -454,8 +454,6 @@ class NeuromorphicModel(Model):
         AgentDataCollector to monitor marked output somas.
 
         """
-        _rank = MPI.COMM_WORLD.Get_rank()
-        print(f"[Rank {_rank}] simulate preamble start", flush=True)
         for soma_id in self._soma_ids:
             initial_internal_state = super().get_agent_property_value(
                 id=soma_id, property_name="internal_state"
@@ -541,9 +539,7 @@ class NeuromorphicModel(Model):
             )
         self._recorded_spikes = []
         self._spikes_need_gather = False
-        print(f"[Rank {_rank}] calling super().simulate()", flush=True)
         super().simulate(ticks, update_data_ticks)  # , num_cpu_proc)
-        print(f"[Rank {_rank}] super().simulate() done", flush=True)
         if MPI.COMM_WORLD.Get_size() > 1:
             self._spikes_need_gather = True
 
