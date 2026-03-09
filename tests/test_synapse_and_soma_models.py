@@ -88,9 +88,10 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             print(f"Baseline Comparison: {test_name}")
             print(f"{'='*70}")
             print(message)
-            if not passed:
-                print("\n⚠ WARNING: Spike times differ from baseline!")
-                print("  If this is intentional, run save_all_baselines() to update baselines")
+            self.assertTrue(passed,
+                f"Spike times differ from baseline for '{test_name}'. "
+                "If this is intentional, run: python test_synapse_and_soma_models.py --save-baselines"
+            )
 
     def test_lif_soma_single_exp_synapse(self) -> None:
         """

@@ -24,6 +24,7 @@ from superneuroabm.step_functions.synapse.stdp.learning_rule_selector import (
 )
 from superneuroabm.util import load_component_configurations
 import copy
+from mpi4py import MPI
 
 CURRENT_DIR_ABSPATH = Path(__file__).resolve().parent
 
@@ -233,6 +234,7 @@ class NeuromorphicModel(Model):
         self._spike_record_count_gpu = None
         self._recorded_soma_ids = None   # None = record all, list = subset
         self._spike_mask_gpu = None      # CuPy float32 bitmask, built lazily
+        self._spikes_need_gather = False
 
         self.tag2component = defaultdict(set)  # tag -> agent_id
 
@@ -425,6 +427,7 @@ class NeuromorphicModel(Model):
         self._spike_record_gpu = None
         self._spike_record_count_gpu = None
         self._spike_mask_gpu = None  # rebuild mask on next prepare
+        self._spikes_need_gather = False
         self._agent_factory._prev_agent_data.clear()
         
     def setup(
@@ -440,6 +443,7 @@ class NeuromorphicModel(Model):
         self._spike_record_gpu = None
         self._spike_record_count_gpu = None
         self._spike_mask_gpu = None  # rebuild mask on next prepare
+        self._spikes_need_gather = False
         super().setup(use_gpu=use_gpu)
 
     def simulate(
@@ -450,6 +454,8 @@ class NeuromorphicModel(Model):
         AgentDataCollector to monitor marked output somas.
 
         """
+        _rank = MPI.COMM_WORLD.Get_rank()
+        print(f"[Rank {_rank}] simulate preamble start", flush=True)
         for soma_id in self._soma_ids:
             initial_internal_state = super().get_agent_property_value(
                 id=soma_id, property_name="internal_state"
@@ -534,7 +540,12 @@ class NeuromorphicModel(Model):
                 value=internal_learning_states_buffer,
             )
         self._recorded_spikes = []
+        self._spikes_need_gather = False
+        print(f"[Rank {_rank}] calling super().simulate()", flush=True)
         super().simulate(ticks, update_data_ticks)  # , num_cpu_proc)
+        print(f"[Rank {_rank}] super().simulate() done", flush=True)
+        if MPI.COMM_WORLD.Get_size() > 1:
+            self._spikes_need_gather = True
 
     def create_soma(
         self,
@@ -797,7 +808,19 @@ class NeuromorphicModel(Model):
                 self._spike_record_gpu[:count * 2].get().tolist()
             )
 
+    def _ensure_spikes_gathered(self):
+        """MPI allgather of recorded spikes (collective, idempotent)."""
+        if not self._spikes_need_gather:
+            return
+        comm = MPI.COMM_WORLD
+        all_spikes = comm.allgather(self._recorded_spikes)
+        self._recorded_spikes = []
+        for rank_spikes in all_spikes:
+            self._recorded_spikes.extend(rank_spikes)
+        self._spikes_need_gather = False
+
     def get_spike_times(self, soma_id: int) -> list:
+        self._ensure_spikes_gathered()
         spikes = []
         data = self._recorded_spikes
         for i in range(0, len(data), 2):
@@ -807,6 +830,7 @@ class NeuromorphicModel(Model):
 
     def get_all_spike_times(self) -> dict:
         """Return {soma_id: [tick, ...]} for all recorded spikes."""
+        self._ensure_spikes_gathered()
         result = defaultdict(list)
         data = self._recorded_spikes
         for i in range(0, len(data), 2):

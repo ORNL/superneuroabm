@@ -196,22 +196,17 @@ class TestMPIComparison(unittest.TestCase):
         if rank == 0:
             print(f"✓ Visualization saved: output/{fig_name}")
 
-            # Only compare baseline for single process (size == 1)
-            # MPI runs just verify they complete successfully
-            if size == 1:
-                print("\n" + "=" * 70)
-                print("Baseline Comparison")
-                print("=" * 70)
+            print("\n" + "=" * 70)
+            print(f"Baseline Comparison (np={size})")
+            print("=" * 70)
 
-                passed, message = comparator.compare_with_baseline(model, test_name)
-                print(message)
+            passed, message = comparator.compare_with_baseline(model, test_name)
+            print(message)
 
-                if not passed:
-                    print("\n⚠ WARNING: Spike times differ from baseline!")
-                    print("  If this is intentional, run: python test_mpi_comparison.py TestMPIComparison.save_baseline")
-            else:
-                print(f"\n✓ MPI execution with {size} processes completed successfully!")
-                print("  (Baseline comparison only done with single process)")
+            self.assertTrue(passed,
+                f"Spike times differ from baseline with {size} process(es). "
+                "If this is intentional, run: python test_mpi_comparison.py --save-baselines"
+            )
 
     def save_baseline(self):
         """Save current spike times as baseline."""
