@@ -1,0 +1,586 @@
+
+Lmod is automatically replacing "cce/18.0.1" with "gcc-native/14.2".
+
+
+Lmod is automatically replacing "PrgEnv-cray/8.6.0" with "PrgEnv-gnu/8.6.0".
+
+
+Inactive Modules:
+  1) darshan-runtime
+
+Due to MODULEPATH changes, the following have been reloaded:
+  1) cray-libsci/24.11.0     2) cray-mpich/8.1.31
+
+======================================================================
+Weak Scaling Test - PROPER WEAK SCALING (Directed Ring)
+======================================================================
+Goal: Demonstrate CONSTANT per-worker workload as network scales
+      - Constant neurons per worker
+      - Constant edges per worker (O(n), not O(n²)!)
+      - Constant communication per worker
+      - Constant contextualization overhead per worker
+======================================================================
+Job ID: 3939840
+Nodes: 10
+GPUs: 
+Neurons per worker: 5000 (constant)
+Intra-cluster degree: 10 edges/neuron (constant → O(n) scaling!)
+Neighbor clusters: 1 (directed ring)
+Cross-cluster edges per neighbor: 100 (constant)
+Expected edges per worker: ~50100
+Simulation ticks: 10
+======================================================================
+
+======================================================================
+Test: 1 node(s), 8 GPUs -> 40K neurons
+======================================================================
+WEAK SCALING TEST - PROPER WEAK SCALING
+[SyntheticNet] Generating clustered network for WEAK SCALING:
+    Edge cut ratio: 0.0020
+Rank 0: 55595 agents (12.50%)
+Rank 1: 55572 agents (12.49%)
+Rank 2: 55593 agents (12.50%)
+Rank 3: 55604 agents (12.50%)
+Rank 4: 55653 agents (12.51%)
+Rank 5: 55586 agents (12.50%)
+Rank 6: 55619 agents (12.50%)
+Rank 7: 55558 agents (12.49%)
+Network Size:
+Simulation time: 23.732s
+SUCCESS - Network simulation completed!
+
+
+======================================================================
+Test: 2 node(s), 16 GPUs -> 80K neurons
+======================================================================
+WEAK SCALING TEST - PROPER WEAK SCALING
+[SyntheticNet] Generating clustered network for WEAK SCALING:
+    Edge cut ratio: 0.0020
+Rank 0: 55622 agents ( 6.25%)
+Rank 1: 55610 agents ( 6.25%)
+Rank 2: 55597 agents ( 6.25%)
+Rank 3: 55619 agents ( 6.25%)
+Rank 4: 55586 agents ( 6.25%)
+Rank 5: 55593 agents ( 6.25%)
+Rank 6: 55622 agents ( 6.25%)
+Rank 7: 55585 agents ( 6.25%)
+Rank 8: 55610 agents ( 6.25%)
+Rank 9: 55635 agents ( 6.25%)
+Rank 10: 55605 agents ( 6.25%)
+Rank 11: 55620 agents ( 6.25%)
+Rank 12: 55625 agents ( 6.25%)
+Rank 13: 55652 agents ( 6.25%)
+Rank 14: 55607 agents ( 6.25%)
+Rank 15: 55583 agents ( 6.25%)
+Network Size:
+Simulation time: 29.335s
+SUCCESS - Network simulation completed!
+
+
+======================================================================
+Test: 3 node(s), 24 GPUs -> 120K neurons
+======================================================================
+WEAK SCALING TEST - PROPER WEAK SCALING
+[SyntheticNet] Generating clustered network for WEAK SCALING:
+    Edge cut ratio: 0.0020
+Rank 0: 55609 agents ( 4.17%)
+Rank 1: 55556 agents ( 4.16%)
+Rank 2: 55642 agents ( 4.17%)
+Rank 3: 55602 agents ( 4.17%)
+Rank 4: 55595 agents ( 4.17%)
+Rank 5: 55600 agents ( 4.17%)
+Rank 6: 55578 agents ( 4.17%)
+Rank 7: 55618 agents ( 4.17%)
+Rank 8: 55559 agents ( 4.16%)
+Rank 9: 55618 agents ( 4.17%)
+Rank 10: 55577 agents ( 4.16%)
+Rank 11: 55588 agents ( 4.17%)
+Rank 12: 55600 agents ( 4.17%)
+Rank 13: 55605 agents ( 4.17%)
+Rank 14: 55601 agents ( 4.17%)
+Rank 15: 55622 agents ( 4.17%)
+Rank 16: 55581 agents ( 4.17%)
+Rank 17: 55620 agents ( 4.17%)
+Rank 18: 55582 agents ( 4.17%)
+Rank 19: 55652 agents ( 4.17%)
+Rank 20: 55599 agents ( 4.17%)
+Rank 21: 55594 agents ( 4.17%)
+Rank 22: 55614 agents ( 4.17%)
+Rank 23: 55587 agents ( 4.17%)
+Network Size:
+Simulation time: 33.934s
+SUCCESS - Network simulation completed!
+
+
+======================================================================
+Test: 4 node(s), 32 GPUs -> 160K neurons
+======================================================================
+WEAK SCALING TEST - PROPER WEAK SCALING
+[SyntheticNet] Generating clustered network for WEAK SCALING:
+    Edge cut ratio: 0.0020
+Rank 0: 55573 agents ( 3.12%)
+Rank 1: 55589 agents ( 3.12%)
+Rank 2: 55638 agents ( 3.13%)
+Rank 3: 55578 agents ( 3.12%)
+Rank 4: 55647 agents ( 3.13%)
+Rank 5: 55642 agents ( 3.13%)
+Rank 6: 55611 agents ( 3.13%)
+Rank 7: 55593 agents ( 3.12%)
+Rank 8: 55568 agents ( 3.12%)
+Rank 9: 55598 agents ( 3.12%)
+Rank 10: 55599 agents ( 3.12%)
+Rank 11: 55586 agents ( 3.12%)
+Rank 12: 55584 agents ( 3.12%)
+Rank 13: 55578 agents ( 3.12%)
+Rank 14: 55626 agents ( 3.13%)
+Rank 15: 55599 agents ( 3.12%)
+Rank 16: 55593 agents ( 3.12%)
+Rank 17: 55598 agents ( 3.12%)
+Rank 18: 55569 agents ( 3.12%)
+Rank 19: 55598 agents ( 3.12%)
+Rank 20: 55577 agents ( 3.12%)
+Rank 21: 55604 agents ( 3.13%)
+Rank 22: 55612 agents ( 3.13%)
+Rank 23: 55634 agents ( 3.13%)
+Rank 24: 55593 agents ( 3.12%)
+Rank 25: 55607 agents ( 3.13%)
+Rank 26: 55623 agents ( 3.13%)
+Rank 27: 55608 agents ( 3.13%)
+Rank 28: 55588 agents ( 3.12%)
+Rank 29: 55568 agents ( 3.12%)
+Rank 30: 55627 agents ( 3.13%)
+Rank 31: 55617 agents ( 3.13%)
+Network Size:
+Simulation time: 42.308s
+SUCCESS - Network simulation completed!
+
+
+======================================================================
+Test: 5 node(s), 40 GPUs -> 200K neurons
+======================================================================
+WEAK SCALING TEST - PROPER WEAK SCALING
+[SyntheticNet] Generating clustered network for WEAK SCALING:
+    Edge cut ratio: 0.0020
+Rank 0: 55599 agents ( 2.50%)
+Rank 1: 55582 agents ( 2.50%)
+Rank 2: 55615 agents ( 2.50%)
+Rank 3: 55565 agents ( 2.50%)
+Rank 4: 55608 agents ( 2.50%)
+Rank 5: 55614 agents ( 2.50%)
+Rank 6: 55562 agents ( 2.50%)
+Rank 7: 55576 agents ( 2.50%)
+Rank 8: 55596 agents ( 2.50%)
+Rank 9: 55615 agents ( 2.50%)
+Rank 10: 55580 agents ( 2.50%)
+Rank 11: 55592 agents ( 2.50%)
+Rank 12: 55565 agents ( 2.50%)
+Rank 13: 55595 agents ( 2.50%)
+Rank 14: 55571 agents ( 2.50%)
+Rank 15: 55577 agents ( 2.50%)
+Rank 16: 55591 agents ( 2.50%)
+Rank 17: 55604 agents ( 2.50%)
+Rank 18: 55589 agents ( 2.50%)
+Rank 19: 55561 agents ( 2.50%)
+Rank 20: 55608 agents ( 2.50%)
+Rank 21: 55631 agents ( 2.50%)
+Rank 22: 55578 agents ( 2.50%)
+Rank 23: 55578 agents ( 2.50%)
+Rank 24: 55633 agents ( 2.50%)
+Rank 25: 55585 agents ( 2.50%)
+Rank 26: 55600 agents ( 2.50%)
+Rank 27: 55593 agents ( 2.50%)
+Rank 28: 55576 agents ( 2.50%)
+Rank 29: 55561 agents ( 2.50%)
+Rank 30: 55580 agents ( 2.50%)
+Rank 31: 55593 agents ( 2.50%)
+Rank 32: 55597 agents ( 2.50%)
+Rank 33: 55609 agents ( 2.50%)
+Rank 34: 55585 agents ( 2.50%)
+Rank 35: 55612 agents ( 2.50%)
+Rank 36: 55592 agents ( 2.50%)
+Rank 37: 55571 agents ( 2.50%)
+Rank 38: 55615 agents ( 2.50%)
+Rank 39: 55584 agents ( 2.50%)
+Network Size:
+Simulation time: 47.950s
+SUCCESS - Network simulation completed!
+
+
+======================================================================
+Test: 6 node(s), 48 GPUs -> 240K neurons
+======================================================================
+WEAK SCALING TEST - PROPER WEAK SCALING
+[SyntheticNet] Generating clustered network for WEAK SCALING:
+    Edge cut ratio: 0.0020
+Rank 0: 55588 agents ( 2.08%)
+Rank 1: 55630 agents ( 2.08%)
+Rank 2: 55618 agents ( 2.08%)
+Rank 3: 55595 agents ( 2.08%)
+Rank 4: 55620 agents ( 2.08%)
+Rank 5: 55559 agents ( 2.08%)
+Rank 6: 55581 agents ( 2.08%)
+Rank 7: 55584 agents ( 2.08%)
+Rank 8: 55620 agents ( 2.08%)
+Rank 9: 55600 agents ( 2.08%)
+Rank 10: 55584 agents ( 2.08%)
+Rank 11: 55571 agents ( 2.08%)
+Rank 12: 55582 agents ( 2.08%)
+Rank 13: 55585 agents ( 2.08%)
+Rank 14: 55582 agents ( 2.08%)
+Rank 15: 55616 agents ( 2.08%)
+Rank 16: 55613 agents ( 2.08%)
+Rank 17: 55635 agents ( 2.08%)
+Rank 18: 55600 agents ( 2.08%)
+Rank 19: 55654 agents ( 2.09%)
+Rank 20: 55603 agents ( 2.08%)
+Rank 21: 55592 agents ( 2.08%)
+Rank 22: 55589 agents ( 2.08%)
+Rank 23: 55595 agents ( 2.08%)
+Rank 24: 55591 agents ( 2.08%)
+Rank 25: 55576 agents ( 2.08%)
+Rank 26: 55615 agents ( 2.08%)
+Rank 27: 55599 agents ( 2.08%)
+Rank 28: 55613 agents ( 2.08%)
+Rank 29: 55599 agents ( 2.08%)
+Rank 30: 55632 agents ( 2.08%)
+Rank 31: 55600 agents ( 2.08%)
+Rank 32: 55573 agents ( 2.08%)
+Rank 33: 55598 agents ( 2.08%)
+Rank 34: 55591 agents ( 2.08%)
+Rank 35: 55619 agents ( 2.08%)
+Rank 36: 55615 agents ( 2.08%)
+Rank 37: 55588 agents ( 2.08%)
+Rank 38: 55597 agents ( 2.08%)
+Rank 39: 55599 agents ( 2.08%)
+Rank 40: 55573 agents ( 2.08%)
+Rank 41: 55588 agents ( 2.08%)
+Rank 42: 55591 agents ( 2.08%)
+Rank 43: 55600 agents ( 2.08%)
+Rank 44: 55562 agents ( 2.08%)
+Rank 45: 55639 agents ( 2.08%)
+Rank 46: 55618 agents ( 2.08%)
+Rank 47: 55591 agents ( 2.08%)
+Network Size:
+Simulation time: 239.507s
+SUCCESS - Network simulation completed!
+
+
+======================================================================
+Test: 7 node(s), 56 GPUs -> 280K neurons
+======================================================================
+WEAK SCALING TEST - PROPER WEAK SCALING
+[SyntheticNet] Generating clustered network for WEAK SCALING:
+    Edge cut ratio: 0.0020
+Rank 0: 55618 agents ( 1.79%)
+Rank 1: 55594 agents ( 1.79%)
+Rank 2: 55595 agents ( 1.79%)
+Rank 3: 55644 agents ( 1.79%)
+Rank 4: 55589 agents ( 1.79%)
+Rank 5: 55611 agents ( 1.79%)
+Rank 6: 55617 agents ( 1.79%)
+Rank 7: 55551 agents ( 1.78%)
+Rank 8: 55596 agents ( 1.79%)
+Rank 9: 55596 agents ( 1.79%)
+Rank 10: 55607 agents ( 1.79%)
+Rank 11: 55609 agents ( 1.79%)
+Rank 12: 55562 agents ( 1.78%)
+Rank 13: 55613 agents ( 1.79%)
+Rank 14: 55580 agents ( 1.79%)
+Rank 15: 55611 agents ( 1.79%)
+Rank 16: 55576 agents ( 1.78%)
+Rank 17: 55593 agents ( 1.79%)
+Rank 18: 55633 agents ( 1.79%)
+Rank 19: 55602 agents ( 1.79%)
+Rank 20: 55617 agents ( 1.79%)
+Rank 21: 55593 agents ( 1.79%)
+Rank 22: 55586 agents ( 1.79%)
+Rank 23: 55624 agents ( 1.79%)
+Rank 24: 55583 agents ( 1.79%)
+Rank 25: 55608 agents ( 1.79%)
+Rank 26: 55600 agents ( 1.79%)
+Rank 27: 55632 agents ( 1.79%)
+Rank 28: 55588 agents ( 1.79%)
+Rank 29: 55576 agents ( 1.78%)
+Rank 30: 55606 agents ( 1.79%)
+Rank 31: 55617 agents ( 1.79%)
+Rank 32: 55588 agents ( 1.79%)
+Rank 33: 55563 agents ( 1.78%)
+Rank 34: 55601 agents ( 1.79%)
+Rank 35: 55633 agents ( 1.79%)
+Rank 36: 55623 agents ( 1.79%)
+Rank 37: 55607 agents ( 1.79%)
+Rank 38: 55590 agents ( 1.79%)
+Rank 39: 55654 agents ( 1.79%)
+Rank 40: 55592 agents ( 1.79%)
+Rank 41: 55584 agents ( 1.79%)
+Rank 42: 55587 agents ( 1.79%)
+Rank 43: 55608 agents ( 1.79%)
+Rank 44: 55570 agents ( 1.78%)
+Rank 45: 55630 agents ( 1.79%)
+Rank 46: 55563 agents ( 1.78%)
+Rank 47: 55596 agents ( 1.79%)
+Rank 48: 55596 agents ( 1.79%)
+Rank 49: 55617 agents ( 1.79%)
+Rank 50: 55625 agents ( 1.79%)
+Rank 51: 55567 agents ( 1.78%)
+Rank 52: 55606 agents ( 1.79%)
+Rank 53: 55588 agents ( 1.79%)
+Rank 54: 55590 agents ( 1.79%)
+Rank 55: 55590 agents ( 1.79%)
+Network Size:
+Simulation time: 69.448s
+SUCCESS - Network simulation completed!
+
+
+======================================================================
+Test: 8 node(s), 64 GPUs -> 320K neurons
+======================================================================
+WEAK SCALING TEST - PROPER WEAK SCALING
+[SyntheticNet] Generating clustered network for WEAK SCALING:
+    Edge cut ratio: 0.0020
+Rank 0: 55597 agents ( 1.56%)
+Rank 1: 55588 agents ( 1.56%)
+Rank 2: 55618 agents ( 1.56%)
+Rank 3: 55603 agents ( 1.56%)
+Rank 4: 55581 agents ( 1.56%)
+Rank 5: 55630 agents ( 1.56%)
+Rank 6: 55588 agents ( 1.56%)
+Rank 7: 55624 agents ( 1.56%)
+Rank 8: 55611 agents ( 1.56%)
+Rank 9: 55569 agents ( 1.56%)
+Rank 10: 55582 agents ( 1.56%)
+Rank 11: 55609 agents ( 1.56%)
+Rank 12: 55630 agents ( 1.56%)
+Rank 13: 55582 agents ( 1.56%)
+Rank 14: 55619 agents ( 1.56%)
+Rank 15: 55611 agents ( 1.56%)
+Rank 16: 55618 agents ( 1.56%)
+Rank 17: 55568 agents ( 1.56%)
+Rank 18: 55621 agents ( 1.56%)
+Rank 19: 55629 agents ( 1.56%)
+Rank 20: 55610 agents ( 1.56%)
+Rank 21: 55603 agents ( 1.56%)
+Rank 22: 55630 agents ( 1.56%)
+Rank 23: 55634 agents ( 1.56%)
+Rank 24: 55598 agents ( 1.56%)
+Rank 25: 55569 agents ( 1.56%)
+Rank 26: 55553 agents ( 1.56%)
+Rank 27: 55609 agents ( 1.56%)
+Rank 28: 55578 agents ( 1.56%)
+Rank 29: 55591 agents ( 1.56%)
+Rank 30: 55632 agents ( 1.56%)
+Rank 31: 55635 agents ( 1.56%)
+Rank 32: 55600 agents ( 1.56%)
+Rank 33: 55629 agents ( 1.56%)
+Rank 34: 55572 agents ( 1.56%)
+Rank 35: 55604 agents ( 1.56%)
+Rank 36: 55584 agents ( 1.56%)
+Rank 37: 55646 agents ( 1.56%)
+Rank 38: 55598 agents ( 1.56%)
+Rank 39: 55609 agents ( 1.56%)
+Rank 40: 55579 agents ( 1.56%)
+Rank 41: 55586 agents ( 1.56%)
+Rank 42: 55607 agents ( 1.56%)
+Rank 43: 55580 agents ( 1.56%)
+Rank 44: 55616 agents ( 1.56%)
+Rank 45: 55630 agents ( 1.56%)
+Rank 46: 55607 agents ( 1.56%)
+Rank 47: 55582 agents ( 1.56%)
+Rank 48: 55652 agents ( 1.56%)
+Rank 49: 55582 agents ( 1.56%)
+Rank 50: 55580 agents ( 1.56%)
+Rank 51: 55597 agents ( 1.56%)
+Rank 52: 55574 agents ( 1.56%)
+Rank 53: 55613 agents ( 1.56%)
+Rank 54: 55594 agents ( 1.56%)
+Rank 55: 55594 agents ( 1.56%)
+Rank 56: 55587 agents ( 1.56%)
+Rank 57: 55613 agents ( 1.56%)
+Rank 58: 55556 agents ( 1.56%)
+Rank 59: 55626 agents ( 1.56%)
+Rank 60: 55606 agents ( 1.56%)
+Rank 61: 55596 agents ( 1.56%)
+Rank 62: 55596 agents ( 1.56%)
+Rank 63: 55589 agents ( 1.56%)
+Network Size:
+Simulation time: 113.992s
+SUCCESS - Network simulation completed!
+
+
+======================================================================
+Test: 9 node(s), 72 GPUs -> 360K neurons
+======================================================================
+WEAK SCALING TEST - PROPER WEAK SCALING
+[SyntheticNet] Generating clustered network for WEAK SCALING:
+    Edge cut ratio: 0.0020
+Rank 0: 55594 agents ( 1.39%)
+Rank 1: 55594 agents ( 1.39%)
+Rank 2: 55621 agents ( 1.39%)
+Rank 3: 55582 agents ( 1.39%)
+Rank 4: 55573 agents ( 1.39%)
+Rank 5: 55620 agents ( 1.39%)
+Rank 6: 55597 agents ( 1.39%)
+Rank 7: 55589 agents ( 1.39%)
+Rank 8: 55606 agents ( 1.39%)
+Rank 9: 55620 agents ( 1.39%)
+Rank 10: 55630 agents ( 1.39%)
+Rank 11: 55585 agents ( 1.39%)
+Rank 12: 55611 agents ( 1.39%)
+Rank 13: 55590 agents ( 1.39%)
+Rank 14: 55637 agents ( 1.39%)
+Rank 15: 55581 agents ( 1.39%)
+Rank 16: 55596 agents ( 1.39%)
+Rank 17: 55562 agents ( 1.39%)
+Rank 18: 55624 agents ( 1.39%)
+Rank 19: 55536 agents ( 1.39%)
+Rank 20: 55617 agents ( 1.39%)
+Rank 21: 55633 agents ( 1.39%)
+Rank 22: 55578 agents ( 1.39%)
+Rank 23: 55570 agents ( 1.39%)
+Rank 24: 55562 agents ( 1.39%)
+Rank 25: 55615 agents ( 1.39%)
+Rank 26: 55625 agents ( 1.39%)
+Rank 27: 55635 agents ( 1.39%)
+Rank 28: 55608 agents ( 1.39%)
+Rank 29: 55625 agents ( 1.39%)
+Rank 30: 55597 agents ( 1.39%)
+Rank 31: 55564 agents ( 1.39%)
+Rank 32: 55617 agents ( 1.39%)
+Rank 33: 55611 agents ( 1.39%)
+Rank 34: 55578 agents ( 1.39%)
+Rank 35: 55622 agents ( 1.39%)
+Rank 36: 55591 agents ( 1.39%)
+Rank 37: 55587 agents ( 1.39%)
+Rank 38: 55590 agents ( 1.39%)
+Rank 39: 55603 agents ( 1.39%)
+Rank 40: 55577 agents ( 1.39%)
+Rank 41: 55614 agents ( 1.39%)
+Rank 42: 55598 agents ( 1.39%)
+Rank 43: 55554 agents ( 1.39%)
+Rank 44: 55610 agents ( 1.39%)
+Rank 45: 55570 agents ( 1.39%)
+Rank 46: 55579 agents ( 1.39%)
+Rank 47: 55623 agents ( 1.39%)
+Rank 48: 55614 agents ( 1.39%)
+Rank 49: 55599 agents ( 1.39%)
+Rank 50: 55597 agents ( 1.39%)
+Rank 51: 55604 agents ( 1.39%)
+Rank 52: 55626 agents ( 1.39%)
+Rank 53: 55598 agents ( 1.39%)
+Rank 54: 55599 agents ( 1.39%)
+Rank 55: 55587 agents ( 1.39%)
+Rank 56: 55594 agents ( 1.39%)
+Rank 57: 55608 agents ( 1.39%)
+Rank 58: 55627 agents ( 1.39%)
+Rank 59: 55597 agents ( 1.39%)
+Rank 60: 55618 agents ( 1.39%)
+Rank 61: 55606 agents ( 1.39%)
+Rank 62: 55586 agents ( 1.39%)
+Rank 63: 55567 agents ( 1.39%)
+Rank 64: 55587 agents ( 1.39%)
+Rank 65: 55594 agents ( 1.39%)
+Rank 66: 55602 agents ( 1.39%)
+Rank 67: 55572 agents ( 1.39%)
+Rank 68: 55634 agents ( 1.39%)
+Rank 69: 55637 agents ( 1.39%)
+Rank 70: 55589 agents ( 1.39%)
+Rank 71: 55596 agents ( 1.39%)
+Network Size:
+Simulation time: 88.659s
+SUCCESS - Network simulation completed!
+
+
+======================================================================
+Test: 10 node(s), 80 GPUs -> 400K neurons
+======================================================================
+WEAK SCALING TEST - PROPER WEAK SCALING
+[SyntheticNet] Generating clustered network for WEAK SCALING:
+    Edge cut ratio: 0.0020
+Rank 0: 55588 agents ( 1.25%)
+Rank 1: 55617 agents ( 1.25%)
+Rank 2: 55614 agents ( 1.25%)
+Rank 3: 55592 agents ( 1.25%)
+Rank 4: 55592 agents ( 1.25%)
+Rank 5: 55587 agents ( 1.25%)
+Rank 6: 55610 agents ( 1.25%)
+Rank 7: 55619 agents ( 1.25%)
+Rank 8: 55576 agents ( 1.25%)
+Rank 9: 55619 agents ( 1.25%)
+Rank 10: 55628 agents ( 1.25%)
+Rank 11: 55581 agents ( 1.25%)
+Rank 12: 55600 agents ( 1.25%)
+Rank 13: 55599 agents ( 1.25%)
+Rank 14: 55566 agents ( 1.25%)
+Rank 15: 55579 agents ( 1.25%)
+Rank 16: 55633 agents ( 1.25%)
+Rank 17: 55573 agents ( 1.25%)
+Rank 18: 55623 agents ( 1.25%)
+Rank 19: 55593 agents ( 1.25%)
+Rank 20: 55589 agents ( 1.25%)
+Rank 21: 55590 agents ( 1.25%)
+Rank 22: 55573 agents ( 1.25%)
+Rank 23: 55582 agents ( 1.25%)
+Rank 24: 55636 agents ( 1.25%)
+Rank 25: 55626 agents ( 1.25%)
+Rank 26: 55588 agents ( 1.25%)
+Rank 27: 55597 agents ( 1.25%)
+Rank 28: 55600 agents ( 1.25%)
+Rank 29: 55602 agents ( 1.25%)
+Rank 30: 55598 agents ( 1.25%)
+Rank 31: 55589 agents ( 1.25%)
+Rank 32: 55615 agents ( 1.25%)
+Rank 33: 55600 agents ( 1.25%)
+Rank 34: 55626 agents ( 1.25%)
+Rank 35: 55592 agents ( 1.25%)
+Rank 36: 55580 agents ( 1.25%)
+Rank 37: 55570 agents ( 1.25%)
+Rank 38: 55611 agents ( 1.25%)
+Rank 39: 55623 agents ( 1.25%)
+Rank 40: 55580 agents ( 1.25%)
+Rank 41: 55564 agents ( 1.25%)
+Rank 42: 55619 agents ( 1.25%)
+Rank 43: 55589 agents ( 1.25%)
+Rank 44: 55605 agents ( 1.25%)
+Rank 45: 55568 agents ( 1.25%)
+Rank 46: 55612 agents ( 1.25%)
+Rank 47: 55587 agents ( 1.25%)
+Rank 48: 55600 agents ( 1.25%)
+Rank 49: 55605 agents ( 1.25%)
+Rank 50: 55616 agents ( 1.25%)
+Rank 51: 55580 agents ( 1.25%)
+Rank 52: 55608 agents ( 1.25%)
+Rank 53: 55575 agents ( 1.25%)
+Rank 54: 55578 agents ( 1.25%)
+Rank 55: 55598 agents ( 1.25%)
+Rank 56: 55585 agents ( 1.25%)
+Rank 57: 55590 agents ( 1.25%)
+Rank 58: 55622 agents ( 1.25%)
+Rank 59: 55618 agents ( 1.25%)
+Rank 60: 55603 agents ( 1.25%)
+Rank 61: 55636 agents ( 1.25%)
+Rank 62: 55641 agents ( 1.25%)
+Rank 63: 55612 agents ( 1.25%)
+Rank 64: 55573 agents ( 1.25%)
+Rank 65: 55598 agents ( 1.25%)
+Rank 66: 55568 agents ( 1.25%)
+Rank 67: 55628 agents ( 1.25%)
+Rank 68: 55587 agents ( 1.25%)
+Rank 69: 55582 agents ( 1.25%)
+Rank 70: 55589 agents ( 1.25%)
+Rank 71: 55609 agents ( 1.25%)
+Rank 72: 55600 agents ( 1.25%)
+Rank 73: 55606 agents ( 1.25%)
+Rank 74: 55593 agents ( 1.25%)
+Rank 75: 55577 agents ( 1.25%)
+Rank 76: 55608 agents ( 1.25%)
+Rank 77: 55622 agents ( 1.25%)
+Rank 78: 55600 agents ( 1.25%)
+Rank 79: 55603 agents ( 1.25%)
+Network Size:
+Simulation time: 97.406s
+SUCCESS - Network simulation completed!
+
+
+======================================================================
+All tests completed!
+======================================================================

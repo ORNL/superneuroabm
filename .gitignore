@@ -1,0 +1,87 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test outputs and generated files
+tests/output/
+tests/output_archieve/
+tests/baselines/
+*.png
+*.csv
+
+# Documentation builds
+docs/
+
+# Generated data and networks
+**/network_run_*.json
+**/ff_plots_run_*.png
+
+# Temporary test files
+step_func_code.py
+
+# Auto-generated code (environment-specific)
+superneuroabm/ssn/
+
+# Local test scripts (not for release)
+tests/plot_weak_scaling_*.py
+tests/test_lif_mixed_synapses_stdp_mpi.py

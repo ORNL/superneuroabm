@@ -4,6 +4,7 @@ Single exponential synapse step functions for spiking neural networks
 """
 
 import cupy as cp
+import numpy as np
 from cupyx import jit
 
 from superneuroabm.step_functions.synapse.util import get_soma_spike
@@ -38,15 +39,19 @@ def synapse_single_exp_step_func(
     tau_fall = synapse_params[agent_index][3]
     tau_rise = synapse_params[agent_index][4]
 
-    location_data = locations[agent_index]
-    pre_soma_id = -1 if cp.isnan(location_data[1]) else location_data[0]
-    post_soma_id = location_data[0] if cp.isnan(location_data[1]) else location_data[1]
+    # locations[agent_index] = [pre_soma_index, post_soma_index]
+    # SAGESim has already converted agent IDs to local indices
+    pre_soma_index, post_soma_index = (
+        locations[agent_index][0],
+        locations[agent_index][1],
+    )
+
     spike = get_soma_spike(
         tick,
         agent_index,
         globals,
         agent_ids,
-        pre_soma_id,
+        pre_soma_index,
         t_current,
         input_spikes_tensor,
         output_spikes_tensor,
@@ -57,6 +62,10 @@ def synapse_single_exp_step_func(
     I_synapse = I_synapse * (1 - dt / tau_fall) + spike * scale * weight
 
     internal_state[agent_index][0] = I_synapse
-    internal_states_buffer[agent_index][t_current][0] = I_synapse
-    internal_states_buffer[agent_index][t_current][1] = spike
-    internal_states_buffer[agent_index][t_current][2] = t_current
+
+    # Safe buffer indexing: use modulo to prevent out-of-bounds access
+    # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always
+    buffer_idx = t_current % len(internal_states_buffer[agent_index])
+    internal_states_buffer[agent_index][buffer_idx][0] = I_synapse
+    internal_states_buffer[agent_index][buffer_idx][1] = spike
+    internal_states_buffer[agent_index][buffer_idx][2] = t_current
