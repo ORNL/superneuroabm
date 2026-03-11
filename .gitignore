@@ -81,6 +81,7 @@ step_func_code.py
 
 # Auto-generated code (environment-specific)
 superneuroabm/ssn/
+superneuroabm/_generated/
 
 # Local test scripts (not for release)
 tests/plot_weak_scaling_*.py
