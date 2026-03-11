@@ -15,15 +15,16 @@ from sagesim.breed import Breed
 from superneuroabm.step_functions.soma.izh import izh_soma_step_func
 from superneuroabm.step_functions.soma.lif import lif_soma_step_func
 from superneuroabm.step_functions.soma.lif_soma_adaptive_thr import lif_soma_adaptive_thr_step_func
-from superneuroabm.step_functions.soma.srm import srm_soma_step_func
 from superneuroabm.step_functions.soma.hg_lif import hg_lif_soma_step_func
 from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
-from superneuroabm.step_functions.synapse.double_exp import synapse_double_exp_step_func
 from superneuroabm.step_functions.synapse.stdp.learning_rule_selector import (
     learning_rule_selector,
 )
 from superneuroabm.util import load_component_configurations
 import copy
+import importlib.util
+import sys
+from mpi4py import MPI
 
 CURRENT_DIR_ABSPATH = Path(__file__).resolve().parent
 
@@ -48,12 +49,6 @@ class NeuromorphicModel(Model):
                 (
                     lif_soma_adaptive_thr_step_func,
                     CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif_soma_adaptive_thr.py",
-                )
-            ],
-            "srm_soma": [
-                (
-                    srm_soma_step_func,
-                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "srm.py",
                 )
             ],
             "hg_lif_soma": [
@@ -81,24 +76,8 @@ class NeuromorphicModel(Model):
                     / "learning_rule_selector.py",
                 ),
             ],
-            "double_exp_synapse": [
-                (
-                    synapse_double_exp_step_func,
-                    CURRENT_DIR_ABSPATH
-                    / "step_functions"
-                    / "synapse"
-                    / "double_exp.py",
-                ),
-                (
-                    learning_rule_selector,
-                    CURRENT_DIR_ABSPATH
-                    / "step_functions"
-                    / "synapse"
-                    / "stdp"
-                    / "learning_rule_selector.py",
-                ),
-            ],
         },
+        user_config=None,
         enable_internal_state_tracking: bool = True,
     ) -> None:
         """
@@ -179,6 +158,10 @@ class NeuromorphicModel(Model):
             "internal_states_buffer",
         ]
 
+        # Store property definitions for use by registration API
+        self._soma_properties = soma_properties
+        self._soma_no_double_buffer = list(soma_properties.keys())
+
         self._soma_breeds: Dict[str, Breed] = {}
         for breed_name, step_funcs in soma_breed_info.items():
             soma_breed = Breed(breed_name)
@@ -207,6 +190,10 @@ class NeuromorphicModel(Model):
             "internal_states_buffer",
         ]
 
+        # Store property definitions for use by registration API
+        self._synapse_properties = synapse_properties
+        self._synapse_no_double_buffer = list(synapse_properties.keys())
+
         self._synapse_breeds: Dict[str, Breed] = {}
         for breed_name, step_funcs in synapse_breed_info.items():
             synapse_breed = Breed(breed_name)
@@ -233,12 +220,16 @@ class NeuromorphicModel(Model):
         self._spike_record_count_gpu = None
         self._recorded_soma_ids = None   # None = record all, list = subset
         self._spike_mask_gpu = None      # CuPy float32 bitmask, built lazily
+        self._spikes_need_gather = False
 
         self.tag2component = defaultdict(set)  # tag -> agent_id
 
         # Load and hold configurations
         self.agentid2config = {}
-        self._component_configurations = load_component_configurations()
+        if user_config is not None:
+            self._component_configurations = load_component_configurations(user_config)
+        else:
+            self._component_configurations = load_component_configurations()
 
         self.synapse2soma_map = defaultdict(
             dict
@@ -250,6 +241,32 @@ class NeuromorphicModel(Model):
         self._synapse2defaultlearningparameters: Dict[int, List[float]] = {}
         self._synapse2defaultinternalstate: Dict[int, List[float]] = {}
         self._synapse2defaultinternallearningstate: Dict[int, List[float]] = {}
+
+        # Learning rule registry
+        self._learning_rules = {
+            0: {
+                "func_name": "exp_pair_wise_stdp",
+                "import_line": "from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp import exp_pair_wise_stdp",
+            },
+            1: {
+                "func_name": "exp_pair_wise_stdp_quantized",
+                "import_line": "from superneuroabm.step_functions.synapse.stdp.Three_bit_exp_pair_wise import exp_pair_wise_stdp_quantized",
+            },
+            2: {
+                "func_name": "exp_pair_wise_stdp_bounded",
+                "import_line": "from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp_bounded import exp_pair_wise_stdp_bounded",
+            },
+        }
+        self._learning_rule_names = {
+            "exp_pair_wise_stdp": 0,
+            "exp_pair_wise_stdp_quantized": 1,
+            "exp_pair_wise_stdp_bounded": 2,
+        }
+        self._next_learning_rule_id = 3
+        self._learning_rules_dirty = False
+        self._synapse_breeds_with_selector = {"single_exp_synapse"}
+        self._synapse_selector_priority = {"single_exp_synapse": 101}
+        self._setup_called = False
 
     def get_agent_config_name(self, agent_id: int) -> Dict[str, any]:
         """
@@ -325,6 +342,206 @@ class NeuromorphicModel(Model):
         :return: List of agent IDs that have the specified tag.
         """
         return self.tag2component.get(tag, set())
+
+    def register_soma_type(self, name: str, step_funcs: list) -> None:
+        """Register a custom soma type with its step functions.
+
+        Must be called before setup().
+
+        :param name: Unique name for the soma type.
+        :param step_funcs: List of (step_func, module_path) tuples.
+        """
+        if self._setup_called:
+            raise RuntimeError(
+                "Cannot register soma type after setup() has been called."
+            )
+        if name in self._soma_breeds:
+            raise ValueError(f"Soma type '{name}' is already registered.")
+
+        soma_breed = Breed(name)
+        for prop_name, (default_val, neighbor_visible) in self._soma_properties.items():
+            soma_breed.register_property(
+                prop_name, default_val, neighbor_visible=neighbor_visible
+            )
+        for step_func_order, (step_func, module_fpath) in enumerate(step_funcs):
+            soma_breed.register_step_func(
+                step_func=step_func,
+                module_fpath=module_fpath,
+                priority=step_func_order,
+                no_double_buffer=self._soma_no_double_buffer,
+            )
+        self.register_breed(soma_breed)
+        self._soma_breeds[name] = soma_breed
+
+    def register_synapse_type(self, name: str, step_funcs: list) -> None:
+        """Register a custom synapse type with its step functions.
+
+        The learning rule selector is automatically appended as the last
+        step function. Must be called before setup().
+
+        :param name: Unique name for the synapse type.
+        :param step_funcs: List of (step_func, module_path) tuples for
+            synapse dynamics.
+        """
+        if self._setup_called:
+            raise RuntimeError(
+                "Cannot register synapse type after setup() has been called."
+            )
+        if name in self._synapse_breeds:
+            raise ValueError(f"Synapse type '{name}' is already registered.")
+
+        selector_entry = (
+            learning_rule_selector,
+            CURRENT_DIR_ABSPATH
+            / "step_functions"
+            / "synapse"
+            / "stdp"
+            / "learning_rule_selector.py",
+        )
+        all_step_funcs = list(step_funcs) + [selector_entry]
+
+        synapse_breed = Breed(name)
+        for prop_name, (default_val, neighbor_visible) in self._synapse_properties.items():
+            synapse_breed.register_property(
+                prop_name, default_val, neighbor_visible=neighbor_visible
+            )
+        for step_func_order, (step_func, module_fpath) in enumerate(all_step_funcs):
+            synapse_breed.register_step_func(
+                step_func=step_func,
+                module_fpath=module_fpath,
+                priority=100 + step_func_order,
+                no_double_buffer=self._synapse_no_double_buffer,
+            )
+        self.register_breed(synapse_breed)
+        self._synapse_breeds[name] = synapse_breed
+
+        selector_priority = 100 + len(step_funcs)
+        self._synapse_breeds_with_selector.add(name)
+        self._synapse_selector_priority[name] = selector_priority
+
+    def register_learning_rule(
+        self, name: str, step_func, module_path: Path
+    ) -> int:
+        """Register a custom learning rule; returns auto-assigned integer ID.
+
+        Must be called before setup().
+
+        :param name: Unique name for the learning rule.
+        :param step_func: The learning rule step function.
+        :param module_path: Path to the module containing the step function.
+        :return: The auto-assigned integer ID for the learning rule.
+        """
+        if self._setup_called:
+            raise RuntimeError(
+                "Cannot register learning rule after setup() has been called."
+            )
+        if name in self._learning_rule_names:
+            raise ValueError(f"Learning rule '{name}' is already registered.")
+
+        rule_id = self._next_learning_rule_id
+        self._next_learning_rule_id += 1
+
+        module_path = Path(module_path).resolve()
+        func_name = step_func.__name__
+        module_stem = module_path.stem
+        sys_path_entry = str(module_path.parent)
+
+        self._learning_rules[rule_id] = {
+            "func_name": func_name,
+            "import_line": f"from {module_stem} import {func_name}",
+            "sys_path_entry": sys_path_entry,
+        }
+        self._learning_rule_names[name] = rule_id
+        self._learning_rules_dirty = True
+
+        return rule_id
+
+    def _generate_learning_rule_selector(self):
+        """Generate a new learning_rule_selector.py with all registered rules.
+
+        Writes to superneuroabm/_generated/learning_rule_selector.py,
+        imports the module, and returns (func, path).
+        """
+        CALL_ARGS = (
+            "            tick, agent_index, globals, agent_ids, breeds, locations,\n"
+            "            synapse_params, learning_params, internal_state,\n"
+            "            internal_learning_state, synapse_history, input_spikes_tensor,\n"
+            "            output_spikes_tensor, internal_states_buffer,\n"
+            "            internal_learning_states_buffer,\n"
+        )
+
+        # Collect sys.path entries and import lines
+        sys_path_lines = []
+        import_lines = []
+        for rule_id in sorted(self._learning_rules.keys()):
+            rule = self._learning_rules[rule_id]
+            entry = rule.get("sys_path_entry")
+            if entry:
+                line = f"sys.path.insert(0, {entry!r})"
+                if line not in sys_path_lines:
+                    sys_path_lines.append(line)
+            import_lines.append(rule["import_line"])
+
+        # Build if/elif branches
+        branches = []
+        branches.append("    stdpType = learning_params[agent_index][0]")
+        branches.append("    if stdpType == -1:")
+        branches.append("        pass")
+        for rule_id in sorted(self._learning_rules.keys()):
+            rule = self._learning_rules[rule_id]
+            func_name = rule["func_name"]
+            branches.append(f"    elif stdpType == {rule_id}:")
+            branches.append(f"        {func_name}(")
+            branches.append(CALL_ARGS + "        )")
+
+        # Assemble source
+        lines = ["import sys", "from cupyx import jit", ""]
+        lines.append(
+            "from superneuroabm.step_functions.synapse.util import get_soma_spike"
+        )
+        lines.append("")
+        for line in sys_path_lines:
+            lines.append(line)
+        if sys_path_lines:
+            lines.append("")
+        for line in import_lines:
+            lines.append(line)
+        lines.append("")
+        lines.append("")
+        lines.append('@jit.rawkernel(device="cuda")')
+        lines.append("def learning_rule_selector(")
+        lines.append(
+            "    tick, agent_index, globals, agent_ids, breeds, locations,"
+        )
+        lines.append("    synapse_params, learning_params, internal_state,")
+        lines.append(
+            "    internal_learning_state, synapse_history, input_spikes_tensor,"
+        )
+        lines.append("    output_spikes_tensor, internal_states_buffer,")
+        lines.append("    internal_learning_states_buffer,")
+        lines.append("):")
+        lines.extend(branches)
+        lines.append("")
+
+        source = "\n".join(lines)
+
+        # Write to file
+        gen_dir = CURRENT_DIR_ABSPATH / "_generated"
+        gen_dir.mkdir(exist_ok=True)
+        (gen_dir / "__init__.py").touch()
+        gen_file = gen_dir / "learning_rule_selector.py"
+        gen_file.write_text(source)
+
+        # Import via importlib
+        spec = importlib.util.spec_from_file_location(
+            "superneuroabm._generated.learning_rule_selector",
+            str(gen_file),
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module  # Register so inspect.getmodule() works
+        spec.loader.exec_module(module)
+
+        return (module.learning_rule_selector, gen_file)
 
     def set_recorded_somas(self, soma_ids: list):
         """
@@ -402,7 +619,7 @@ class NeuromorphicModel(Model):
                 property_name="output_spikes_tensor",
                 value=[0.0, 0.0],
             )
-        
+
     def reset(self, retain_parameters: bool = True) -> None:
         """
         Resets all soma and synapse agents to their initial states.
@@ -425,6 +642,7 @@ class NeuromorphicModel(Model):
         self._spike_record_gpu = None
         self._spike_record_count_gpu = None
         self._spike_mask_gpu = None  # rebuild mask on next prepare
+        self._spikes_need_gather = False
         self._agent_factory._prev_agent_data.clear()
         
     def setup(
@@ -435,11 +653,25 @@ class NeuromorphicModel(Model):
         One-time heavy initialization: code gen, JIT, priority analysis.
         Always resets to default state. Call once before simulation loop.
         """
+        self._setup_called = True
+
+        if self._learning_rules_dirty:
+            new_func, new_path = self._generate_learning_rule_selector()
+            for breed_name in self._synapse_breeds_with_selector:
+                priority = self._synapse_selector_priority[breed_name]
+                self._synapse_breeds[breed_name].register_step_func(
+                    step_func=new_func,
+                    module_fpath=new_path,
+                    priority=priority,
+                    no_double_buffer=self._synapse_no_double_buffer,
+                )
+
         self._reset_agents(retain_parameters=False)
         self._recorded_spikes = []
         self._spike_record_gpu = None
         self._spike_record_count_gpu = None
         self._spike_mask_gpu = None  # rebuild mask on next prepare
+        self._spikes_need_gather = False
         super().setup(use_gpu=use_gpu)
 
     def simulate(
@@ -534,7 +766,10 @@ class NeuromorphicModel(Model):
                 value=internal_learning_states_buffer,
             )
         self._recorded_spikes = []
+        self._spikes_need_gather = False
         super().simulate(ticks, update_data_ticks)  # , num_cpu_proc)
+        if MPI.COMM_WORLD.Get_size() > 1:
+            self._spikes_need_gather = True
 
     def create_soma(
         self,
@@ -797,7 +1032,19 @@ class NeuromorphicModel(Model):
                 self._spike_record_gpu[:count * 2].get().tolist()
             )
 
+    def _ensure_spikes_gathered(self):
+        """MPI allgather of recorded spikes (collective, idempotent)."""
+        if not self._spikes_need_gather:
+            return
+        comm = MPI.COMM_WORLD
+        all_spikes = comm.allgather(self._recorded_spikes)
+        self._recorded_spikes = []
+        for rank_spikes in all_spikes:
+            self._recorded_spikes.extend(rank_spikes)
+        self._spikes_need_gather = False
+
     def get_spike_times(self, soma_id: int) -> list:
+        self._ensure_spikes_gathered()
         spikes = []
         data = self._recorded_spikes
         for i in range(0, len(data), 2):
@@ -807,6 +1054,7 @@ class NeuromorphicModel(Model):
 
     def get_all_spike_times(self) -> dict:
         """Return {soma_id: [tick, ...]} for all recorded spikes."""
+        self._ensure_spikes_gathered()
         result = defaultdict(list)
         data = self._recorded_spikes
         for i in range(0, len(data), 2):
