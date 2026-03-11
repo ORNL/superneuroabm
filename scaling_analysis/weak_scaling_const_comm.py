@@ -60,7 +60,7 @@ def main():
                        help="Neurons per worker (constant for weak scaling)")
     parser.add_argument("--ticks", type=int, default=10,
                        help="Simulation ticks")
-    parser.add_argument("--update-ticks", type=int, default=5,
+    parser.add_argument("--update-ticks", type=int, default=1,
                        help="Update data every N ticks")
     parser.add_argument("--intra-cluster-degree", type=int, default=10,
                        help="Average degree per neuron within cluster (default: 10) - for PROPER weak scaling")
@@ -104,7 +104,7 @@ def main():
 
     # Generate or load network from file
     # Use deterministic filename based on network parameters
-    network_dir = Path(__file__).parent / "output"
+    network_dir = Path(__file__).parent / "outputs"
     network_dir.mkdir(exist_ok=True)
 
     network_filename = (

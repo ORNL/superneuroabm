@@ -15,10 +15,8 @@ from sagesim.breed import Breed
 from superneuroabm.step_functions.soma.izh import izh_soma_step_func
 from superneuroabm.step_functions.soma.lif import lif_soma_step_func
 from superneuroabm.step_functions.soma.lif_soma_adaptive_thr import lif_soma_adaptive_thr_step_func
-from superneuroabm.step_functions.soma.srm import srm_soma_step_func
 from superneuroabm.step_functions.soma.hg_lif import hg_lif_soma_step_func
 from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
-from superneuroabm.step_functions.synapse.double_exp import synapse_double_exp_step_func
 from superneuroabm.step_functions.synapse.stdp.learning_rule_selector import (
     learning_rule_selector,
 )
@@ -51,12 +49,6 @@ class NeuromorphicModel(Model):
                     CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif_soma_adaptive_thr.py",
                 )
             ],
-            "srm_soma": [
-                (
-                    srm_soma_step_func,
-                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "srm.py",
-                )
-            ],
             "hg_lif_soma": [
                 (
                     hg_lif_soma_step_func,
@@ -72,23 +64,6 @@ class NeuromorphicModel(Model):
                     / "step_functions"
                     / "synapse"
                     / "single_exp.py",
-                ),
-                (
-                    learning_rule_selector,
-                    CURRENT_DIR_ABSPATH
-                    / "step_functions"
-                    / "synapse"
-                    / "stdp"
-                    / "learning_rule_selector.py",
-                ),
-            ],
-            "double_exp_synapse": [
-                (
-                    synapse_double_exp_step_func,
-                    CURRENT_DIR_ABSPATH
-                    / "step_functions"
-                    / "synapse"
-                    / "double_exp.py",
                 ),
                 (
                     learning_rule_selector,
