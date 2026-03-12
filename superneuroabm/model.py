@@ -29,17 +29,17 @@ CURRENT_DIR_ABSPATH = Path(__file__).resolve().parent
 
 def _default_soma_breeds():
     return {
-        "izh_soma": [(izh_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "izh.py")],
-        "lif_soma": [(lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif.py")],
-        "lif_soma_adaptive_thr": [(lif_soma_adaptive_thr_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif_soma_adaptive_thr.py")],
-        "hg_lif_soma": [(hg_lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "hg_lif.py")],
+        "izh_soma": (izh_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "izh.py"),
+        "lif_soma": (lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif.py"),
+        "lif_soma_adaptive_thr": (lif_soma_adaptive_thr_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif_soma_adaptive_thr.py"),
+        "hg_lif_soma": (hg_lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "hg_lif.py"),
     }
 
 
 def _default_synapse_breeds():
     return {
-        "single_exp_synapse": [(synapse_single_exp_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "single_exp.py")],
-        "weighted_synapse": [(weighted_synapse_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "weighted_synapse.py")],
+        "single_exp_synapse": (synapse_single_exp_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "single_exp.py"),
+        "weighted_synapse": (weighted_synapse_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "weighted_synapse.py"),
     }
 
 
@@ -75,13 +75,9 @@ class NeuromorphicModel(Model):
 
         :param use_gpu: True if the system supports CUDA GPU
             acceleration.
-        :param soma_breed_info: Dict of breed name to List of
-            Callable step functions. If specifed, will override
-            the default soma breed and soma and synapse step
-            functions, allowing for multi-breed simulations.
-            Step functions will be executed on the respective
-            breed every simulation step in the order specifed in the
-            list.
+        :param soma_breed_info: Dict of breed name to
+            (step_func, step_func_path) tuple. If specified, will override
+            the default soma breeds.
         :param learning_rule_info: Dict of rule id to dict with
             "func_name" and "import_line" keys. If specified, will
             override the default learning rules.
@@ -145,69 +141,23 @@ class NeuromorphicModel(Model):
         self._soma_ids = []
         self._soma_reset_states = {}
 
-        # Disable double buffering for properties written by soma:
-        # - internal_state: self-access only (v, tcount, tlast)
-        # - output_spikes_tensor: synapse reads [t-1], soma writes [t] (different indices)
-        # - internal_states_buffer: self-access only, no cross-agent reads
-        soma_no_double_buffer = [
-            "internal_state",
-            "output_spikes_tensor",
-            "internal_states_buffer",
-        ]
-
         # Store property definitions for use by registration API
         self._soma_properties = soma_properties
         self._soma_no_double_buffer = list(soma_properties.keys())
 
         self._soma_breeds: Dict[str, Breed] = {}
-        for breed_name, step_funcs in soma_breed_info.items():
-            soma_breed = Breed(breed_name)
-            for prop_name, (default_val, neighbor_visible) in soma_properties.items():
-                soma_breed.register_property(prop_name, default_val, neighbor_visible=neighbor_visible)
-            for step_func_order, (step_func, module_fpath) in enumerate(step_funcs):
-                module_fpath = (
-                    CURRENT_DIR_ABSPATH / "izh_soma.py"
-                    if module_fpath is None
-                    else module_fpath
-                )
-                soma_breed.register_step_func(
-                    step_func=step_func,
-                    module_fpath=module_fpath,
-                    priority=step_func_order,
-                    no_double_buffer=soma_no_double_buffer,
-                )
+        for breed_name, (step_func, step_func_path) in soma_breed_info.items():
+            soma_breed = self._make_soma_breed(breed_name, step_func, step_func_path)
             self.register_breed(soma_breed)
             self._soma_breeds[breed_name] = soma_breed
-
-        # Disable double buffering for properties written by synapse:
-        # - internal_state: soma reads at P0 before synapse writes at P100
-        # - internal_states_buffer: self-access only, no cross-agent reads
-        synapse_no_double_buffer = [
-            "internal_state",
-            "internal_states_buffer",
-        ]
 
         # Store property definitions for use by registration API
         self._synapse_properties = synapse_properties
         self._synapse_no_double_buffer = list(synapse_properties.keys())
 
         self._synapse_breeds: Dict[str, Breed] = {}
-        for breed_name, step_funcs in synapse_breed_info.items():
-            synapse_breed = Breed(breed_name)
-            for prop_name, (default_val, neighbor_visible) in synapse_properties.items():
-                synapse_breed.register_property(prop_name, default_val, neighbor_visible=neighbor_visible)
-            for step_func_order, (step_func, module_fpath) in enumerate(step_funcs):
-                module_fpath = (
-                    CURRENT_DIR_ABSPATH / "izh_soma.py"
-                    if module_fpath is None
-                    else module_fpath
-                )
-                synapse_breed.register_step_func(
-                    step_func=step_func,
-                    module_fpath=module_fpath,
-                    priority=100 + step_func_order,
-                    no_double_buffer=synapse_no_double_buffer,
-                )
+        for breed_name, (step_func, step_func_path) in synapse_breed_info.items():
+            synapse_breed = self._make_synapse_breed(breed_name, step_func, step_func_path)
             self.register_breed(synapse_breed)
             self._synapse_breeds[breed_name] = synapse_breed
 
@@ -322,13 +272,38 @@ class NeuromorphicModel(Model):
         """
         return self.tag2component.get(tag, set())
 
-    def register_soma_type(self, name: str, step_funcs: list) -> None:
-        """Register a custom soma type with its step functions.
+    def _make_soma_breed(self, name: str, step_func, step_func_path: Path) -> Breed:
+        breed = Breed(name)
+        for prop_name, (default_val, neighbor_visible) in self._soma_properties.items():
+            breed.register_property(prop_name, default_val, neighbor_visible=neighbor_visible)
+        breed.register_step_func(
+            step_func=step_func,
+            module_fpath=step_func_path,
+            priority=0,
+            no_double_buffer=self._soma_no_double_buffer,
+        )
+        return breed
+
+    def _make_synapse_breed(self, name: str, step_func, step_func_path: Path) -> Breed:
+        breed = Breed(name)
+        for prop_name, (default_val, neighbor_visible) in self._synapse_properties.items():
+            breed.register_property(prop_name, default_val, neighbor_visible=neighbor_visible)
+        breed.register_step_func(
+            step_func=step_func,
+            module_fpath=step_func_path,
+            priority=100,
+            no_double_buffer=self._synapse_no_double_buffer,
+        )
+        return breed
+
+    def register_soma_type(self, name: str, step_func, step_func_path: Path) -> None:
+        """Register a custom soma type with its step function.
 
         Must be called before setup().
 
         :param name: Unique name for the soma type.
-        :param step_funcs: List of (step_func, module_path) tuples.
+        :param step_func: The step function callable.
+        :param step_func_path: Path to the module containing the step function.
         """
         if self._setup_called:
             raise RuntimeError(
@@ -337,30 +312,19 @@ class NeuromorphicModel(Model):
         if name in self._soma_breeds:
             raise ValueError(f"Soma type '{name}' is already registered.")
 
-        soma_breed = Breed(name)
-        for prop_name, (default_val, neighbor_visible) in self._soma_properties.items():
-            soma_breed.register_property(
-                prop_name, default_val, neighbor_visible=neighbor_visible
-            )
-        for step_func_order, (step_func, module_fpath) in enumerate(step_funcs):
-            soma_breed.register_step_func(
-                step_func=step_func,
-                module_fpath=module_fpath,
-                priority=step_func_order,
-                no_double_buffer=self._soma_no_double_buffer,
-            )
+        soma_breed = self._make_soma_breed(name, step_func, step_func_path)
         self.register_breed(soma_breed)
         self._soma_breeds[name] = soma_breed
 
-    def register_synapse_type(self, name: str, step_funcs: list) -> None:
-        """Register a custom synapse type with its step functions.
+    def register_synapse_type(self, name: str, step_func, step_func_path: Path) -> None:
+        """Register a custom synapse type with its step function.
 
         Must be called before setup(). The learning rule selector is
         auto-attached to all synapse breeds during setup().
 
         :param name: Unique name for the synapse type.
-        :param step_funcs: List of (step_func, module_path) tuples for
-            synapse dynamics.
+        :param step_func: The step function callable.
+        :param step_func_path: Path to the module containing the step function.
         """
         if self._setup_called:
             raise RuntimeError(
@@ -369,54 +333,42 @@ class NeuromorphicModel(Model):
         if name in self._synapse_breeds:
             raise ValueError(f"Synapse type '{name}' is already registered.")
 
-        synapse_breed = Breed(name)
-        for prop_name, (default_val, neighbor_visible) in self._synapse_properties.items():
-            synapse_breed.register_property(
-                prop_name, default_val, neighbor_visible=neighbor_visible
-            )
-        for step_func_order, (step_func, module_fpath) in enumerate(step_funcs):
-            synapse_breed.register_step_func(
-                step_func=step_func,
-                module_fpath=module_fpath,
-                priority=100 + step_func_order,
-                no_double_buffer=self._synapse_no_double_buffer,
-            )
+        synapse_breed = self._make_synapse_breed(name, step_func, step_func_path)
         self.register_breed(synapse_breed)
         self._synapse_breeds[name] = synapse_breed
 
     def register_learning_rule(
-        self, name: str, step_func, module_path: Path
+        self, step_func, step_func_path: Path
     ) -> int:
         """Register a custom learning rule; returns auto-assigned integer ID.
 
         Must be called before setup().
 
-        :param name: Unique name for the learning rule.
         :param step_func: The learning rule step function.
-        :param module_path: Path to the module containing the step function.
+        :param step_func_path: Path to the module containing the step function.
         :return: The auto-assigned integer ID for the learning rule.
         """
         if self._setup_called:
             raise RuntimeError(
                 "Cannot register learning rule after setup() has been called."
             )
-        if name in self._learning_rule_names:
-            raise ValueError(f"Learning rule '{name}' is already registered.")
+        if step_func.__name__ in self._learning_rule_names:
+            raise ValueError(f"Learning rule '{step_func.__name__}' is already registered.")
 
         rule_id = self._next_learning_rule_id
         self._next_learning_rule_id += 1
 
-        module_path = Path(module_path).resolve()
+        step_func_path = Path(step_func_path).resolve()
         func_name = step_func.__name__
-        module_stem = module_path.stem
-        sys_path_entry = str(module_path.parent)
+        module_stem = step_func_path.stem
+        sys_path_entry = str(step_func_path.parent)
 
         self._learning_rules[rule_id] = {
             "func_name": func_name,
             "import_line": f"from {module_stem} import {func_name}",
             "sys_path_entry": sys_path_entry,
         }
-        self._learning_rule_names[name] = rule_id
+        self._learning_rule_names[func_name] = rule_id
 
         return rule_id
 
