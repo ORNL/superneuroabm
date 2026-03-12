@@ -39,7 +39,7 @@ def _default_soma_breeds():
 def _default_synapse_breeds():
     return {
         "single_exp_synapse": [(synapse_single_exp_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "single_exp.py")],
-        "Weighted_Synapse": [(weighted_synapse_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "weighted_synapse.py")],
+        "weighted_synapse": [(weighted_synapse_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "weighted_synapse.py")],
     }
 
 

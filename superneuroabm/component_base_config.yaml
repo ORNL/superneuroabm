@@ -166,3 +166,15 @@ synapse:
         post_trace: 0 # Post-synaptic trace
         dW: 0 # Weight change accumulator
 
+  weighted_synapse:
+    no_learning_config_0:
+      hyperparameters:
+        weight: 14.0  # Synaptic weight (strength)
+        synaptic_delay: 1.0  # Transmission delay (ms)
+        scale: 1.0  # Scaling factor
+        tau_fall: 1e-2  # Decay time constant (1 ms)
+        tau_rise: 0  # Rise time constant (instantaneous)
+      internal_state:
+        I_synapse: 0.0  # Initial synaptic current  
+      learning_hyperparameters: 
+        stdp_type: -1  # No learning
