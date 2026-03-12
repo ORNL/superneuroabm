@@ -169,7 +169,7 @@ synapse:
   weighted_synapse:
     no_learning_config_0:
       hyperparameters:
-        weight: 14.0  # Synaptic weight (strength)
+        weight: 100.0  # Synaptic weight (strength)
         synaptic_delay: 1.0  # Transmission delay (ms)
         scale: 1.0  # Scaling factor
         tau_fall: 1e-2  # Decay time constant (1 ms)

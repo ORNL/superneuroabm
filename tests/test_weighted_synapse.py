@@ -19,7 +19,7 @@ class TestWeightedSynapse(unittest.TestCase):
     def _make_model(self):
         return NeuromorphicModel(enable_internal_state_tracking=True)
 
-    def test_single_spike_response(self):
+    def test_single_spike_response_with_wtd_synaspe(self):
 
         model = self._make_model()
 
