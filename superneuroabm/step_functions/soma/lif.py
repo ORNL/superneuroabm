@@ -95,4 +95,3 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     internal_states_buffer[agent_index][buffer_idx][0] = v
     internal_states_buffer[agent_index][buffer_idx][1] = internal_state[agent_index][1] + 1
     internal_states_buffer[agent_index][buffer_idx][2] = tlast
- 
