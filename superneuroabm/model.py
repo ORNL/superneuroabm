@@ -3,7 +3,7 @@ Model class for building an SNN
 """
 
 from collections import defaultdict
-from typing import Dict, Callable, List, Set
+from typing import Dict, List, Set
 from pathlib import Path
 
 import numpy as np
@@ -18,9 +18,6 @@ from superneuroabm.step_functions.soma.lif_soma_adaptive_thr import lif_soma_ada
 from superneuroabm.step_functions.soma.hg_lif import hg_lif_soma_step_func
 from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
 from superneuroabm.step_functions.synapse.weighted_synapse import weighted_synapse_step_func
-from superneuroabm.step_functions.synapse.stdp.learning_rule_selector import (
-    learning_rule_selector,
-)
 from superneuroabm.util import load_component_configurations
 import copy
 import importlib.util
@@ -30,71 +27,45 @@ from mpi4py import MPI
 CURRENT_DIR_ABSPATH = Path(__file__).resolve().parent
 
 
+def _default_soma_breeds():
+    return {
+        "izh_soma": [(izh_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "izh.py")],
+        "lif_soma": [(lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif.py")],
+        "lif_soma_adaptive_thr": [(lif_soma_adaptive_thr_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif_soma_adaptive_thr.py")],
+        "hg_lif_soma": [(hg_lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "hg_lif.py")],
+    }
+
+
+def _default_synapse_breeds():
+    return {
+        "single_exp_synapse": [(synapse_single_exp_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "single_exp.py")],
+        "Weighted_Synapse": [(weighted_synapse_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "weighted_synapse.py")],
+    }
+
+
+def _default_learning_rules():
+    return {
+        0: {
+            "func_name": "exp_pair_wise_stdp",
+            "import_line": "from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp import exp_pair_wise_stdp",
+        },
+        1: {
+            "func_name": "exp_pair_wise_stdp_quantized",
+            "import_line": "from superneuroabm.step_functions.synapse.stdp.Three_bit_exp_pair_wise import exp_pair_wise_stdp_quantized",
+        },
+        2: {
+            "func_name": "exp_pair_wise_stdp_bounded",
+            "import_line": "from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp_bounded import exp_pair_wise_stdp_bounded",
+        },
+    }
+
+
 class NeuromorphicModel(Model):
     def __init__(
         self,
-        soma_breed_info: Dict[str, List[Callable]] = {
-            "izh_soma": [
-                (
-                    izh_soma_step_func,
-                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "izh.py",
-                )
-            ],
-            "lif_soma": [
-                (
-                    lif_soma_step_func,
-                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif.py",
-                )
-            ],
-            "lif_soma_adaptive_thr": [
-                (
-                    lif_soma_adaptive_thr_step_func,
-                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif_soma_adaptive_thr.py",
-                )
-            ],
-            "hg_lif_soma": [
-                (
-                    hg_lif_soma_step_func,
-                    CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "hg_lif.py",
-                )
-            ],
-        },
-        synapse_breed_info: Dict[str, List[Callable]] = {
-            "single_exp_synapse": [
-                (
-                    synapse_single_exp_step_func,
-                    CURRENT_DIR_ABSPATH
-                    / "step_functions"
-                    / "synapse"
-                    / "single_exp.py",
-                ),
-                (
-                    learning_rule_selector,
-                    CURRENT_DIR_ABSPATH
-                    / "step_functions"
-                    / "synapse"
-                    / "stdp"
-                    / "learning_rule_selector.py",
-                ),
-            ],
-            "Weighted_Synapse": [
-                (
-                    weighted_synapse_step_func,
-                    CURRENT_DIR_ABSPATH
-                    / "step_functions"
-                    / "synapse"
-                    / "weighted_synapse.py",
-                ),
-                (
-                    learning_rule_selector,
-                    CURRENT_DIR_ABSPATH
-                    / "step_functions"
-                    / "synapse"
-                    / "stdp"
-                    / "learning_rule_selector.py",
-                ),
-            ],
-        },
+        soma_breed_info=None,
+        synapse_breed_info=None,
+        learning_rule_info=None,
         user_config=None,
         enable_internal_state_tracking: bool = True,
     ) -> None:
@@ -111,12 +82,20 @@ class NeuromorphicModel(Model):
             Step functions will be executed on the respective
             breed every simulation step in the order specifed in the
             list.
+        :param learning_rule_info: Dict of rule id to dict with
+            "func_name" and "import_line" keys. If specified, will
+            override the default learning rules.
         :param enable_internal_state_tracking: If True, tracks and stores
             internal states history for all agents during simulation.
             If False, disables tracking to reduce memory usage and improve
             performance. Default is True for backward compatibility.
         """
         super().__init__(space=NetworkSpace(ordered=True))
+
+        if soma_breed_info is None:
+            soma_breed_info = _default_soma_breeds()
+        if synapse_breed_info is None:
+            synapse_breed_info = _default_synapse_breeds()
 
         self.enable_internal_state_tracking = enable_internal_state_tracking
 
@@ -261,29 +240,11 @@ class NeuromorphicModel(Model):
         self._synapse2defaultinternallearningstate: Dict[int, List[float]] = {}
 
         # Learning rule registry
-        self._learning_rules = {
-            0: {
-                "func_name": "exp_pair_wise_stdp",
-                "import_line": "from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp import exp_pair_wise_stdp",
-            },
-            1: {
-                "func_name": "exp_pair_wise_stdp_quantized",
-                "import_line": "from superneuroabm.step_functions.synapse.stdp.Three_bit_exp_pair_wise import exp_pair_wise_stdp_quantized",
-            },
-            2: {
-                "func_name": "exp_pair_wise_stdp_bounded",
-                "import_line": "from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp_bounded import exp_pair_wise_stdp_bounded",
-            },
-        }
-        self._learning_rule_names = {
-            "exp_pair_wise_stdp": 0,
-            "exp_pair_wise_stdp_quantized": 1,
-            "exp_pair_wise_stdp_bounded": 2,
-        }
-        self._next_learning_rule_id = 3
-        self._learning_rules_dirty = False
-        self._synapse_breeds_with_selector = {"single_exp_synapse"}
-        self._synapse_selector_priority = {"single_exp_synapse": 101}
+        if learning_rule_info is None:
+            learning_rule_info = _default_learning_rules()
+        self._learning_rules = learning_rule_info
+        self._learning_rule_names = {r["func_name"]: rid for rid, r in self._learning_rules.items()}
+        self._next_learning_rule_id = len(self._learning_rules)
         self._setup_called = False
 
     def get_agent_config_name(self, agent_id: int) -> Dict[str, any]:
@@ -394,8 +355,8 @@ class NeuromorphicModel(Model):
     def register_synapse_type(self, name: str, step_funcs: list) -> None:
         """Register a custom synapse type with its step functions.
 
-        The learning rule selector is automatically appended as the last
-        step function. Must be called before setup().
+        Must be called before setup(). The learning rule selector is
+        auto-attached to all synapse breeds during setup().
 
         :param name: Unique name for the synapse type.
         :param step_funcs: List of (step_func, module_path) tuples for
@@ -408,22 +369,12 @@ class NeuromorphicModel(Model):
         if name in self._synapse_breeds:
             raise ValueError(f"Synapse type '{name}' is already registered.")
 
-        selector_entry = (
-            learning_rule_selector,
-            CURRENT_DIR_ABSPATH
-            / "step_functions"
-            / "synapse"
-            / "stdp"
-            / "learning_rule_selector.py",
-        )
-        all_step_funcs = list(step_funcs) + [selector_entry]
-
         synapse_breed = Breed(name)
         for prop_name, (default_val, neighbor_visible) in self._synapse_properties.items():
             synapse_breed.register_property(
                 prop_name, default_val, neighbor_visible=neighbor_visible
             )
-        for step_func_order, (step_func, module_fpath) in enumerate(all_step_funcs):
+        for step_func_order, (step_func, module_fpath) in enumerate(step_funcs):
             synapse_breed.register_step_func(
                 step_func=step_func,
                 module_fpath=module_fpath,
@@ -432,10 +383,6 @@ class NeuromorphicModel(Model):
             )
         self.register_breed(synapse_breed)
         self._synapse_breeds[name] = synapse_breed
-
-        selector_priority = 100 + len(step_funcs)
-        self._synapse_breeds_with_selector.add(name)
-        self._synapse_selector_priority[name] = selector_priority
 
     def register_learning_rule(
         self, name: str, step_func, module_path: Path
@@ -470,7 +417,6 @@ class NeuromorphicModel(Model):
             "sys_path_entry": sys_path_entry,
         }
         self._learning_rule_names[name] = rule_id
-        self._learning_rules_dirty = True
 
         return rule_id
 
@@ -673,16 +619,17 @@ class NeuromorphicModel(Model):
         """
         self._setup_called = True
 
-        if self._learning_rules_dirty:
-            new_func, new_path = self._generate_learning_rule_selector()
-            for breed_name in self._synapse_breeds_with_selector:
-                priority = self._synapse_selector_priority[breed_name]
-                self._synapse_breeds[breed_name].register_step_func(
-                    step_func=new_func,
-                    module_fpath=new_path,
-                    priority=priority,
-                    no_double_buffer=self._synapse_no_double_buffer,
-                )
+        # Always generate selector from registry, attach to all synapse breeds
+        new_func, new_path = self._generate_learning_rule_selector()
+        for breed in self._synapse_breeds.values():
+            # Priority = one after the last synapse step func
+            max_priority = max(breed.step_funcs.keys())
+            breed.register_step_func(
+                step_func=new_func,
+                module_fpath=new_path,
+                priority=max_priority + 1,
+                no_double_buffer=self._synapse_no_double_buffer,
+            )
 
         self._reset_agents(retain_parameters=False)
         self._recorded_spikes = []
@@ -690,7 +637,7 @@ class NeuromorphicModel(Model):
         self._spike_record_count_gpu = None
         self._spike_mask_gpu = None  # rebuild mask on next prepare
         self._spikes_need_gather = False
-        super().setup(use_gpu=use_gpu)
+        super().setup(use_gpu=use_gpu, skip_priority_barriers={100})
 
     def simulate(
         self, ticks: int, update_data_ticks: int = 1  # , num_cpu_proc: int = 4
