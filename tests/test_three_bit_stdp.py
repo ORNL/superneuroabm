@@ -1,7 +1,6 @@
 
 import unittest
 import inspect
-from pathlib import Path
 
 import matplotlib
 matplotlib.use('Agg')

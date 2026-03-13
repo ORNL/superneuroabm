@@ -51,7 +51,7 @@ def _default_learning_rules():
         },
         1: {
             "func_name": "exp_pair_wise_stdp_quantized",
-            "import_line": "from superneuroabm.step_functions.synapse.stdp.Three_bit_exp_pair_wise import exp_pair_wise_stdp_quantized",
+            "import_line": "from superneuroabm.step_functions.synapse.stdp.three_bit_exp_pair_wise import exp_pair_wise_stdp_quantized",
         },
         2: {
             "func_name": "exp_pair_wise_stdp_bounded",
