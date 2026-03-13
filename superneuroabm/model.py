@@ -51,11 +51,15 @@ def _default_learning_rules():
         },
         1: {
             "func_name": "exp_pair_wise_stdp_quantized",
-            "import_line": "from superneuroabm.step_functions.synapse.stdp.three_bit_exp_pair_wise import exp_pair_wise_stdp_quantized",
+            "import_line": "from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp_quantized import exp_pair_wise_stdp_quantized",
         },
         2: {
             "func_name": "exp_pair_wise_stdp_bounded",
             "import_line": "from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp_bounded import exp_pair_wise_stdp_bounded",
+        },
+        3: {
+            "func_name": "exp_pair_wise_stdp_memristive",
+            "import_line": "from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp_memristive import exp_pair_wise_stdp_memristive",
         },
     }
 
