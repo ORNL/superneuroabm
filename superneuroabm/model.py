@@ -59,7 +59,7 @@ def _default_learning_rules():
         },
         3: {
             "func_name": "exp_pair_wise_stdp_memristive",
-            "import_line": "from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp_memristive import exp_pair_wise_stdp_memristive",
+            "import_line": "from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp_memristive import *",
         },
     }
 
@@ -101,6 +101,7 @@ class NeuromorphicModel(Model):
 
         self.register_global_property("dt", 1e-3)  # Time step (100 μs)
         self.register_global_property("I_bias", 0)  # No bias current
+        self.register_global_property("seed", int(np.random.randint(0, 2**31)))
 
         # Soma properties: (default_value, neighbor_visible)
         # neighbor_visible=True means the property is sent to neighbors during MPI sync

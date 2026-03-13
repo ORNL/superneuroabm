@@ -1,5 +1,5 @@
-import cupy as cp
 from cupyx import jit
+from sagesim.math_utils import rand_normal, clamp
 from superneuroabm.step_functions.synapse.util import get_soma_spike
 
 
@@ -23,6 +23,7 @@ def exp_pair_wise_stdp_memristive(
 ):
     t_current = int(tick)
     dt = globals[0]
+    seed = globals[2]
 
     # =========================
     # ---- Synapse Params -----
@@ -101,11 +102,7 @@ def exp_pair_wise_stdp_memristive(
     G = Gmin + (weight - wmin) * (Gmax - Gmin) / (wmax - wmin)
 
     # Target weight
-    weight_target = weight + dW
-    if weight_target > wmax:
-        weight_target = wmax
-    if weight_target < wmin:
-        weight_target = wmin
+    weight_target = clamp(weight + dW, wmin, wmax)
 
     G_target = Gmin + (weight_target - wmin) * (Gmax - Gmin) / (wmax - wmin)
 
@@ -124,37 +121,23 @@ def exp_pair_wise_stdp_memristive(
 
         # =========================
         # ---- Gaussian Noise -----
-        # Box-Muller using simple LCG RNG
         # =========================
-        seed = t_current * 1103515245 + agent_index * 12345
-        seed = (seed ^ 1234567) & 0xFFFFFFFF
+        randn_write = rand_normal(seed, tick, agent_index, 1)
+        randn_read  = rand_normal(seed, tick, agent_index, 2)
 
-        u1 = (seed & 0xFFFF) / 65535.0
-        u2 = ((seed >> 16) & 0xFFFF) / 65535.0
-
-        if u1 < 1e-6:
-            u1 = 1e-6
-
-        randn = (-2.0 * cp.log(u1)) ** 0.5 * cp.cos(6.2831853 * u2)
-
-        eps_write = mu_write + sigma_write * randn
+        eps_write = mu_write + sigma_write * randn_write
 
         delta_G = delta_det + eps_write
 
         # =========================
         # ---- Apply + Clip -------
         # =========================
-        G_new = G + delta_G
-
-        if G_new > Gmax:
-            G_new = Gmax
-        if G_new < Gmin:
-            G_new = Gmin
+        G_new = clamp(G + delta_G, Gmin, Gmax)
 
         # =========================
         # ---- Read Noise ---------
         # =========================
-        eps_read = sigma_read * randn
+        eps_read = sigma_read * randn_read
         G_observed = G_new + eps_read
 
         # =========================
@@ -162,10 +145,7 @@ def exp_pair_wise_stdp_memristive(
         # =========================
         weight_new = wmin + (G_observed - Gmin) * (wmax - wmin) / (Gmax - Gmin)
 
-        if weight_new > wmax:
-            weight_new = wmax
-        if weight_new < wmin:
-            weight_new = wmin
+        weight_new = clamp(weight_new, wmin, wmax)
     else:
         weight_new = weight
 

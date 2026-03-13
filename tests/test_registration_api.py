@@ -78,7 +78,7 @@ class TestRegistrationAPI(unittest.TestCase):
             step_func_path=stdp_path,
         )
 
-        self.assertEqual(rule_id, 3, "First user rule should get ID 3")
+        self.assertEqual(rule_id, 4, "First user rule should get ID 4")
 
         # Create network
         soma_pre = model.create_soma(breed="lif_soma", config_name="config_0")
