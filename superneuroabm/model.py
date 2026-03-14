@@ -564,7 +564,7 @@ class NeuromorphicModel(Model):
         self._spike_record_count_gpu = None
         self._spike_mask_gpu = None  # rebuild mask on next prepare
         self._spikes_need_gather = False
-        self._agent_factory._prev_agent_data.clear()
+        # self._agent_factory._prev_agent_data.clear()
         
     def setup(
         self,
