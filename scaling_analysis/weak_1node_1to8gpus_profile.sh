@@ -1,14 +1,14 @@
 #!/bin/bash
 #SBATCH -A lrn088
-#SBATCH -J weak_1node_1to8gpus
-#SBATCH -o /lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/scaling_analysis/outputs/weak_1node_1to8gpus_%j.out
+#SBATCH -J weak_1node_profile
+#SBATCH -o /lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/scaling_analysis/outputs/weak_1node_profile_%j.out
 #SBATCH -t 02:00:00
 #SBATCH -q debug
 #SBATCH -N 1
 
-# Weak scaling test on Frontier - 1 node, 1-8 GPUs
+# Weak scaling test on Frontier - 1 node, 1-8 GPUs WITH ROCPROF PROFILING
+# Per-rank GPU profiling enabled to analyze NCCL communication and per-worker performance
 # Cross-worker edges per worker remains constant as network scales
-# Adjust -N and --gpus based on your needs
 
 unset SLURM_EXPORT_ENV
 
@@ -47,12 +47,15 @@ NUM_NEIGHBOR_CLUSTERS=1     # Directed ring topology (1 = TRUE weak scaling)
 CROSS_CLUSTER_EDGES_ARRAY=(1000 2000 3000 4000 5000)
 
 # Create results CSV file with header
-RESULTS_FILE="outputs/weak_scaling_results_${SLURM_JOB_ID}.csv"
+RESULTS_FILE="outputs/weak_scaling_profile_${SLURM_JOB_ID}.csv"
 echo "timestamp,cross_cluster_edges,cross_cluster_percent,num_nodes,num_workers,total_neurons,total_edges,simulation_ticks,simulation_time_sec,status" > $RESULTS_FILE
 echo "Results will be saved to: $RESULTS_FILE"
 
+# Create profiles directory
+mkdir -p outputs/profiles
+
 echo "======================================================================"
-echo "Weak Scaling Test - PROPER WEAK SCALING (Directed Ring)"
+echo "Weak Scaling Test - WITH GPU PROFILING (Directed Ring)"
 echo "======================================================================"
 echo "Goal: Demonstrate CONSTANT per-worker workload as network scales"
 echo "      - Constant neurons per worker"
@@ -69,6 +72,8 @@ echo "Neighbor clusters: $NUM_NEIGHBOR_CLUSTERS (directed ring)"
 echo "Cross-cluster edge densities to test: ${CROSS_CLUSTER_EDGES_ARRAY[@]}"
 echo "Simulation ticks: $TICKS"
 echo "GPU-aware MPI: $([ $MPICH_GPU_SUPPORT_ENABLED -eq 1 ] && echo 'ENABLED (GPU-Direct RDMA)' || echo 'DISABLED')"
+echo "PROFILING: rocprofv3 enabled (per-rank profiling)"
+echo "Profile output: outputs/profiles/<config>/rank_N.csv"
 echo "======================================================================"
 
 # Test multiple cross-cluster edge densities
@@ -98,9 +103,19 @@ for CROSS_CLUSTER_EDGES in "${CROSS_CLUSTER_EDGES_ARRAY[@]}"; do
         echo "Test: $NNODES node(s), $NWORKERS GPUs -> $((TOTAL_NEURONS / 1000))K neurons | Cross-edges: $CROSS_CLUSTER_EDGES"
         echo "======================================================================"
 
-        # Run test and capture output, with error handling to continue on failure
+        # Create profile directory for this configuration
+        PROFILE_DIR="outputs/profiles/${NWORKERS}gpu_${CROSS_CLUSTER_EDGES}e"
+        mkdir -p $PROFILE_DIR
+        echo "Profile directory: $PROFILE_DIR"
+
+        # Run test with rocprofv3 per-rank profiling
         OUTPUT=$(srun -N$NNODES -n$NWORKERS -c7 --ntasks-per-gpu=1 --gpu-bind=closest \
-            python weak_scaling_const_comm.py \
+            /opt/rocm-6.4.1/bin/rocprofv3 \
+            --hip-trace --kernel-trace --memory-copy-trace \
+            --output-directory ${PROFILE_DIR} \
+            --output-file rank_%p \
+            --output-format csv \
+            -- python weak_scaling_const_comm.py \
             --neurons-per-worker $NEURONS_PER_WORKER \
             --ticks $TICKS \
             --update-ticks $UPDATE_TICKS \
@@ -116,8 +131,8 @@ for CROSS_CLUSTER_EDGES in "${CROSS_CLUSTER_EDGES_ARRAY[@]}"; do
             continue
         }
 
-        # Display filtered output (including verbose timing)
-        echo "$OUTPUT" | grep -E "(WEAK SCALING|Network Size|Simulation time|SUCCESS|ERROR|Edge cut|agents \(|TIMING|Metric|Straggler|MPI Traffic|Grid Barriers)"
+        # Display filtered output
+        echo "$OUTPUT" | grep -E "(WEAK SCALING|Network Size|Simulation time|SUCCESS|ERROR|Edge cut|agents \()"
 
         # Extract simulation time and total edges from output
         SIM_TIME=$(echo "$OUTPUT" | grep "Simulation time:" | sed -E 's/.*Simulation time: ([0-9.]+)s.*/\1/' | head -1)
@@ -142,6 +157,12 @@ for CROSS_CLUSTER_EDGES in "${CROSS_CLUSTER_EDGES_ARRAY[@]}"; do
         printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n" "$TIMESTAMP" "$CROSS_CLUSTER_EDGES" "$CROSS_PERCENT" "$NNODES" "$NWORKERS" "$TOTAL_NEURONS" "$TOTAL_EDGES" "$TICKS" "$SIM_TIME" "$STATUS" >> $RESULTS_FILE
         echo "Results saved to $RESULTS_FILE"
 
+        # Count and report profile files
+        PROFILE_COUNT=$(ls -1 ${PROFILE_DIR}/rank_*.csv 2>/dev/null | wc -l)
+        if [ $PROFILE_COUNT -gt 0 ]; then
+            echo "Generated $PROFILE_COUNT profile files in $PROFILE_DIR"
+        fi
+
         echo ""
     done
 
@@ -153,4 +174,13 @@ done
 echo ""
 echo "======================================================================"
 echo "All tests completed!"
+echo "======================================================================"
+echo ""
+echo "Profile files location: outputs/profiles/"
+echo "Summary of profile directories:"
+ls -lh outputs/profiles/ | tail -n +2
+echo ""
+echo "To analyze profiles:"
+echo "  - CSV files: outputs/profiles/<config>/rank_N.csv"
+echo "  - JSON traces: outputs/profiles/<config>/rank_N.json"
 echo "======================================================================"

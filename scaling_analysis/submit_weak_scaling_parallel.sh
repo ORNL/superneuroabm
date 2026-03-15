@@ -197,9 +197,19 @@ for CROSS_CLUSTER_EDGES in "\${CROSS_CLUSTER_EDGES_ARRAY[@]}"; do
     echo "##################################################################"
     echo ""
 
-    # Run test
+    # Create profile directory for this configuration
+    PROFILE_DIR="outputs/profiles/\${NNODES}nodes_\${CROSS_CLUSTER_EDGES}e"
+    mkdir -p \$PROFILE_DIR
+    echo "Profile directory: \$PROFILE_DIR"
+
+    # Run test with rocprofv3 profiling
     OUTPUT=\$(srun -N\$NNODES -n\$NWORKERS -c7 --ntasks-per-gpu=1 --gpu-bind=closest \\
-        python weak_scaling_const_comm.py \\
+        /opt/rocm-6.4.1/bin/rocprofv3 \\
+        --hip-trace --kernel-trace --memory-copy-trace \\
+        --output-directory \$PROFILE_DIR \\
+        --output-file rank_%p \\
+        --output-format csv \\
+        -- python weak_scaling_const_comm.py \\
         --neurons-per-worker \$NEURONS_PER_WORKER \\
         --ticks \$TICKS \\
         --update-ticks \$UPDATE_TICKS \\
@@ -236,6 +246,14 @@ for CROSS_CLUSTER_EDGES in "\${CROSS_CLUSTER_EDGES_ARRAY[@]}"; do
     # Save results
     printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n" "\$TIMESTAMP" "\$CROSS_CLUSTER_EDGES" "\$CROSS_PERCENT" "\$NNODES" "\$NWORKERS" "\$TOTAL_NEURONS" "\$TOTAL_EDGES" "\$TICKS" "\$SIM_TIME" "\$STATUS" >> \$RESULTS_FILE
     echo "Results saved to \$RESULTS_FILE"
+
+    # Report profile file count
+    PROFILE_COUNT=\$(ls -1 \$PROFILE_DIR/rank_*_hip_api_trace.csv 2>/dev/null | wc -l)
+    if [ \$PROFILE_COUNT -gt 0 ]; then
+        echo "Generated \$PROFILE_COUNT profile files in \$PROFILE_DIR"
+    else
+        echo "Warning: No profile files generated"
+    fi
 
     echo ""
     echo "## Completed: CROSS_CLUSTER_EDGES = \$CROSS_CLUSTER_EDGES"

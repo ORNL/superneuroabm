@@ -104,7 +104,7 @@ def main():
 
     # Generate or load network from file
     # Use deterministic filename based on network parameters
-    network_dir = Path(__file__).parent / "outputs"
+    network_dir = Path(__file__).parent / "networks"
     network_dir.mkdir(exist_ok=True)
 
     network_filename = (
@@ -204,6 +204,8 @@ def main():
         enable_internal_state_tracking=False,  # Disable for performance
         partition_dict=cluster_partition  # Use cluster partition instead of METIS
     )
+    # Enable verbose timing after model creation
+    model._verbose_timing = True
     t1 = time.time()
 
     if rank == 0:

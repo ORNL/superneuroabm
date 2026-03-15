@@ -86,3 +86,7 @@ superneuroabm/_generated/
 # Local test scripts (not for release)
 tests/plot_weak_scaling_*.py
 tests/test_lif_mixed_synapses_stdp_mpi.py
+
+# Scaling analysis data and outputs
+scaling_analysis/networks/
+scaling_analysis/outputs/
