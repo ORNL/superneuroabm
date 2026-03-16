@@ -8,7 +8,7 @@
 START_NODES=10
 END_NODES=200
 STEP=10
-CROSS_CLUSTER_EDGES_ARRAY=(1000 2000 3000 4000 5000)  # Test multiple edge densities
+CROSS_CLUSTER_EDGES_ARRAY=(5000)  # Test only highest edge density for production runs
 NEURONS_PER_WORKER=5000
 TICKS=50
 UPDATE_TICKS=1
@@ -202,29 +202,39 @@ for CROSS_CLUSTER_EDGES in "\${CROSS_CLUSTER_EDGES_ARRAY[@]}"; do
     mkdir -p \$PROFILE_DIR
     echo "Profile directory: \$PROFILE_DIR"
 
-    # Run test with rocprofv3 profiling
+    # Run test (profiling disabled for production runs)
+    set +e  # Don't exit on error, so we can capture and display it
     OUTPUT=\$(srun -N\$NNODES -n\$NWORKERS -c7 --ntasks-per-gpu=1 --gpu-bind=closest \\
-        /opt/rocm-6.4.1/bin/rocprofv3 \\
-        --hip-trace --kernel-trace --memory-copy-trace \\
-        --output-directory \$PROFILE_DIR \\
-        --output-file rank_%p \\
-        --output-format csv \\
-        -- python weak_scaling_const_comm.py \\
+        python weak_scaling_const_comm.py \\
         --neurons-per-worker \$NEURONS_PER_WORKER \\
         --ticks \$TICKS \\
         --update-ticks \$UPDATE_TICKS \\
         --intra-cluster-degree \$INTRA_DEGREE \\
         --cross-cluster-edges \$CROSS_CLUSTER_EDGES \\
         --num-neighbor-clusters \$NUM_NEIGHBOR_CLUSTERS \\
-        2>&1) || {
+        2>&1)
+    EXIT_CODE=\$?
+    set -e
+
+    # Check if test failed
+    if [ \$EXIT_CODE -ne 0 ]; then
+        echo "=========================================="
         echo "ERROR: Test failed for \$NNODES nodes, \$CROSS_CLUSTER_EDGES edges"
+        echo "Exit code: \$EXIT_CODE"
+        echo "=========================================="
+        echo ""
+        echo "FULL ERROR OUTPUT:"
+        echo "------------------------------------------"
+        echo "\$OUTPUT"
+        echo "------------------------------------------"
+        echo ""
         printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n" "\$TIMESTAMP" "\$CROSS_CLUSTER_EDGES" "\$CROSS_PERCENT" "\$NNODES" "\$NWORKERS" "\$TOTAL_NEURONS" "NA" "\$TICKS" "NA" "FAILED" >> \$RESULTS_FILE
         echo "Continuing to next edge density..."
         continue
-    }
+    fi
 
-    # Display filtered output
-    echo "\$OUTPUT" | grep -E "(WEAK SCALING|Network Size|Simulation time|SUCCESS|ERROR|Edge cut)"
+    # Display filtered output (for successful runs, including verbose timing)
+    echo "\$OUTPUT" | grep -E "(WEAK SCALING|Network Size|Simulation time|SUCCESS|ERROR|Edge cut|agents \(|TIMING|Rank|Metric|Straggler|MPI Traffic|Grid Barriers)"
 
     # Extract results
     SIM_TIME=\$(echo "\$OUTPUT" | grep "Simulation time:" | sed -E 's/.*Simulation time: ([0-9.]+)s.*/\1/' | head -1)

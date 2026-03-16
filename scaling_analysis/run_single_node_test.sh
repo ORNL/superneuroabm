@@ -72,7 +72,7 @@ srun -N$NNODES -n$NWORKERS -c7 --ntasks-per-gpu=1 --gpu-bind=closest \
     --intra-cluster-degree $INTRA_DEGREE \
     --cross-cluster-edges $CROSS_CLUSTER_EDGES \
     --num-neighbor-clusters $NUM_NEIGHBOR_CLUSTERS \
-    --csv outputs/timing_results.csv
+    --csv outputs/timing_results_${SLURM_JOB_ID}.csv
 
 EXIT_CODE=$?
 
@@ -109,4 +109,5 @@ fi
 echo ""
 echo "======================================================================"
 echo "Output file: outputs/weak_single_${SLURM_JOB_ID}.out"
+echo "CSV file:    outputs/timing_results_${SLURM_JOB_ID}.csv"
 echo "======================================================================"
