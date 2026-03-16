@@ -239,7 +239,9 @@ def main():
 
     start_time = time.time()
     model.simulate(ticks=simulation_ticks, update_data_ticks=update_ticks)
-    sim_time = time.time() - start_time
+    wall_time = time.time() - start_time
+    sim_time = getattr(model, '_simulation_time', wall_time)
+    construction_time = getattr(model, '_construction_time', 0.0)
 
     # Print results
     if rank == 0:
@@ -251,7 +253,9 @@ def main():
         print(f"  Total neurons: {total_neurons:,}")
         print(f"  Total edges: {graph.number_of_edges():,}")
         print(f"  Memory distributed across {size} worker(s)")
-        print(f"\nSimulation time: {sim_time:.3f}s")
+        print(f"\nConstruction time: {construction_time:.3f}s")
+        print(f"Simulation time: {sim_time:.3f}s")
+        print(f"Total wall time: {wall_time:.3f}s")
         print(f"\nNote: With {size} worker(s), we can handle {total_neurons:,} neurons")
         print(f"      that would be {size}x larger than single GPU limit")
         print("="*70)

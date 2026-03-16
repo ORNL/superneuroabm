@@ -604,6 +604,9 @@ class NeuromorphicModel(Model):
         AgentDataCollector to monitor marked output somas.
 
         """
+        import time
+        t_construction_start = time.time()
+
         for soma_id in self._soma_ids:
             initial_internal_state = super().get_agent_property_value(
                 id=soma_id, property_name="internal_state"
@@ -687,9 +690,20 @@ class NeuromorphicModel(Model):
                 property_name="internal_learning_states_buffer",
                 value=internal_learning_states_buffer,
             )
+        t_construction_end = time.time()
+        self._construction_time = t_construction_end - t_construction_start
+
         self._recorded_spikes = []
         self._spikes_need_gather = False
+
+        t_sim_start = time.time()
         super().simulate(ticks, update_data_ticks)  # , num_cpu_proc)
+        self._simulation_time = time.time() - t_sim_start
+
+        if self._verbose_timing and MPI.COMM_WORLD.Get_rank() == 0:
+            print(f"[TIMING] Construction (pre-sim buffer alloc): {self._construction_time:.4f}s")
+            print(f"[TIMING] Simulation (state propagation): {self._simulation_time:.4f}s")
+
         if MPI.COMM_WORLD.Get_size() > 1:
             self._spikes_need_gather = True
 
