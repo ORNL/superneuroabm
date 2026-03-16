@@ -19,7 +19,6 @@ from superneuroabm.step_functions.soma.hg_lif import hg_lif_soma_step_func
 from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
 from superneuroabm.step_functions.synapse.weighted_synapse import weighted_synapse_step_func
 from superneuroabm.util import load_component_configurations
-import copy
 import importlib.util
 import sys
 from mpi4py import MPI
@@ -98,6 +97,7 @@ class NeuromorphicModel(Model):
             synapse_breed_info = _default_synapse_breeds()
 
         self.enable_internal_state_tracking = enable_internal_state_tracking
+        self._config_list_cache = {}
 
         self.register_global_property("dt", 1e-3)  # Time step (100 μs)
         self.register_global_property("I_bias", 0)  # No bias current
@@ -607,89 +607,40 @@ class NeuromorphicModel(Model):
         import time
         t_construction_start = time.time()
 
-        for soma_id in self._soma_ids:
-            initial_internal_state = super().get_agent_property_value(
-                id=soma_id, property_name="internal_state"
-            )
-            # Allocate full buffer when tracking enabled, minimal dummy buffer when disabled
-            if self.enable_internal_state_tracking:
-                internal_states_buffer = [initial_internal_state[::] for _ in range(ticks)]
-            else:
-                # Minimal dummy buffer - single element that gets overwritten each tick
-                internal_states_buffer = [initial_internal_state[::]]
-            super().set_agent_property_value(
-                id=soma_id,
-                property_name="internal_states_buffer",
-                value=internal_states_buffer,
-            )
-            # Allocate internal_learning_states_buffer for somas too (for MPI consistency)
-            # Somas don't use this, but having consistent structure across agent types
-            # prevents issues when MPI workers have different agent type distributions
-            initial_internal_learning_state = super().get_agent_property_value(
-                id=soma_id, property_name="internal_learning_state"
-            )
-            if self.enable_internal_state_tracking:
-                internal_learning_states_buffer = [
-                    initial_internal_learning_state[::] for _ in range(ticks)
-                ]
-            else:
-                internal_learning_states_buffer = [initial_internal_learning_state[::]]
-            super().set_agent_property_value(
-                id=soma_id,
-                property_name="internal_learning_states_buffer",
-                value=internal_learning_states_buffer,
-            )
-        for synapse_id in self._synapse_ids:
-            # Sort input spikes by tick for early-exit optimization in
-            # get_soma_spike — scan stops once past t_current.
-            # Layout: [-1, 0.0, tick, val, tick, val, ...]
-            spikes = super().get_agent_property_value(
-                id=synapse_id, property_name="input_spikes_tensor"
-            )
-            if len(spikes) > 2:
-                pairs = [(spikes[i], spikes[i + 1]) for i in range(2, len(spikes), 2)]
-                pairs.sort(key=lambda p: p[0])
-                sorted_spikes = [spikes[0], spikes[1]]
-                for t, v in pairs:
-                    sorted_spikes.append(t)
-                    sorted_spikes.append(v)
-                super().set_agent_property_value(
-                    id=synapse_id,
-                    property_name="input_spikes_tensor",
-                    value=sorted_spikes,
-                )
+        # Direct data tensor access — bypasses MPI broadcasts entirely.
+        # Each rank only touches its own local agents.
+        af = self._agent_factory
+        rank = MPI.COMM_WORLD.Get_rank()
+        local_agent_map = af._rank2agentid2agentidx.get(rank, {})
+        data = af._property_name_2_agent_data_tensor
+        soma_set = set(self._soma_ids)
 
-            initial_internal_state = super().get_agent_property_value(
-                id=synapse_id, property_name="internal_state"
-            )
-            # Allocate full buffer when tracking enabled, minimal dummy buffer when disabled
+        for agent_id, idx in local_agent_map.items():
+            # internal_states_buffer
+            state = data["internal_state"][idx]
             if self.enable_internal_state_tracking:
-                internal_states_buffer = [initial_internal_state[::] for _ in range(ticks)]
+                data["internal_states_buffer"][idx] = [state[::] for _ in range(ticks)]
             else:
-                # Minimal dummy buffer - single element that gets overwritten each tick
-                internal_states_buffer = [initial_internal_state[::]]
-            super().set_agent_property_value(
-                id=synapse_id,
-                property_name="internal_states_buffer",
-                value=internal_states_buffer,
-            )
+                data["internal_states_buffer"][idx] = [state[::]]
 
-            initial_internal_learning_state = super().get_agent_property_value(
-                id=synapse_id, property_name="internal_learning_state"
-            )
-            # Allocate full buffer when tracking enabled, minimal dummy buffer when disabled
+            # internal_learning_states_buffer
+            ls = data["internal_learning_state"][idx]
             if self.enable_internal_state_tracking:
-                internal_learning_states_buffer = [
-                    initial_internal_learning_state[::] for _ in range(ticks)
-                ]
+                data["internal_learning_states_buffer"][idx] = [ls[::] for _ in range(ticks)]
             else:
-                # Minimal dummy buffer - single element that gets overwritten each tick
-                internal_learning_states_buffer = [initial_internal_learning_state[::]]
-            super().set_agent_property_value(
-                id=synapse_id,
-                property_name="internal_learning_states_buffer",
-                value=internal_learning_states_buffer,
-            )
+                data["internal_learning_states_buffer"][idx] = [ls[::]]
+
+            # Sort spikes for synapses only
+            if agent_id not in soma_set:
+                spikes = data["input_spikes_tensor"][idx]
+                if len(spikes) > 2:
+                    pairs = [(spikes[i], spikes[i + 1]) for i in range(2, len(spikes), 2)]
+                    pairs.sort(key=lambda p: p[0])
+                    sorted_spikes = [spikes[0], spikes[1]]
+                    for t, v in pairs:
+                        sorted_spikes.append(t)
+                        sorted_spikes.append(v)
+                    data["input_spikes_tensor"][idx] = sorted_spikes
         t_construction_end = time.time()
         self._construction_time = t_construction_end - t_construction_start
 
@@ -723,22 +674,26 @@ class NeuromorphicModel(Model):
         """
         tags = tags if tags else set()
 
-        # Get relevant configuration
-        config = copy.deepcopy(
-            self._component_configurations["soma"][breed][config_name]
-        )
-        # Apply overrides to hyperparameters and default internal state
-        if hyperparameters_overrides:
-            for parameter_name, parameter_value in hyperparameters_overrides.items():
-                config["hyperparameters"][parameter_name] = parameter_value
-        if default_internal_state_overrides:
-            for state_name, state_value in default_internal_state_overrides.items():
-                config["internal_state"][state_name] = state_value
+        # Cached config list construction — avoids copy.deepcopy per agent
+        cache_key = ("soma", breed, config_name)
+        if cache_key not in self._config_list_cache:
+            config = self._component_configurations["soma"][breed][config_name]
+            hp_keys = list(config["hyperparameters"].keys())
+            hp_vals = [float(v) for v in config["hyperparameters"].values()]
+            is_keys = list(config["internal_state"].keys())
+            is_vals = [float(v) for v in config["internal_state"].values()]
+            self._config_list_cache[cache_key] = (hp_keys, hp_vals, is_keys, is_vals)
+        hp_keys, hp_defaults, is_keys, is_defaults = self._config_list_cache[cache_key]
 
-        hyperparameters = [float(val) for val in config["hyperparameters"].values()]
-        default_internal_state = [
-            float(val) for val in config["internal_state"].values()
-        ]
+        hyperparameters = hp_defaults[:]
+        if hyperparameters_overrides:
+            for k, v in hyperparameters_overrides.items():
+                hyperparameters[hp_keys.index(k)] = float(v)
+
+        default_internal_state = is_defaults[:]
+        if default_internal_state_overrides:
+            for k, v in default_internal_state_overrides.items():
+                default_internal_state[is_keys.index(k)] = float(v)
 
         soma_id = super().create_agent_of_breed(
             breed=self._soma_breeds[breed],
@@ -787,43 +742,44 @@ class NeuromorphicModel(Model):
         """
         tags = tags if tags else set()
 
-        # Get relevant configuration
-        config = copy.deepcopy(
-            self._component_configurations["synapse"][breed][config_name]
-        )
+        # Cached config list construction — avoids copy.deepcopy per agent
+        cache_key = ("synapse", breed, config_name)
+        if cache_key not in self._config_list_cache:
+            config = self._component_configurations["synapse"][breed][config_name]
+            hp_keys = list(config["hyperparameters"].keys())
+            hp_vals = [float(v) for v in config["hyperparameters"].values()]
+            is_keys = list(config["internal_state"].keys())
+            is_vals = [float(v) for v in config["internal_state"].values()]
+            lhp_keys = list(config.get("learning_hyperparameters", {"stdp_type": -1}).keys())
+            lhp_vals = [float(v) for v in config.get("learning_hyperparameters", {"stdp_type": -1}).values()]
+            ils_keys = list(config.get("internal_learning_state", {}).keys())
+            ils_vals = [float(v) for v in config.get("internal_learning_state", {}).values()]
+            self._config_list_cache[cache_key] = (
+                hp_keys, hp_vals, is_keys, is_vals,
+                lhp_keys, lhp_vals, ils_keys, ils_vals
+            )
+        (hp_keys, hp_defaults, is_keys, is_defaults,
+         lhp_keys, lhp_defaults, ils_keys, ils_defaults) = self._config_list_cache[cache_key]
 
-        # Apply overrides to hyperparameters and default internal state
+        hyperparameters = hp_defaults[:]
         if hyperparameters_overrides:
-            for parameter_name, parameter_value in hyperparameters_overrides.items():
-                config["hyperparameters"][parameter_name] = parameter_value
+            for k, v in hyperparameters_overrides.items():
+                hyperparameters[hp_keys.index(k)] = float(v)
+
+        default_internal_state = is_defaults[:]
         if default_internal_state_overrides:
-            for state_name, state_value in default_internal_state_overrides.items():
-                config["internal_state"][state_name] = state_value
+            for k, v in default_internal_state_overrides.items():
+                default_internal_state[is_keys.index(k)] = float(v)
+
+        learning_hyperparameters = lhp_defaults[:]
         if learning_hyperparameters_overrides:
-            for (
-                parameter_name,
-                parameter_value,
-            ) in learning_hyperparameters_overrides.items():
-                config["learning_hyperparameters"][parameter_name] = parameter_value
+            for k, v in learning_hyperparameters_overrides.items():
+                learning_hyperparameters[lhp_keys.index(k)] = float(v)
+
+        default_internal_learning_state = ils_defaults[:]
         if default_internal_learning_state_overrides:
-            for (
-                state_name,
-                state_value,
-            ) in default_internal_learning_state_overrides.items():
-                config["internal_learning_state"][state_name] = state_value
-        hyperparameters = [float(val) for val in config["hyperparameters"].values()]
-        default_internal_state = [
-            float(val) for val in config["internal_state"].values()
-        ]
-        learning_hyperparameters = [
-            float(val)
-            for val in config.get(
-                "learning_hyperparameters", {"stdp_type": -1}
-            ).values()
-        ]
-        default_internal_learning_state = [
-            float(val) for val in config.get("internal_learning_state", {}).values()
-        ]
+            for k, v in default_internal_learning_state_overrides.items():
+                default_internal_learning_state[ils_keys.index(k)] = float(v)
 
         synaptic_delay = int(hyperparameters[1])
         delay_reg = [0 for _ in range(synaptic_delay)]
