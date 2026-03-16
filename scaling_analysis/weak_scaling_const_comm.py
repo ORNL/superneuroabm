@@ -9,6 +9,7 @@ import sys
 import time
 import argparse
 import pickle
+import csv
 import os
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -68,6 +69,8 @@ def main():
                        help="Number of edges in EACH direction for bidirectional pairs (default: 2000)")
     parser.add_argument("--num-neighbor-clusters", type=int, default=1,
                        help="Number of bidirectional neighbor pairs (default: 1 for TRUE weak scaling)")
+    parser.add_argument("--csv", type=str, default=None,
+                       help="Path to CSV file for appending timing results (rank 0 only)")
     args = parser.parse_args()
 
     neurons_per_worker = args.neurons_per_worker
@@ -101,6 +104,8 @@ def main():
         print(f"Update ticks: {update_ticks}")
         print(f"Partitioning: Cluster-based")
         print("="*70)
+
+    t_pipeline_start = time.time()
 
     # Generate or load network from file
     # Use deterministic filename based on network parameters
@@ -136,8 +141,9 @@ def main():
         with open(network_path, 'rb') as f:
             graph = pickle.load(f)
         t1 = time.time()
+        network_load_time = t1 - t0
         if rank == 0:
-            print(f"    Network loaded in {t1-t0:.2f}s")
+            print(f"    Network loaded in {network_load_time:.2f}s")
             print(f"    Nodes: {graph.number_of_nodes()}, Edges: {graph.number_of_edges()}")
 
         # Barrier to ensure all ranks finish loading before proceeding
@@ -161,7 +167,8 @@ def main():
                 seed=42
             )
             t1 = time.time()
-            print(f"    Network generated in {t1-t0:.2f}s")
+            network_load_time = t1 - t0
+            print(f"    Network generated in {network_load_time:.2f}s")
             print(f"    Nodes: {graph.number_of_nodes()}, Edges: {graph.number_of_edges()}")
 
             # Save to file
@@ -178,8 +185,10 @@ def main():
 
         # All non-zero ranks load the saved network
         if rank != 0:
+            t0 = time.time()
             with open(network_path, 'rb') as f:
                 graph = pickle.load(f)
+            network_load_time = time.time() - t0
 
     # Create cluster-based partition (after graph is loaded on all ranks)
     if rank == 0:
@@ -207,9 +216,10 @@ def main():
     # Enable verbose timing after model creation
     model._verbose_timing = True
     t1 = time.time()
+    model_creation_time = t1 - t0
 
     if rank == 0:
-        print(f"    Model created in {t1-t0:.2f}s")
+        print(f"    Model created in {model_creation_time:.2f}s")
 
     # Setup GPU
     if rank == 0:
@@ -218,9 +228,10 @@ def main():
     t0 = time.time()
     model.setup(use_gpu=True)
     t1 = time.time()
+    gpu_setup_time = t1 - t0
 
     if rank == 0:
-        print(f"    GPU setup in {t1-t0:.2f}s")
+        print(f"    GPU setup in {gpu_setup_time:.2f}s")
 
     # Add input spikes
     input_synapses = list(model.get_agents_with_tag("input_synapse"))
@@ -243,6 +254,8 @@ def main():
     sim_time = getattr(model, '_simulation_time', wall_time)
     construction_time = getattr(model, '_construction_time', 0.0)
 
+    total_time = time.time() - t_pipeline_start
+
     # Print results
     if rank == 0:
         total_neurons = size * neurons_per_worker
@@ -261,6 +274,29 @@ def main():
         print("="*70)
         print("SUCCESS - Network simulation completed!")
         print("="*70)
+
+    # Write CSV timing results
+    if args.csv and rank == 0:
+        csv_path = Path(args.csv)
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not csv_path.exists()
+        with open(csv_path, 'a', newline='') as f:
+            writer = csv.writer(f)
+            if write_header:
+                writer.writerow([
+                    'job_id', 'nodes', 'workers', 'neurons', 'edges', 'ticks',
+                    'network_load_time', 'model_creation_time', 'gpu_setup_time',
+                    'construction_time', 'simulation_time', 'total_time'
+                ])
+            writer.writerow([
+                os.environ.get('SLURM_JOB_ID', ''),
+                os.environ.get('SLURM_JOB_NUM_NODES', ''),
+                size, total_neurons, graph.number_of_edges(), simulation_ticks,
+                f'{network_load_time:.4f}', f'{model_creation_time:.4f}',
+                f'{gpu_setup_time:.4f}', f'{construction_time:.4f}',
+                f'{sim_time:.4f}', f'{total_time:.4f}'
+            ])
+        print(f"\nTiming results appended to {csv_path}")
 
 if __name__ == "__main__":
     main()

@@ -71,7 +71,8 @@ srun -N$NNODES -n$NWORKERS -c7 --ntasks-per-gpu=1 --gpu-bind=closest \
     --update-ticks $UPDATE_TICKS \
     --intra-cluster-degree $INTRA_DEGREE \
     --cross-cluster-edges $CROSS_CLUSTER_EDGES \
-    --num-neighbor-clusters $NUM_NEIGHBOR_CLUSTERS
+    --num-neighbor-clusters $NUM_NEIGHBOR_CLUSTERS \
+    --csv outputs/timing_results.csv
 
 EXIT_CODE=$?
 
