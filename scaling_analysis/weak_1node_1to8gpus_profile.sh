@@ -132,7 +132,7 @@ for CROSS_CLUSTER_EDGES in "${CROSS_CLUSTER_EDGES_ARRAY[@]}"; do
         }
 
         # Display filtered output
-        echo "$OUTPUT" | grep -E "(WEAK SCALING|Network Size|Simulation time|SUCCESS|ERROR|Edge cut|agents \()"
+        echo "$OUTPUT" | grep -E "(WEAK SCALING|Network Size|Simulation time|SUCCESS|ERROR|Edge cut|agents \(|TIMING|Rank|Metric|Straggler|MPI Traffic|Grid Barriers)"
 
         # Extract simulation time and total edges from output
         SIM_TIME=$(echo "$OUTPUT" | grep "Simulation time:" | sed -E 's/.*Simulation time: ([0-9.]+)s.*/\1/' | head -1)
