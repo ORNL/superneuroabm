@@ -96,7 +96,8 @@ def model_from_nx_graph(
     graph: nx.DiGraph,
     enable_internal_state_tracking: bool = True,
     partition_method: Optional[str] = None,
-    partition_dict: Optional[Dict[int, int]] = None
+    partition_dict: Optional[Dict[int, int]] = None,
+    skip_remote_bookkeeping: bool = False
 ) -> NeuromorphicModel:
     """
     Load a NetworkX graph and create a NeuromorphicModel.
@@ -171,26 +172,60 @@ def model_from_nx_graph(
 
         sorted_nodes = sorted([n for n in graph.nodes() if n != -1])
         num_somas = len(sorted_nodes)
-        edges_list = list(graph.edges(data=True))
-        num_synapses = len(edges_list)
+        num_synapses = graph.number_of_edges()
         total_agents = num_somas + num_synapses
 
-        # Phase 1: Build agent_id_to_rank as numpy array
+        # Phase 1: Build agent_id_to_rank array and optionally collect local data
         agent_id_to_rank = np.empty(total_agents, dtype=np.int32)
 
-        for agent_id, node in enumerate(sorted_nodes):
-            name2id[node] = agent_id
-            agent_id_to_rank[agent_id] = node_to_rank.get(node, agent_id % size)
+        if skip_remote_bookkeeping:
+            # Optimized: collect local/ghost data during the same O(N+E) iteration
+            local_soma_data = {}
+            for agent_id, node in enumerate(sorted_nodes):
+                name2id[node] = agent_id
+                soma_rank = node_to_rank.get(node, agent_id % size)
+                agent_id_to_rank[agent_id] = soma_rank
+                if soma_rank == rank:
+                    local_soma_data[agent_id] = (node, graph.nodes[node])
 
-        synapse_agent_id = num_somas
-        for u, v, data in edges_list:
-            if u in node_to_rank and u >= 0:
-                agent_id_to_rank[synapse_agent_id] = node_to_rank[u]
-            elif v in node_to_rank:
-                agent_id_to_rank[synapse_agent_id] = node_to_rank[v]
-            else:
-                agent_id_to_rank[synapse_agent_id] = synapse_agent_id % size
-            synapse_agent_id += 1
+            local_edge_data = {}
+            ghost_edge_data = {}
+            synapse_agent_id = num_somas
+            for u, v, data in graph.edges(data=True):
+                if u in node_to_rank and u >= 0:
+                    syn_rank = node_to_rank[u]
+                elif v in node_to_rank:
+                    syn_rank = node_to_rank[v]
+                else:
+                    syn_rank = synapse_agent_id % size
+                agent_id_to_rank[synapse_agent_id] = syn_rank
+
+                if syn_rank == rank:
+                    local_edge_data[synapse_agent_id] = (u, v, data)
+                else:
+                    post_soma_id = name2id[v]
+                    if agent_id_to_rank[post_soma_id] == rank:
+                        ghost_edge_data[synapse_agent_id] = (u, v, data)
+
+                synapse_agent_id += 1
+
+            # Free graph memory after extracting all needed data
+            del graph
+        else:
+            for agent_id, node in enumerate(sorted_nodes):
+                name2id[node] = agent_id
+                agent_id_to_rank[agent_id] = node_to_rank.get(node, agent_id % size)
+
+            edges_list = list(graph.edges(data=True))
+            synapse_agent_id = num_somas
+            for u, v, data in edges_list:
+                if u in node_to_rank and u >= 0:
+                    agent_id_to_rank[synapse_agent_id] = node_to_rank[u]
+                elif v in node_to_rank:
+                    agent_id_to_rank[synapse_agent_id] = node_to_rank[v]
+                else:
+                    agent_id_to_rank[synapse_agent_id] = synapse_agent_id % size
+                synapse_agent_id += 1
 
         # Phase 2: Bulk register agents and space
         model._agent_factory.bulk_register_agents(total_agents, agent_id_to_rank)
@@ -203,16 +238,15 @@ def model_from_nx_graph(
             print(f"[SuperNeuroABM] Bulk registration: {num_somas} neurons, {num_synapses} synapses, {total_agents} total")
             print(f"[SuperNeuroABM] Local agents on rank 0: {len(local_agent_map)}")
 
-        # Phase 3: Create somas — full creation for local, lightweight bookkeeping for remote
-        for agent_id, node in enumerate(sorted_nodes):
-            node_data = graph.nodes[node]
-            soma_breed = node_data.get("soma_breed")
-            config_name = node_data.get("config", "config_0")
-            overrides = node_data.get("overrides", {})
-            tags = set(node_data.get("tags", []))
-            tags.add(f"nx_node:{node}")
+        if skip_remote_bookkeeping:
+            # Phase 3 (optimized): Only create local somas — no remote bookkeeping
+            for agent_id, (node, node_data) in local_soma_data.items():
+                soma_breed = node_data.get("soma_breed")
+                config_name = node_data.get("config", "config_0")
+                overrides = node_data.get("overrides", {})
+                tags = set(node_data.get("tags", []))
+                tags.add(f"nx_node:{node}")
 
-            if agent_id in local_agent_map:
                 model.create_soma_at_index(
                     agent_id=agent_id,
                     local_idx=local_agent_map[agent_id],
@@ -222,28 +256,18 @@ def model_from_nx_graph(
                     default_internal_state_overrides=overrides.get("internal_state"),
                     tags=tags,
                 )
-            else:
-                # Remote soma: lightweight bookkeeping only
-                model._soma_ids.append(agent_id)
-                model.agentid2config[agent_id] = config_name
-                tags.update({"soma", soma_breed})
-                for tag in tags:
-                    model.tag2component[tag].add(agent_id)
 
-        # Phase 4: Create synapses — full creation for local, connections for remote
-        synapse_agent_id = num_somas
-        for u, v, data in edges_list:
-            synapse_breed = data.get("synapse_breed")
-            config_name = data.get("config", "config_0")
-            overrides = data.get("overrides", {})
-            tags = set(data.get("tags", []))
-            tags.add(f"nx_edge:{u}_to_{v}")
+            # Phase 4 (optimized): Only create local synapses + ghost connections
+            for synapse_agent_id, (u, v, data) in local_edge_data.items():
+                synapse_breed = data.get("synapse_breed")
+                config_name = data.get("config", "config_0")
+                overrides = data.get("overrides", {})
+                tags = set(data.get("tags", []))
+                tags.add(f"nx_edge:{u}_to_{v}")
 
-            pre_soma_id = name2id.get(u, -1)
-            post_soma_id = name2id[v]
+                pre_soma_id = name2id.get(u, -1)
+                post_soma_id = name2id[v]
 
-            if synapse_agent_id in local_agent_map:
-                # Local synapse: full creation with property data + connections
                 model.create_synapse_at_index(
                     agent_id=synapse_agent_id,
                     local_idx=local_agent_map[synapse_agent_id],
@@ -261,28 +285,93 @@ def model_from_nx_graph(
                     ),
                     tags=tags,
                 )
-            else:
-                # Remote synapse: only handle connections that affect local somas
-                # Post-soma needs synapse in its neighbor list for STDP bidirectional link
-                if post_soma_id != -1 and post_soma_id in local_agent_map:
-                    network_space.connect_agents(post_soma_id, synapse_agent_id, directed=True)
 
-                # Lightweight bookkeeping for remote synapse
-                model._synapse_ids.append(synapse_agent_id)
-                model.agentid2config[synapse_agent_id] = config_name
-                model.synapse2soma_map[synapse_agent_id]["pre"] = pre_soma_id
-                model.synapse2soma_map[synapse_agent_id]["post"] = post_soma_id
-                if pre_soma_id != -1:
-                    model.soma2synapse_map[pre_soma_id]["post"].add(synapse_agent_id)
+            # Ghost synapses: only the bidirectional connection (post_soma -> synapse)
+            for synapse_agent_id, (u, v, data) in ghost_edge_data.items():
+                post_soma_id = name2id[v]
+                network_space.connect_agents(post_soma_id, synapse_agent_id, directed=True)
+
+        else:
+            # Phase 3: Create somas — full creation for local, lightweight bookkeeping for remote
+            for agent_id, node in enumerate(sorted_nodes):
+                node_data = graph.nodes[node]
+                soma_breed = node_data.get("soma_breed")
+                config_name = node_data.get("config", "config_0")
+                overrides = node_data.get("overrides", {})
+                tags = set(node_data.get("tags", []))
+                tags.add(f"nx_node:{node}")
+
+                if agent_id in local_agent_map:
+                    model.create_soma_at_index(
+                        agent_id=agent_id,
+                        local_idx=local_agent_map[agent_id],
+                        breed=soma_breed,
+                        config_name=config_name,
+                        hyperparameters_overrides=overrides.get("hyperparameters"),
+                        default_internal_state_overrides=overrides.get("internal_state"),
+                        tags=tags,
+                    )
                 else:
-                    tags.add("input_synapse")
-                if post_soma_id != -1:
-                    model.soma2synapse_map[post_soma_id]["pre"].add(synapse_agent_id)
-                tags.update({"synapse", synapse_breed})
-                for tag in tags:
-                    model.tag2component[tag].add(synapse_agent_id)
+                    # Remote soma: lightweight bookkeeping only
+                    model._soma_ids.append(agent_id)
+                    model.agentid2config[agent_id] = config_name
+                    tags.update({"soma", soma_breed})
+                    for tag in tags:
+                        model.tag2component[tag].add(agent_id)
 
-            synapse_agent_id += 1
+            # Phase 4: Create synapses — full creation for local, connections for remote
+            synapse_agent_id = num_somas
+            for u, v, data in edges_list:
+                synapse_breed = data.get("synapse_breed")
+                config_name = data.get("config", "config_0")
+                overrides = data.get("overrides", {})
+                tags = set(data.get("tags", []))
+                tags.add(f"nx_edge:{u}_to_{v}")
+
+                pre_soma_id = name2id.get(u, -1)
+                post_soma_id = name2id[v]
+
+                if synapse_agent_id in local_agent_map:
+                    # Local synapse: full creation with property data + connections
+                    model.create_synapse_at_index(
+                        agent_id=synapse_agent_id,
+                        local_idx=local_agent_map[synapse_agent_id],
+                        breed=synapse_breed,
+                        pre_soma_id=pre_soma_id,
+                        post_soma_id=post_soma_id,
+                        config_name=config_name,
+                        hyperparameters_overrides=overrides.get("hyperparameters"),
+                        default_internal_state_overrides=overrides.get("internal_state"),
+                        learning_hyperparameters_overrides=overrides.get(
+                            "learning_hyperparameters"
+                        ),
+                        default_internal_learning_state_overrides=overrides.get(
+                            "default_internal_learning_state"
+                        ),
+                        tags=tags,
+                    )
+                else:
+                    # Remote synapse: only handle connections that affect local somas
+                    # Post-soma needs synapse in its neighbor list for STDP bidirectional link
+                    if post_soma_id != -1 and post_soma_id in local_agent_map:
+                        network_space.connect_agents(post_soma_id, synapse_agent_id, directed=True)
+
+                    # Lightweight bookkeeping for remote synapse
+                    model._synapse_ids.append(synapse_agent_id)
+                    model.agentid2config[synapse_agent_id] = config_name
+                    model.synapse2soma_map[synapse_agent_id]["pre"] = pre_soma_id
+                    model.synapse2soma_map[synapse_agent_id]["post"] = post_soma_id
+                    if pre_soma_id != -1:
+                        model.soma2synapse_map[pre_soma_id]["post"].add(synapse_agent_id)
+                    else:
+                        tags.add("input_synapse")
+                    if post_soma_id != -1:
+                        model.soma2synapse_map[post_soma_id]["pre"].add(synapse_agent_id)
+                    tags.update({"synapse", synapse_breed})
+                    for tag in tags:
+                        model.tag2component[tag].add(synapse_agent_id)
+
+                synapse_agent_id += 1
 
     else:
         # Non-partitioned path: original behavior

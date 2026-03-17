@@ -143,23 +143,29 @@ def main():
         file_exists = comm.bcast(file_exists, root=0)
 
     if file_exists:
-        # Load existing network
+        # Load network via MPI broadcast (rank 0 reads, broadcasts to all)
         if rank == 0:
             print(f"    Loading network from {network_path.name}...")
         t0 = time.time()
-        with open(network_path, 'rb') as f:
-            graph = pickle.load(f)
+        if comm is not None and size > 1:
+            if rank == 0:
+                with open(network_path, 'rb') as f:
+                    graph_bytes = f.read()
+            else:
+                graph_bytes = None
+            graph_bytes = comm.bcast(graph_bytes, root=0)
+            graph = pickle.loads(graph_bytes)
+            del graph_bytes
+        else:
+            with open(network_path, 'rb') as f:
+                graph = pickle.load(f)
         t1 = time.time()
         network_load_time = t1 - t0
         if rank == 0:
             print(f"    Network loaded in {network_load_time:.2f}s")
             print(f"    Nodes: {graph.number_of_nodes()}, Edges: {graph.number_of_edges()}")
-
-        # Barrier to ensure all ranks finish loading before proceeding
-        if comm is not None:
-            comm.Barrier()
     else:
-        # Generate new network (only rank 0)
+        # Generate new network (only rank 0), then broadcast to all ranks
         if rank == 0:
             print(f"    Generating new network...")
             t0 = time.time()
@@ -188,16 +194,20 @@ def main():
             t1 = time.time()
             print(f"    Network saved in {t1-t0:.2f}s")
 
-        # Other ranks wait for rank 0 to finish
-        if comm is not None:
-            comm.Barrier()
+            # Serialize for broadcast
+            graph_bytes = pickle.dumps(graph)
+        else:
+            graph_bytes = None
+            network_load_time = 0.0
 
-        # All non-zero ranks load the saved network
-        if rank != 0:
-            t0 = time.time()
-            with open(network_path, 'rb') as f:
-                graph = pickle.load(f)
-            network_load_time = time.time() - t0
+        # Broadcast graph to all ranks via MPI tree-broadcast
+        if comm is not None and size > 1:
+            graph_bytes = comm.bcast(graph_bytes, root=0)
+            if rank != 0:
+                t0 = time.time()
+                graph = pickle.loads(graph_bytes)
+                network_load_time = time.time() - t0
+            del graph_bytes
 
     # Create cluster-based partition (after graph is loaded on all ranks)
     if rank == 0:
@@ -220,7 +230,8 @@ def main():
     model = model_from_nx_graph(
         graph,
         enable_internal_state_tracking=False,  # Disable for performance
-        partition_dict=cluster_partition  # Use cluster partition instead of METIS
+        partition_dict=cluster_partition,  # Use cluster partition instead of METIS
+        skip_remote_bookkeeping=True  # Skip remote agent bookkeeping for O(N_local) creation
     )
     # Enable verbose timing after model creation
     model._verbose_timing = True
