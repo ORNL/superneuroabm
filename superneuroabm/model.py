@@ -446,12 +446,15 @@ class NeuromorphicModel(Model):
 
         source = "\n".join(lines)
 
-        # Write to file
+        # Only rank 0 writes to avoid race conditions on shared filesystems
         gen_dir = CURRENT_DIR_ABSPATH / "_generated"
-        gen_dir.mkdir(exist_ok=True)
-        (gen_dir / "__init__.py").touch()
         gen_file = gen_dir / "learning_rule_selector.py"
-        gen_file.write_text(source)
+        comm = MPI.COMM_WORLD
+        if comm.Get_rank() == 0:
+            gen_dir.mkdir(exist_ok=True)
+            (gen_dir / "__init__.py").touch()
+            gen_file.write_text(source)
+        comm.Barrier()
 
         # Evict stale module and invalidate caches before re-importing
         module_name = "superneuroabm._generated.learning_rule_selector"
