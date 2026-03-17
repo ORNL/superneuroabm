@@ -478,68 +478,37 @@ class NeuromorphicModel(Model):
     def _reset_agents(self, retain_parameters: bool = True) -> None:
         """
         Internal method to reset all soma and synapse agents to their initial states.
+        Iterates only local agents and writes directly to data tensors,
+        avoiding MPI broadcasts from get/set_agent_property_value.
 
         :param retain_parameters: If True, keeps current learned parameters.
             If False, resets parameters to their default values.
         """
-        # Reset all synapses
-        for synapse_id in self._synapse_ids:
-            # OPTIMIZED: Use depth-2 flattened format [tick, value, tick, value, ...] instead of depth-3 [[tick, value], ...]
-            super().set_agent_property_value(
-                id=synapse_id,
-                property_name="input_spikes_tensor",
-                value=[-1, 0.0],  # Flattened: [tick, value]
-            )
-            # Reset synapse delay registers
-            synapse_delay = len(
-                super().get_agent_property_value(
-                    id=synapse_id, property_name="synapse_delay_reg"
-                )
-            )
-            synapse_delay_reg = [0 for _ in range(synapse_delay)]
-            super().set_agent_property_value(
-                id=synapse_id,
-                property_name="synapse_delay_reg",
-                value=synapse_delay_reg,
-            )
-            # Reset internal states
-            super().set_agent_property_value(
-                id=synapse_id,
-                property_name="internal_state",
-                value=self._synapse2defaultinternalstate[synapse_id].copy(),
-            )
-            super().set_agent_property_value(
-                id=synapse_id,
-                property_name="internal_learning_state",
-                value=self._synapse2defaultinternallearningstate[synapse_id].copy(),
-            )
-            # Reset parameters to defaults if retain_parameters is False
-            if not retain_parameters:
-                super().set_agent_property_value(
-                    id=synapse_id,
-                    property_name="hyperparameters",
-                    value=self._synapse2defaultparameters[synapse_id].copy(),
-                )
-                super().set_agent_property_value(
-                    id=synapse_id,
-                    property_name="learning_hyperparameters",
-                    value=self._synapse2defaultlearningparameters[synapse_id].copy(),
-                )
+        af = self._agent_factory
+        try:
+            rank = MPI.COMM_WORLD.Get_rank()
+        except Exception:
+            rank = 0
+        local_agent_map = af._rank2agentid2agentidx.get(rank, {})
+        data = af._property_name_2_agent_data_tensor
+        synapse_set = set(self._synapse_ids)
 
-        # Reset all somas
-        for soma_id in self._soma_ids:
-            # Reset internal states
-            super().set_agent_property_value(
-                id=soma_id,
-                property_name="internal_state",
-                value=self._soma_reset_states[soma_id].copy(),
-            )
-            # Circular buffer: only 2 slots needed (soma writes [t%2], synapse reads [(t-1)%2])
-            super().set_agent_property_value(
-                id=soma_id,
-                property_name="output_spikes_tensor",
-                value=[0.0, 0.0],
-            )
+        for agent_id, idx in local_agent_map.items():
+            if agent_id in synapse_set:
+                # Reset synapse
+                data["input_spikes_tensor"][idx] = [-1, 0.0]
+                synapse_delay = int(self._synapse2defaultparameters[agent_id][1])
+                data["synapse_delay_reg"][idx] = [0] * synapse_delay
+                data["internal_state"][idx] = self._synapse2defaultinternalstate[agent_id].copy()
+                data["internal_learning_state"][idx] = self._synapse2defaultinternallearningstate[agent_id].copy()
+                if not retain_parameters:
+                    data["hyperparameters"][idx] = self._synapse2defaultparameters[agent_id].copy()
+                    data["learning_hyperparameters"][idx] = self._synapse2defaultlearningparameters[agent_id].copy()
+            else:
+                # Reset soma
+                if agent_id in self._soma_reset_states:
+                    data["internal_state"][idx] = self._soma_reset_states[agent_id].copy()
+                    data["output_spikes_tensor"][idx] = [0.0, 0.0]
 
     def reset(self, retain_parameters: bool = True) -> None:
         """
@@ -588,7 +557,11 @@ class NeuromorphicModel(Model):
                 no_double_buffer=self._synapse_no_double_buffer,
             )
 
-        self._reset_agents(retain_parameters=False)
+        # Skip redundant reset on first setup — agents already have defaults from creation.
+        # Only needed on subsequent setup() calls (after simulate() has run).
+        if getattr(self, '_has_simulated', False):
+            self._reset_agents(retain_parameters=False)
+
         self._recorded_spikes = []
         self._spike_record_gpu = None
         self._spike_record_count_gpu = None
@@ -655,6 +628,8 @@ class NeuromorphicModel(Model):
             print(f"[TIMING] Construction (pre-sim buffer alloc): {self._construction_time:.4f}s")
             print(f"[TIMING] Simulation (state propagation): {self._simulation_time:.4f}s")
 
+        self._has_simulated = True
+
         if MPI.COMM_WORLD.Get_size() > 1:
             self._spikes_need_gather = True
 
@@ -699,6 +674,7 @@ class NeuromorphicModel(Model):
             breed=self._soma_breeds[breed],
             hyperparameters=hyperparameters,
             internal_state=default_internal_state,
+            output_spikes_tensor=[0.0, 0.0],
         )
 
         self._soma_ids.append(soma_id)
@@ -790,6 +766,7 @@ class NeuromorphicModel(Model):
             internal_state=default_internal_state,
             internal_learning_state=default_internal_learning_state,
             synapse_delay_reg=delay_reg,
+            input_spikes_tensor=[-1, 0.0],
         )
         self._synapse2defaultparameters[synapse_id] = hyperparameters
         self._synapse2defaultlearningparameters[synapse_id] = learning_hyperparameters
