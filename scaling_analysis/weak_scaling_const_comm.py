@@ -21,7 +21,9 @@ try:
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
-    size = comm.Get_size()
+    # Use SLURM_STEP_NUM_TASKS to get actual worker count from srun
+    # Falls back to MPI size if env var not set (for non-SLURM runs)
+    size = int(os.environ.get('SLURM_STEP_NUM_TASKS', comm.Get_size()))
 except ImportError:
     rank = 0
     size = 1
@@ -89,6 +91,13 @@ def main():
         print(f"      - Constant edges per worker (O(n), not O(n²)!)")
         print(f"      - Constant communication per worker")
         print("="*70)
+        # Debug: Show MPI vs SLURM worker count
+        if comm is not None:
+            mpi_size = comm.Get_size()
+            slurm_tasks = os.environ.get('SLURM_STEP_NUM_TASKS', 'NOT SET')
+            print(f"[DEBUG] MPI.COMM_WORLD.Get_size() = {mpi_size}")
+            print(f"[DEBUG] SLURM_STEP_NUM_TASKS = {slurm_tasks}")
+            print(f"[DEBUG] Using size = {size}")
         print(f"Workers: {size}")
         print(f"Neurons per worker: {neurons_per_worker} (constant)")
         print(f"Intra-cluster degree: {intra_cluster_degree} edges/neuron (constant → O(n) scaling!)")
@@ -290,7 +299,7 @@ def main():
                 ])
             writer.writerow([
                 os.environ.get('SLURM_JOB_ID', ''),
-                os.environ.get('SLURM_JOB_NUM_NODES', ''),
+                os.environ.get('SLURM_NNODES', ''),
                 size, total_neurons, graph.number_of_edges(), simulation_ticks,
                 f'{network_load_time:.4f}', f'{model_creation_time:.4f}',
                 f'{gpu_setup_time:.4f}', f'{construction_time:.4f}',
