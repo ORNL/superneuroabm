@@ -577,6 +577,17 @@ class NeuromorphicModel(Model):
         self._spikes_need_gather = False
         super().setup(use_gpu=use_gpu, skip_priority_barriers={100})
 
+        if not self.enable_internal_state_tracking:
+            af = self._agent_factory
+            rank = MPI.COMM_WORLD.Get_rank()
+            local_agent_map = af._rank2agentid2agentidx.get(rank, {})
+            data = af._property_name_2_agent_data_tensor
+            for agent_id, idx in local_agent_map.items():
+                state = data["internal_state"][idx]
+                data["internal_states_buffer"][idx] = [state[::]]
+                ls = data["internal_learning_state"][idx]
+                data["internal_learning_states_buffer"][idx] = [ls[::]]
+
     def simulate(
         self, ticks: int, update_data_ticks: int = 1  # , num_cpu_proc: int = 4
     ) -> None:
@@ -596,32 +607,36 @@ class NeuromorphicModel(Model):
         data = af._property_name_2_agent_data_tensor
         soma_set = set(self._soma_ids)
 
-        for agent_id, idx in local_agent_map.items():
-            # internal_states_buffer
-            state = data["internal_state"][idx]
-            if self.enable_internal_state_tracking:
+        if self.enable_internal_state_tracking:
+            for agent_id, idx in local_agent_map.items():
+                state = data["internal_state"][idx]
                 data["internal_states_buffer"][idx] = [state[::] for _ in range(ticks)]
-            else:
-                data["internal_states_buffer"][idx] = [state[::]]
 
-            # internal_learning_states_buffer
-            ls = data["internal_learning_state"][idx]
-            if self.enable_internal_state_tracking:
+                ls = data["internal_learning_state"][idx]
                 data["internal_learning_states_buffer"][idx] = [ls[::] for _ in range(ticks)]
-            else:
-                data["internal_learning_states_buffer"][idx] = [ls[::]]
 
-            # Sort spikes for synapses only
-            if agent_id not in soma_set:
-                spikes = data["input_spikes_tensor"][idx]
-                if len(spikes) > 2:
-                    pairs = [(spikes[i], spikes[i + 1]) for i in range(2, len(spikes), 2)]
-                    pairs.sort(key=lambda p: p[0])
-                    sorted_spikes = [spikes[0], spikes[1]]
-                    for t, v in pairs:
-                        sorted_spikes.append(t)
-                        sorted_spikes.append(v)
-                    data["input_spikes_tensor"][idx] = sorted_spikes
+                if agent_id not in soma_set:
+                    spikes = data["input_spikes_tensor"][idx]
+                    if len(spikes) > 2:
+                        pairs = [(spikes[i], spikes[i + 1]) for i in range(2, len(spikes), 2)]
+                        pairs.sort(key=lambda p: p[0])
+                        sorted_spikes = [spikes[0], spikes[1]]
+                        for t, v in pairs:
+                            sorted_spikes.append(t)
+                            sorted_spikes.append(v)
+                        data["input_spikes_tensor"][idx] = sorted_spikes
+        else:
+            for agent_id, idx in local_agent_map.items():
+                if agent_id not in soma_set:
+                    spikes = data["input_spikes_tensor"][idx]
+                    if len(spikes) > 2:
+                        pairs = [(spikes[i], spikes[i + 1]) for i in range(2, len(spikes), 2)]
+                        pairs.sort(key=lambda p: p[0])
+                        sorted_spikes = [spikes[0], spikes[1]]
+                        for t, v in pairs:
+                            sorted_spikes.append(t)
+                            sorted_spikes.append(v)
+                        data["input_spikes_tensor"][idx] = sorted_spikes
         t_construction_end = time.time()
         self._construction_time = t_construction_end - t_construction_start
 
