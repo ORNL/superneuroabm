@@ -1,0 +1,106 @@
+soma:
+  lif_soma:
+    masquelier_config_0:
+      hyperparameters:
+        C: 1e-3                       # Membrane capacitance
+        R: 10.0                       # Membrane resistance (tau_m = R*C = 10ms)
+        vthr: 1163.48                 # Calibrated for ~63Hz initial firing rate
+        tref: 1e-3                    # 1ms refractory period (paper)
+        vrest: 0.0                    # Resting potential
+        vreset: -50.0                 # Reset below rest (approximate afterhyperpolarization)
+        tref_allows_integration: 0    # No integration during refractory period
+        I_in: 0                       # No external current
+        scaling_factor: 1.0           # No scaling
+      internal_state:
+        v: 0.0                        # Initial membrane voltage at rest
+        tcount: 0.0                   # Time counter
+        tlast: 0.0                    # Last spike time
+
+  srm_soma:
+    masquelier_srm_config_0:
+      hyperparameters:
+        theta: 731.21                 # Spike threshold (use calibrate_threshold_srm.py to tune)
+        tref: 1e-3                    # 1ms absolute refractory period (paper)
+        u_rest: 0.0                   # Resting potential
+        K_norm: 2.1159                # PSP normalization: 1/peak(exp(-t/10ms)-exp(-t/2.5ms))
+        eta_reset: 731.21             # Afterhyperpolarization magnitude on spike
+        tau_m: 10e-3                  # Afterhyperpolarization decay time constant (10ms)
+        scaling_factor: 1.0           # Overall scaling
+        I_in: 0                       # No external current
+      internal_state:
+        v: 0.0                        # Membrane potential
+        tcount: 0.0                   # Time counter
+        tlast: 0.0                    # Last spike time
+        eta: 0.0                      # Afterhyperpolarization variable
+
+  hg_lif_soma:
+    masquelier_hg_config_0:
+      hyperparameters:
+        T: 500.0                      # Threshold = 0.5 * N_pattern (author's analytic formula)
+        tref: 1e-3                    # 1ms refractory period
+        X: 6.3496                     # PSP norm = (taus/taum)^(taum/(taus-taum)) = 0.25^(-4/3)
+        A: -1500.0                    # Afterhyperpolarization = -K2 * T = -3 * 500
+        taus: 2.5e-3                  # Adaptation / synaptic time constant (2.5ms)
+        taum: 10e-3                   # Membrane time constant (10ms)
+        deltaa: 1.0                   # Adaptation reset value on spike
+        I_in: 0                       # No external current
+      internal_state:
+        u: 0.0                        # Membrane potential
+        tcount: 0.0                   # Time counter
+        tlast: 0.0                    # Last spike time
+        a: 0.0                        # Afterhyperpolarization variable
+
+synapse:
+  single_exp_synapse:
+    masquelier_stdp_config_0:
+      hyperparameters:
+        weight: 0.475                 # Initial weight = 1.9 * T / 2000
+        synaptic_delay: 1.0           # Transmission delay (1 tick)
+        scale: 1.0                    # deltax = 1 (pre-spike increment)
+        tau_fall: 2.5e-3              # tausyn = 2.5ms
+        tau_rise: 0                   # Instantaneous rise
+      internal_state:
+        I_synapse: 0.0                # Synaptic current (x variable)
+        unused_1: 0.0                 # Padding
+        pre_trace: 0.0                # Written by STDP kernel at index [2]
+        post_trace: 0.0               # Written by STDP kernel at index [3]
+      learning_hyperparameters:
+        stdp_type: 3.0                # Bounded nearest-neighbor STDP (RNN)
+        tau_pre_stdp: 16.8e-3         # tau_plus
+        tau_post_stdp: 33.7e-3        # tau_minus
+        a_exp_pre: 0.03125            # a_plus = 2^(-5)
+        a_exp_post: 0.0265625         # a_minus = 0.85 * a_plus
+        stdp_history_length: 100      # STDP history buffer length
+        wmin: 0.0                     # Minimum weight bound
+        wmax: 1.0                     # Maximum weight bound
+      internal_learning_state:
+        pre_trace: 0                  # Pre-synaptic trace
+        post_trace: 0                 # Post-synaptic trace
+        dW: 0                         # Weight change accumulator
+
+  double_exp_synapse:
+    masquelier_srm_stdp_config_0:
+      hyperparameters:
+        weight: 0.475                 # Initial weight (mid-range of [0, 1])
+        synaptic_delay: 1.0           # Transmission delay (1 tick)
+        scale: 1.0                    # Scaling factor
+        tau_fall: 2.5e-3              # tau_s (fast synaptic filter, 2.5ms)
+        tau_rise: 10e-3               # tau_m (slow membrane filter, 10ms)
+      internal_state:
+        I_fast: 0.0                   # Fast-filtered synaptic current (tau_s)
+        I_slow: 0.0                   # Slow-filtered synaptic current (tau_m)
+        pre_trace: 0.0                # (unused by synapse, read by STDP)
+        post_trace: 0.0               # (unused by synapse, read by STDP)
+      learning_hyperparameters:
+        stdp_type: 3.0                # Bounded nearest-neighbor STDP (paper's model)
+        tau_pre_stdp: 16.8e-3         # Paper's tau_plus
+        tau_post_stdp: 33.7e-3        # Paper's tau_minus
+        a_exp_pre: 0.03125            # Paper's a_plus
+        a_exp_post: 0.0265625         # Paper's 0.85 * a_plus
+        stdp_history_length: 100      # STDP history buffer length
+        wmin: 0.0                     # Minimum weight bound
+        wmax: 1.0                     # Maximum weight bound
+      internal_learning_state:
+        pre_trace: 0                  # Pre-synaptic trace
+        post_trace: 0                 # Post-synaptic trace
+        dW: 0                         # Weight change accumulator
