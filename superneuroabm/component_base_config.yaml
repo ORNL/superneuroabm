@@ -162,6 +162,9 @@ synapse:
         stdp_history_length: 100  # Length of STDP history buffer
         wmin: 0.0  # Minimum synaptic weight
         wmax: 24.0  # Maximum synaptic weight
+        mu_write: 3.56  # Write noise bias (memristive device)
+        sigma_write: 8.92  # Write noise std (memristive device)
+        sigma_read: 4.06  # Read noise std (memristive device)
       internal_learning_state:
         pre_trace: 0 # Pre-synaptic trace
         post_trace: 0 # Post-synaptic trace
@@ -173,8 +176,8 @@ synapse:
         weight: 100.0  # Synaptic weight (strength)
         synaptic_delay: 1.0  # Transmission delay (ms)
         scale: 1.0  # Scaling factor
-        tau_fall: 1e-2  # Decay time constant (1 ms)
-        tau_rise: 0  # Rise time constant (instantaneous)
+        # tau_fall: 1e-2  # Decay time constant (1 ms)
+        # tau_rise: 0  # Rise time constant (instantaneous)
       internal_state:
         I_synapse: 0.0  # Initial synaptic current  
       learning_hyperparameters: 
