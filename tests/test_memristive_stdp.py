@@ -77,7 +77,7 @@ class TestMemristiveSTDP(unittest.TestCase):
         for tick in [10, 30, 50, 70, 90]:
             model.add_spike(synapse_id=synapse_input, tick=tick, value=1.0)
 
-        model.simulate(ticks=200, update_data_ticks=200)
+        model.simulate(ticks=200)
 
         learned_weight = model.get_agent_property_value(
             id=synapse_stdp, property_name="hyperparameters"

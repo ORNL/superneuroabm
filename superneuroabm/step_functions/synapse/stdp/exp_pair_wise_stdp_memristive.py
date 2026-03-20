@@ -45,12 +45,12 @@ def exp_pair_wise_stdp_memristive(
     # =========================
     # ---- Memristor Params ---
     # =========================
-    Gmin = 166.0
-    Gmax = 466.0
+    Gmin = 1.0 #166.0
+    Gmax = 500.0 #466.0
 
     mu_write    = 3.56
-    sigma_write = 8.92
-    sigma_read  = 4.06
+    sigma_write = 0.1 #8.92
+    sigma_read  = 0.1 #4.06
 
     step_fraction = 1.0
     alpha = 1.0

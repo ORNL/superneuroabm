@@ -19,7 +19,7 @@ soma:
       hyperparameters:
         C: 10e-9
         R: 1e6
-        vthr: 0.0
+        vthr: -45
         tref: 5e-3
         vrest: -60
         vreset: -60
@@ -35,7 +35,7 @@ synapse:
   single_exp_synapse:
     digits_input_synapse_config:
       hyperparameters:
-        weight: 14.0
+        weight: 20.0
         synaptic_delay: 1.0
         scale: 1.0
         tau_fall: 3e-3
@@ -44,18 +44,42 @@ synapse:
         I_synapse: 0.0
       learning_hyperparameters:
         stdp_type: -1
+
+    digits_learning_synapse_config:
+      hyperparameters:
+        weight: 5.0
+        synaptic_delay: 1.0
+        scale: 1.0
+        tau_fall: 1e-2
+        tau_rise: 0
+      internal_state:
+        I_synapse: 0.0
+      learning_hyperparameters:
+        stdp_type: 2.0
+        tau_pre_stdp: 10e-3
+        tau_post_stdp: 10e-3
+        a_exp_pre: 0.01
+        a_exp_post: 0.025
+        stdp_history_length: 100
+        wmin: 0.0
+        wmax: 20.0
+      internal_learning_state:
+        pre_trace: 0
+        post_trace: 0
+        dW: 0
     digits_target_synapse_config:
       hyperparameters:
-        weight: 100.0
+        weight: 20.0
         synaptic_delay: 1.0
         scale: 1.0
-        tau_fall: 3e-3
+        tau_fall: 1e-3
         tau_rise: 0
       internal_state:
         I_synapse: 0.0
       learning_hyperparameters:
         stdp_type: -1
-    digits_learning_synapse_config:
+
+    digits_learning_synapse_config_memristive:
       hyperparameters:
         weight: 0.5
         synaptic_delay: 1.0
