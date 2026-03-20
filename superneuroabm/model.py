@@ -63,6 +63,21 @@ def _default_learning_rules():
     }
 
 
+def _compute_max_property_sizes(configurations: dict) -> dict:
+    """Return {property_name: max_length} across all component classes, breeds, and configs."""
+    property_maxes = {}
+    for component_class in configurations:
+        for breed in configurations[component_class]:
+            for config_name in configurations[component_class][breed]:
+                config = configurations[component_class][breed][config_name]
+                for prop_type, prop_dict in config.items():
+                    if isinstance(prop_dict, dict):
+                        property_maxes[prop_type] = max(
+                            property_maxes.get(prop_type, 0), len(prop_dict)
+                        )
+    return property_maxes
+
+
 class NeuromorphicModel(Model):
     def __init__(
         self,
@@ -103,18 +118,27 @@ class NeuromorphicModel(Model):
         self.register_global_property("I_bias", 0)  # No bias current
         self.register_global_property("seed", int(np.random.randint(0, 2**31)))
 
+        # Load and hold configurations (needed before property dicts are built)
+        self.agentid2config = {}
+        if user_config is not None:
+            self._component_configurations = load_component_configurations(user_config)
+        else:
+            self._component_configurations = load_component_configurations()
+
+        max_sizes = _compute_max_property_sizes(self._component_configurations)
+
         # Soma properties: (default_value, neighbor_visible)
         # neighbor_visible=True means the property is sent to neighbors during MPI sync
         # Only output_spikes_tensor is read by neighbors (synapses read soma spikes)
         soma_properties = {
-            "hyperparameters": ([0.0, 0.0, 0.0, 0.0, 0.0], False),  # k, vth, C, a, b,
+            "hyperparameters": ([0.0] * max_sizes.get("hyperparameters", 0), False),
             "learning_hyperparameters": (
-                [0.0 for _ in range(5)], False
-            ),  # STDP_function name, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, Wmax, Wmin
-            "internal_state": ([0.0, 0.0, 0.0, 0.0], False),  # v, u
+                [0.0] * max_sizes.get("learning_hyperparameters", 0), False
+            ),
+            "internal_state": ([0.0] * max_sizes.get("internal_state", 0), False),
             "internal_learning_state": (
-                [0.0 for _ in range(3)], False
-            ),  # pre_trace, post_trace, dW
+                [0.0] * max_sizes.get("internal_learning_state", 0), False
+            ),
             "synapse_delay_reg": ([], False),  # Synapse delay
             "input_spikes_tensor": ([], False),  # input spikes tensor
             "output_spikes_tensor": ([], True),  # NEIGHBOR-VISIBLE: synapses read soma spikes
@@ -125,17 +149,17 @@ class NeuromorphicModel(Model):
         # Only internal_state is read by neighbors (somas read I_synapse from synapses)
         synapse_properties = {
             "hyperparameters": (
-                [0.0 for _ in range(10)], False
-            ),  # weight, delay, scale, Tau_fall, Tau_rise, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, stdp_history_length
+                [0.0] * max_sizes.get("hyperparameters", 0), False
+            ),
             "learning_hyperparameters": (
-                [0.0 for _ in range(5)], False
-            ),  # STDP_function name, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post, Wmax, Wmin
+                [0.0] * max_sizes.get("learning_hyperparameters", 0), False
+            ),
             "internal_state": (
-                [0.0 for _ in range(4)], True
-            ),  # NEIGHBOR-VISIBLE: somas read Isyn; Isyn, Isyn_supp, pre_trace, post_trace
+                [0.0] * max_sizes.get("internal_state", 0), True
+            ),  # NEIGHBOR-VISIBLE: somas read Isyn
             "internal_learning_state": (
-                [0.0 for _ in range(3)], False
-            ),  # pre_trace, post_trace, dW
+                [0.0] * max_sizes.get("internal_learning_state", 0), False
+            ),
             "synapse_delay_reg": ([], False),  # Synapse delay
             "input_spikes_tensor": ([], False),  # input spikes tensor
             "output_spikes_tensor": ([], False),
@@ -175,13 +199,6 @@ class NeuromorphicModel(Model):
         self._spikes_need_gather = False
 
         self.tag2component = defaultdict(set)  # tag -> agent_id
-
-        # Load and hold configurations
-        self.agentid2config = {}
-        if user_config is not None:
-            self._component_configurations = load_component_configurations(user_config)
-        else:
-            self._component_configurations = load_component_configurations()
 
         self.synapse2soma_map = defaultdict(
             dict

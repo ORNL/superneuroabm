@@ -2,13 +2,14 @@
 Bounded exponential STDP (Spike-Timing Dependent Plasticity) step function.
 
 Same as exp_pair_wise_stdp but clips weights to [wmin, wmax] after each update.
-Used for Masquelier et al. (2008) pattern detection replication.
 """
 
 import cupy as cp
 from cupyx import jit
 
 from superneuroabm.step_functions.synapse.util import get_soma_spike
+from sagesim.math_utils import clamp
+
 
 
 @jit.rawkernel(device="cuda")
@@ -83,11 +84,9 @@ def exp_pair_wise_stdp_bounded(
     post_trace = post_trace * (1 - dt / tau_post_stdp) + post_soma_spike * a_exp_post
     dW = pre_trace * post_soma_spike - post_trace * pre_soma_spike
 
-    weight += dW  # Update the weight
 
-    # Clip weight to [wmin, wmax] (no cp.clip in raw kernels)
-    weight = weight if weight <= wmax else wmax
-    weight = weight if weight >= wmin else wmin
+    # update weight and Clip to [wmin, wmax] 
+    weight = clamp(weight+dW, wmin, wmax)
 
     synapse_params[agent_index][0] = weight  # Update the clipped weight
 
