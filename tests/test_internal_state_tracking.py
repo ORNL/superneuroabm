@@ -78,7 +78,7 @@ def test_lif_soma_mixed_synapses(enable_internal_state_tracking=True, use_gpu=Tr
         breed="single_exp_synapse",
         pre_soma_id=-1,  # External input
         post_soma_id=soma_0,
-        config_name="no_learning_config_0",
+        config_name="config_0",
     )
 
     # Create synapse_3: soma_0 -> soma_1
@@ -86,7 +86,7 @@ def test_lif_soma_mixed_synapses(enable_internal_state_tracking=True, use_gpu=Tr
         breed="single_exp_synapse",
         pre_soma_id=soma_0,
         post_soma_id=soma_1,
-        config_name="no_learning_config_0",
+        config_name="config_0",
     )
 
     # Create synapse_4: external input -> soma_1
@@ -94,7 +94,7 @@ def test_lif_soma_mixed_synapses(enable_internal_state_tracking=True, use_gpu=Tr
         breed="single_exp_synapse",
         pre_soma_id=-1,  # External input
         post_soma_id=soma_1,
-        config_name="no_learning_config_0",
+        config_name="config_0",
     )
 
     # Create synapse_5: soma_1 -> soma_0 (to test bidirectional connections)
@@ -102,7 +102,7 @@ def test_lif_soma_mixed_synapses(enable_internal_state_tracking=True, use_gpu=Tr
         breed="single_exp_synapse",
         pre_soma_id=soma_1,
         post_soma_id=soma_0,
-        config_name="no_learning_config_0",
+        config_name="config_0",
     )
 
     # Initialize the simulation environment

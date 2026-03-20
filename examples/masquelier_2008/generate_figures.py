@@ -48,7 +48,7 @@ MODEL_CONFIGS = {
         "soma_breed": "srm_soma",
         "soma_config": "masquelier_srm_config_0",
         "synapse_breed": "double_exp_synapse",
-        "synapse_config": "masquelier_srm_stdp_config_0",
+        "synapse_config": "masquelier_srm_config_0",
         "dt_sim": 1e-3,        # SRM uses 1ms ticks
         "tick_scale": 1,
         "pattern_duration_ticks": 50,   # 50ms / 1ms
@@ -59,7 +59,7 @@ MODEL_CONFIGS = {
         "soma_breed": "hg_lif_soma",
         "soma_config": "masquelier_hg_config_0",
         "synapse_breed": "single_exp_synapse",
-        "synapse_config": "masquelier_stdp_config_0",
+        "synapse_config": "masquelier_config_0",
         "dt_sim": 1e-4,        # HG-LIF uses 0.1ms ticks
         "tick_scale": 10,
         "pattern_duration_ticks": 500,  # 50ms / 0.1ms

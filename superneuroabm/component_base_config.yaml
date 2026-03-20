@@ -88,18 +88,7 @@ soma:
 
 synapse:
   single_exp_synapse:
-    no_learning_config_0:
-      hyperparameters:
-        weight: 14.0  # Synaptic weight (strength)
-        synaptic_delay: 1.0  # Transmission delay (ms)
-        scale: 1.0  # Scaling factor
-        tau_fall: 1e-2  # Decay time constant (1 ms)
-        tau_rise: 0  # Rise time constant (instantaneous)
-      internal_state:
-        I_synapse: 0.0  # Initial synaptic current  
-      learning_hyperparameters: 
-        stdp_type: -1  # No learning
-    exp_pair_wise_stdp_config_0:
+    config_0:
       hyperparameters:
         weight: 14.0  # Synaptic weight (strength)
         synaptic_delay: 1.0  # Transmission delay (ms)
@@ -108,81 +97,16 @@ synapse:
         tau_rise: 0  # Rise time constant (instantaneous)
       internal_state:
         I_synapse: 0.0  # Initial synaptic current
-      learning_hyperparameters:
-        stdp_type: 0.0   # Exp pair-wise STDP
-
-        tau_pre_stdp: 10e-3  # Pre-synaptic STDP time constant (10 ms)
-        tau_post_stdp: 10e-3  # Post-synaptic STDP time constant (10 ms)
-        a_exp_pre: 0.005  # Pre-synaptic STDP learning rate
-        a_exp_post: 0.005  # Post-synaptic STDP learning rate
-        stdp_history_length: 100  # Length of STDP history buffer
-      internal_learning_state:
-        pre_trace: 0 # Pre-synaptic trace
-        post_trace: 0 # Post-synaptic trace
-        dW: 0 # Weight change accumulator
-
-    three_bit_exp_pair_wise_stdp_config_0:
-      hyperparameters:
-        weight: 14.0  # Synaptic weight (strength)
-        synaptic_delay: 1.0  # Transmission delay (ms)
-        scale: 1.0  # Scaling factor
-        tau_fall: 1e-2  # Decay time constant (1 ms)
-        tau_rise: 0  # Rise time constant (instantaneous)
-      internal_state:
-        I_synapse: 0.0  # Initial synaptic current
-      learning_hyperparameters:
-        stdp_type: 1.0   # Exp pair-wise STDP
-        tau_pre_stdp: 10e-3  # Pre-synaptic STDP time constant (10 ms)
-        tau_post_stdp: 10e-3  # Post-synaptic STDP time constant (10 ms)
-        a_exp_pre: 0.005  # Pre-synaptic STDP learning rate
-        a_exp_post: 0.005  # Post-synaptic STDP learning rate
-        stdp_history_length: 100  # Length of STDP history buffer
-        wmin: 0.0  # Minimum synaptic weight
-        wmax: 24.0  # Maximum synaptic weight
-        num_levels: 8  # Number of quantization levels (3 bits)
-      internal_learning_state:
-        pre_trace: 0 # Pre-synaptic trace
-        post_trace: 0 # Post-synaptic trace
-        dW: 0 # Weight change accumulator
-    memristive_exp_pair_wise_stdp_config_0:
-      hyperparameters:
-        weight: 14.0  # Synaptic weight (strength)
-        synaptic_delay: 1.0  # Transmission delay (ms)
-        scale: 1.0  # Scaling factor
-        tau_fall: 1e-2  # Decay time constant (1 ms)
-        tau_rise: 0  # Rise time constant (instantaneous)
-      internal_state:
-        I_synapse: 0.0  # Initial synaptic current
-      learning_hyperparameters:
-        stdp_type: 3.0   # Memristive exp pair-wise STDP
-        tau_pre_stdp: 10e-3  # Pre-synaptic STDP time constant (10 ms)
-        tau_post_stdp: 10e-3  # Post-synaptic STDP time constant (10 ms)
-        a_exp_pre: 0.005  # Pre-synaptic STDP learning rate
-        a_exp_post: 0.005  # Post-synaptic STDP learning rate
-        stdp_history_length: 100  # Length of STDP history buffer
-        wmin: 0.0  # Minimum synaptic weight
-        wmax: 24.0  # Maximum synaptic weight
-        mu_write: 3.56  # Write noise bias (memristive device)
-        sigma_write: 8.92  # Write noise std (memristive device)
-        sigma_read: 4.06  # Read noise std (memristive device)
-      internal_learning_state:
-        pre_trace: 0 # Pre-synaptic trace
-        post_trace: 0 # Post-synaptic trace
-        dW: 0 # Weight change accumulator
 
   weighted_synapse:
-    no_learning_config_0:
+    config_0:
       hyperparameters:
         weight: 100.0  # Synaptic weight (strength)
         synaptic_delay: 1.0  # Transmission delay (ms)
         scale: 1.0  # Scaling factor
-        # tau_fall: 1e-2  # Decay time constant (1 ms)
-        # tau_rise: 0  # Rise time constant (instantaneous)
       internal_state:
-        I_synapse: 0.0  # Initial synaptic current  
-      learning_hyperparameters: 
-        stdp_type: -1  # No learning
-    exp_pair_wise_stdp_config_0:
+        I_synapse: 0.0  # Initial synaptic current
+    config_1:
       hyperparameters:
         weight: 14.0  # Synaptic weight (strength)
         synaptic_delay: 1.0  # Transmission delay (ms)
@@ -191,9 +115,13 @@ synapse:
         tau_rise: 0  # Rise time constant (instantaneous)
       internal_state:
         I_synapse: 0.0  # Initial synaptic current
+
+
+learning_rule:
+  exp_pair_wise_stdp:
+    default:
       learning_hyperparameters:
         stdp_type: 0.0   # Exp pair-wise STDP
-
         tau_pre_stdp: 10e-3  # Pre-synaptic STDP time constant (10 ms)
         tau_post_stdp: 10e-3  # Post-synaptic STDP time constant (10 ms)
         a_exp_pre: 0.005  # Pre-synaptic STDP learning rate
@@ -204,17 +132,10 @@ synapse:
         post_trace: 0 # Post-synaptic trace
         dW: 0 # Weight change accumulator
 
-    three_bit_exp_pair_wise_stdp_config_0:
-      hyperparameters:
-        weight: 14.0  # Synaptic weight (strength)
-        synaptic_delay: 1.0  # Transmission delay (ms)
-        scale: 1.0  # Scaling factor
-        tau_fall: 1e-2  # Decay time constant (1 ms)
-        tau_rise: 0  # Rise time constant (instantaneous)
-      internal_state:
-        I_synapse: 0.0  # Initial synaptic current
+  three_bit_exp_pair_wise_stdp:
+    default:
       learning_hyperparameters:
-        stdp_type: 1.0   # Exp pair-wise STDP
+        stdp_type: 1.0   # Three-bit quantized STDP
         tau_pre_stdp: 10e-3  # Pre-synaptic STDP time constant (10 ms)
         tau_post_stdp: 10e-3  # Post-synaptic STDP time constant (10 ms)
         a_exp_pre: 0.005  # Pre-synaptic STDP learning rate
@@ -227,15 +148,25 @@ synapse:
         pre_trace: 0 # Pre-synaptic trace
         post_trace: 0 # Post-synaptic trace
         dW: 0 # Weight change accumulator
-    memristive_exp_pair_wise_stdp_config_0:
-      hyperparameters:
-        weight: 14.0  # Synaptic weight (strength)
-        synaptic_delay: 1.0  # Transmission delay (ms)
-        scale: 1.0  # Scaling factor
-        tau_fall: 1e-2  # Decay time constant (1 ms)
-        tau_rise: 0  # Rise time constant (instantaneous)
-      internal_state:
-        I_synapse: 0.0  # Initial synaptic current
+
+  exp_pair_wise_stdp_bounded:
+    default:
+      learning_hyperparameters:
+        stdp_type: 2.0   # Bounded exp pair-wise STDP
+        tau_pre_stdp: 10e-3  # Pre-synaptic STDP time constant (10 ms)
+        tau_post_stdp: 10e-3  # Post-synaptic STDP time constant (10 ms)
+        a_exp_pre: 0.005  # Pre-synaptic STDP learning rate
+        a_exp_post: 0.005  # Post-synaptic STDP learning rate
+        stdp_history_length: 100  # Length of STDP history buffer
+        wmin: 0.0  # Minimum synaptic weight
+        wmax: 24.0  # Maximum synaptic weight
+      internal_learning_state:
+        pre_trace: 0 # Pre-synaptic trace
+        post_trace: 0 # Post-synaptic trace
+        dW: 0 # Weight change accumulator
+
+  memristive_exp_pair_wise_stdp:
+    default:
       learning_hyperparameters:
         stdp_type: 3.0   # Memristive exp pair-wise STDP
         tau_pre_stdp: 10e-3  # Pre-synaptic STDP time constant (10 ms)

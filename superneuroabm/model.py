@@ -127,6 +127,12 @@ class NeuromorphicModel(Model):
 
         max_sizes = _compute_max_property_sizes(self._component_configurations)
 
+        # Separate learning rule configs before building property dicts
+        self._learning_rule_configurations = self._component_configurations.pop("learning_rule", {})
+
+        # Track which learning rule each synapse uses: agent_id -> (rule_breed, rule_config) or None
+        self.agentid2learning_rule = {}
+
         # Soma properties: (default_value, neighbor_visible)
         # neighbor_visible=True means the property is sent to neighbors during MPI sync
         # Only output_spikes_tensor is read by neighbors (synapses read soma spikes)
@@ -261,28 +267,35 @@ class NeuromorphicModel(Model):
             config_name
         ]
         overrides = {}
-        # Must use Python 3.7+ dict comprehension syntax for ordered dicts
-        property_names = config.keys()
-        for property_name in property_names:
+
+        # Diff synapse/soma config properties (hyperparameters, internal_state)
+        for property_name in config:
             config_property_key_values = config.get(property_name, {})
             current_property_key_values = self.get_agent_property_value(
                 id=agent_id, property_name=property_name
             )
-            diffs = {
-                k: (
-                    v,
-                    current_property_key_values[i],
-                    v - current_property_key_values[i],
-                )
-                for i, (k, v) in enumerate(config_property_key_values.items())
-                if v != current_property_key_values[i]
-            }
-
             overrides[property_name] = {
                 k: current_property_key_values[i]
                 for i, (k, v) in enumerate(config_property_key_values.items())
                 if v != current_property_key_values[i]
             }
+
+        # For synapses, also diff learning rule properties
+        lr_info = self.agentid2learning_rule.get(agent_id)
+        if lr_info is not None:
+            lr_breed, lr_config_name = lr_info
+            lr_config = self._learning_rule_configurations[lr_breed][lr_config_name]
+            for property_name in lr_config:
+                config_property_key_values = lr_config.get(property_name, {})
+                current_property_key_values = self.get_agent_property_value(
+                    id=agent_id, property_name=property_name
+                )
+                overrides[property_name] = {
+                    k: current_property_key_values[i]
+                    for i, (k, v) in enumerate(config_property_key_values.items())
+                    if v != current_property_key_values[i]
+                }
+
         return overrides
 
     def get_agents_with_tag(self, tag: str) -> Set[int]:
@@ -677,17 +690,18 @@ class NeuromorphicModel(Model):
         self,
         breed: str,
         config_name: str,
-        hyperparameters_overrides: Dict[str, float] = None,
-        default_internal_state_overrides: Dict[str, float] = None,
+        overrides: Dict[str, Dict[str, float]] = None,
         tags: Set[str] = None,
     ) -> int:
         """
-        Creates and soma agent.
+        Creates a soma agent.
 
+        :param overrides: Dict keyed by property type, e.g.
+            {"hyperparameters": {"R": 1.1e6}, "internal_state": {"v": -55.0}}
         :return: SAGESim agent id of soma
-
         """
         tags = tags if tags else set()
+        overrides = overrides or {}
 
         # Cached config list construction — avoids copy.deepcopy per agent
         cache_key = ("soma", breed, config_name)
@@ -701,14 +715,12 @@ class NeuromorphicModel(Model):
         hp_keys, hp_defaults, is_keys, is_defaults = self._config_list_cache[cache_key]
 
         hyperparameters = hp_defaults[:]
-        if hyperparameters_overrides:
-            for k, v in hyperparameters_overrides.items():
-                hyperparameters[hp_keys.index(k)] = float(v)
+        for k, v in overrides.get("hyperparameters", {}).items():
+            hyperparameters[hp_keys.index(k)] = float(v)
 
         default_internal_state = is_defaults[:]
-        if default_internal_state_overrides:
-            for k, v in default_internal_state_overrides.items():
-                default_internal_state[is_keys.index(k)] = float(v)
+        for k, v in overrides.get("internal_state", {}).items():
+            default_internal_state[is_keys.index(k)] = float(v)
 
         soma_id = super().create_agent_of_breed(
             breed=self._soma_breeds[breed],
@@ -733,8 +745,7 @@ class NeuromorphicModel(Model):
         local_idx: int,
         breed: str,
         config_name: str,
-        hyperparameters_overrides: Dict[str, float] = None,
-        default_internal_state_overrides: Dict[str, float] = None,
+        overrides: Dict[str, Dict[str, float]] = None,
         tags: Set[str] = None,
     ) -> int:
         """
@@ -742,9 +753,12 @@ class NeuromorphicModel(Model):
 
         :param agent_id: Global agent ID (pre-assigned)
         :param local_idx: Local index in property tensors
+        :param overrides: Dict keyed by property type, e.g.
+            {"hyperparameters": {"R": 1.1e6}, "internal_state": {"v": -55.0}}
         :return: agent_id
         """
         tags = tags if tags else set()
+        overrides = overrides or {}
 
         # Cached config list construction (same as create_soma)
         cache_key = ("soma", breed, config_name)
@@ -758,14 +772,12 @@ class NeuromorphicModel(Model):
         hp_keys, hp_defaults, is_keys, is_defaults = self._config_list_cache[cache_key]
 
         hyperparameters = hp_defaults[:]
-        if hyperparameters_overrides:
-            for k, v in hyperparameters_overrides.items():
-                hyperparameters[hp_keys.index(k)] = float(v)
+        for k, v in overrides.get("hyperparameters", {}).items():
+            hyperparameters[hp_keys.index(k)] = float(v)
 
         default_internal_state = is_defaults[:]
-        if default_internal_state_overrides:
-            for k, v in default_internal_state_overrides.items():
-                default_internal_state[is_keys.index(k)] = float(v)
+        for k, v in overrides.get("internal_state", {}).items():
+            default_internal_state[is_keys.index(k)] = float(v)
 
         # Use shared location reference from space
         location_ref = self.get_space()._locations[agent_id]
@@ -795,10 +807,9 @@ class NeuromorphicModel(Model):
         pre_soma_id: int,
         post_soma_id: int,
         config_name: str,
-        hyperparameters_overrides: Dict[str, float] = None,
-        default_internal_state_overrides: Dict[str, float] = None,
-        learning_hyperparameters_overrides: Dict[str, float] = None,
-        default_internal_learning_state_overrides: Dict[str, float] = None,
+        learning_rule: str = None,
+        learning_rule_config: str = "default",
+        overrides: Dict[str, Dict[str, float]] = None,
         tags: Set[str] = None,
     ) -> int:
         """
@@ -806,11 +817,16 @@ class NeuromorphicModel(Model):
 
         :param agent_id: Global agent ID (pre-assigned)
         :param local_idx: Local index in property tensors
+        :param learning_rule: Learning rule breed name (e.g. "exp_pair_wise_stdp"), or None for no learning.
+        :param learning_rule_config: Config name within the learning rule breed (default: "default").
+        :param overrides: Dict keyed by property type, e.g.
+            {"hyperparameters": {"weight": 0.5}, "learning_hyperparameters": {"a_exp_pre": 0.01}}
         :return: agent_id
         """
         tags = tags if tags else set()
+        overrides = overrides or {}
 
-        # Cached config list construction (same as create_synapse)
+        # Synapse config cache (hp + is only — no learning params in synapse config)
         cache_key = ("synapse", breed, config_name)
         if cache_key not in self._config_list_cache:
             config = self._component_configurations["synapse"][breed][config_name]
@@ -818,36 +834,39 @@ class NeuromorphicModel(Model):
             hp_vals = [float(v) for v in config["hyperparameters"].values()]
             is_keys = list(config["internal_state"].keys())
             is_vals = [float(v) for v in config["internal_state"].values()]
-            lhp_keys = list(config.get("learning_hyperparameters", {"stdp_type": -1}).keys())
-            lhp_vals = [float(v) for v in config.get("learning_hyperparameters", {"stdp_type": -1}).values()]
-            ils_keys = list(config.get("internal_learning_state", {}).keys())
-            ils_vals = [float(v) for v in config.get("internal_learning_state", {}).values()]
-            self._config_list_cache[cache_key] = (
-                hp_keys, hp_vals, is_keys, is_vals,
-                lhp_keys, lhp_vals, ils_keys, ils_vals
-            )
-        (hp_keys, hp_defaults, is_keys, is_defaults,
-         lhp_keys, lhp_defaults, ils_keys, ils_defaults) = self._config_list_cache[cache_key]
+            self._config_list_cache[cache_key] = (hp_keys, hp_vals, is_keys, is_vals)
+        hp_keys, hp_defaults, is_keys, is_defaults = self._config_list_cache[cache_key]
+
+        # Learning rule config (separate cache)
+        if learning_rule is not None:
+            lr_cache_key = ("learning_rule", learning_rule, learning_rule_config)
+            if lr_cache_key not in self._config_list_cache:
+                lr_config = self._learning_rule_configurations[learning_rule][learning_rule_config]
+                lhp_keys = list(lr_config["learning_hyperparameters"].keys())
+                lhp_vals = [float(v) for v in lr_config["learning_hyperparameters"].values()]
+                ils_keys = list(lr_config.get("internal_learning_state", {}).keys())
+                ils_vals = [float(v) for v in lr_config.get("internal_learning_state", {}).values()]
+                self._config_list_cache[lr_cache_key] = (lhp_keys, lhp_vals, ils_keys, ils_vals)
+            lhp_keys, lhp_defaults, ils_keys, ils_defaults = self._config_list_cache[lr_cache_key]
+        else:
+            lhp_keys, lhp_defaults = ["stdp_type"], [-1.0]
+            ils_keys, ils_defaults = [], []
 
         hyperparameters = hp_defaults[:]
-        if hyperparameters_overrides:
-            for k, v in hyperparameters_overrides.items():
-                hyperparameters[hp_keys.index(k)] = float(v)
+        for k, v in overrides.get("hyperparameters", {}).items():
+            hyperparameters[hp_keys.index(k)] = float(v)
 
         default_internal_state = is_defaults[:]
-        if default_internal_state_overrides:
-            for k, v in default_internal_state_overrides.items():
-                default_internal_state[is_keys.index(k)] = float(v)
+        for k, v in overrides.get("internal_state", {}).items():
+            default_internal_state[is_keys.index(k)] = float(v)
 
         learning_hyperparameters = lhp_defaults[:]
-        if learning_hyperparameters_overrides:
-            for k, v in learning_hyperparameters_overrides.items():
-                learning_hyperparameters[lhp_keys.index(k)] = float(v)
+        for k, v in overrides.get("learning_hyperparameters", {}).items():
+            learning_hyperparameters[lhp_keys.index(k)] = float(v)
 
         default_internal_learning_state = ils_defaults[:]
-        if default_internal_learning_state_overrides:
-            for k, v in default_internal_learning_state_overrides.items():
-                default_internal_learning_state[ils_keys.index(k)] = float(v)
+        for k, v in overrides.get("internal_learning_state", {}).items():
+            default_internal_learning_state[ils_keys.index(k)] = float(v)
 
         synaptic_delay = int(hyperparameters[1])
         delay_reg = [0 for _ in range(synaptic_delay)]
@@ -871,6 +890,7 @@ class NeuromorphicModel(Model):
         self._synapse2defaultinternalstate[agent_id] = default_internal_state
         self._synapse2defaultinternallearningstate[agent_id] = default_internal_learning_state
         self._synapse_ids.append(agent_id)
+        self.agentid2learning_rule[agent_id] = (learning_rule, learning_rule_config) if learning_rule else None
 
         network_space = self.get_space()
 
@@ -904,10 +924,9 @@ class NeuromorphicModel(Model):
         pre_soma_id: int,
         post_soma_id: int,
         config_name: str,
-        hyperparameters_overrides: Dict[str, float] = None,
-        default_internal_state_overrides: Dict[str, float] = None,
-        learning_hyperparameters_overrides: Dict[str, float] = None,
-        default_internal_learning_state_overrides: Dict[str, float] = None,
+        learning_rule: str = None,
+        learning_rule_config: str = "default",
+        overrides: Dict[str, Dict[str, float]] = None,
         tags: Set[str] = None,
     ) -> int:
         """
@@ -918,18 +937,19 @@ class NeuromorphicModel(Model):
             pre_soma_id (int): Presynaptic soma agent ID (or -1 for external input).
             post_soma_id (int): Postsynaptic soma agent ID (or -1 for external output).
             config_name (str): Name of the configuration to use for this synapse.
-            hyperparameters_overrides (dict, optional): Dict of hyperparameter overrides.
-            default_internal_state_overrides (dict, optional): Dict of internal state overrides.
-            learning_hyperparameters_overrides (dict, optional): Dict of learning hyperparameter overrides.
-            default_internal_learning_state_overrides (dict, optional): Dict of internal learning state overrides.
+            learning_rule (str, optional): Learning rule breed name (e.g. "exp_pair_wise_stdp"), or None for no learning.
+            learning_rule_config (str): Config name within the learning rule breed (default: "default").
+            overrides (dict, optional): Dict keyed by property type, e.g.
+                {"hyperparameters": {"weight": 0.5}, "learning_hyperparameters": {"a_exp_pre": 0.01}}
             tags (set of str, optional): Tags to associate with this synapse.
 
         Returns:
             int: SAGESim agent ID of the created synapse.
         """
         tags = tags if tags else set()
+        overrides = overrides or {}
 
-        # Cached config list construction — avoids copy.deepcopy per agent
+        # Synapse config cache (hp + is only — no learning params in synapse config)
         cache_key = ("synapse", breed, config_name)
         if cache_key not in self._config_list_cache:
             config = self._component_configurations["synapse"][breed][config_name]
@@ -937,36 +957,39 @@ class NeuromorphicModel(Model):
             hp_vals = [float(v) for v in config["hyperparameters"].values()]
             is_keys = list(config["internal_state"].keys())
             is_vals = [float(v) for v in config["internal_state"].values()]
-            lhp_keys = list(config.get("learning_hyperparameters", {"stdp_type": -1}).keys())
-            lhp_vals = [float(v) for v in config.get("learning_hyperparameters", {"stdp_type": -1}).values()]
-            ils_keys = list(config.get("internal_learning_state", {}).keys())
-            ils_vals = [float(v) for v in config.get("internal_learning_state", {}).values()]
-            self._config_list_cache[cache_key] = (
-                hp_keys, hp_vals, is_keys, is_vals,
-                lhp_keys, lhp_vals, ils_keys, ils_vals
-            )
-        (hp_keys, hp_defaults, is_keys, is_defaults,
-         lhp_keys, lhp_defaults, ils_keys, ils_defaults) = self._config_list_cache[cache_key]
+            self._config_list_cache[cache_key] = (hp_keys, hp_vals, is_keys, is_vals)
+        hp_keys, hp_defaults, is_keys, is_defaults = self._config_list_cache[cache_key]
+
+        # Learning rule config (separate cache)
+        if learning_rule is not None:
+            lr_cache_key = ("learning_rule", learning_rule, learning_rule_config)
+            if lr_cache_key not in self._config_list_cache:
+                lr_config = self._learning_rule_configurations[learning_rule][learning_rule_config]
+                lhp_keys = list(lr_config["learning_hyperparameters"].keys())
+                lhp_vals = [float(v) for v in lr_config["learning_hyperparameters"].values()]
+                ils_keys = list(lr_config.get("internal_learning_state", {}).keys())
+                ils_vals = [float(v) for v in lr_config.get("internal_learning_state", {}).values()]
+                self._config_list_cache[lr_cache_key] = (lhp_keys, lhp_vals, ils_keys, ils_vals)
+            lhp_keys, lhp_defaults, ils_keys, ils_defaults = self._config_list_cache[lr_cache_key]
+        else:
+            lhp_keys, lhp_defaults = ["stdp_type"], [-1.0]
+            ils_keys, ils_defaults = [], []
 
         hyperparameters = hp_defaults[:]
-        if hyperparameters_overrides:
-            for k, v in hyperparameters_overrides.items():
-                hyperparameters[hp_keys.index(k)] = float(v)
+        for k, v in overrides.get("hyperparameters", {}).items():
+            hyperparameters[hp_keys.index(k)] = float(v)
 
         default_internal_state = is_defaults[:]
-        if default_internal_state_overrides:
-            for k, v in default_internal_state_overrides.items():
-                default_internal_state[is_keys.index(k)] = float(v)
+        for k, v in overrides.get("internal_state", {}).items():
+            default_internal_state[is_keys.index(k)] = float(v)
 
         learning_hyperparameters = lhp_defaults[:]
-        if learning_hyperparameters_overrides:
-            for k, v in learning_hyperparameters_overrides.items():
-                learning_hyperparameters[lhp_keys.index(k)] = float(v)
+        for k, v in overrides.get("learning_hyperparameters", {}).items():
+            learning_hyperparameters[lhp_keys.index(k)] = float(v)
 
         default_internal_learning_state = ils_defaults[:]
-        if default_internal_learning_state_overrides:
-            for k, v in default_internal_learning_state_overrides.items():
-                default_internal_learning_state[ils_keys.index(k)] = float(v)
+        for k, v in overrides.get("internal_learning_state", {}).items():
+            default_internal_learning_state[ils_keys.index(k)] = float(v)
 
         synaptic_delay = int(hyperparameters[1])
         delay_reg = [0 for _ in range(synaptic_delay)]
@@ -986,6 +1009,7 @@ class NeuromorphicModel(Model):
             default_internal_learning_state
         )
         self._synapse_ids.append(synapse_id)
+        self.agentid2learning_rule[synapse_id] = (learning_rule, learning_rule_config) if learning_rule else None
 
         network_space: NetworkSpace = self.get_space()
 

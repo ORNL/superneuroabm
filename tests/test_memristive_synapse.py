@@ -30,7 +30,8 @@ class TestMemristiveSynapse(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma,
-            config_name="memristive_exp_pair_wise_stdp_config_0",
+            config_name="config_0",
+            learning_rule="memristive_exp_pair_wise_stdp",
         )
 
         model.setup(use_gpu=True)

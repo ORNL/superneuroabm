@@ -178,7 +178,7 @@ def main():
                 external_input_prob=0.1,
                 soma_breed="lif_soma",      # LIF only
                 synapse_breed="single_exp_synapse",  # No learning
-                synapse_config="no_learning_config_0",
+                synapse_config="config_0",
                 seed=42
             )
             t1 = time.time()

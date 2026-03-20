@@ -30,13 +30,13 @@ class TestWeightedSynapse(unittest.TestCase):
             breed="weighted_synapse",
             pre_soma_id=-1,
             post_soma_id=soma0,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
         synapse1 = model.create_synapse(
             breed="weighted_synapse",
             pre_soma_id=soma0,
             post_soma_id=soma1,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         model.setup(use_gpu=True)

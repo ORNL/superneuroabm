@@ -27,14 +27,14 @@ class TestSpikeMask(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_0,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
         # soma_0 -> soma_1
         syn_int = model.create_synapse(
             breed="single_exp_synapse",
             pre_soma_id=soma_0,
             post_soma_id=soma_1,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         model.setup(use_gpu=True)
@@ -73,13 +73,13 @@ class TestSpikeMask(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_0,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
         syn_int = model.create_synapse(
             breed="single_exp_synapse",
             pre_soma_id=soma_0,
             post_soma_id=soma_1,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         model.setup(use_gpu=True)
@@ -109,13 +109,13 @@ class TestSpikeMask(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_0,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
         syn_int = model.create_synapse(
             breed="single_exp_synapse",
             pre_soma_id=soma_0,
             post_soma_id=soma_1,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         model.setup(use_gpu=True)

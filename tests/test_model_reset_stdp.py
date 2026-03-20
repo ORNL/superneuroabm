@@ -44,7 +44,7 @@ class TestModelResetWithSTDP(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,  # External input
             post_soma_id=soma_pre,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         # STDP-enabled synapse between two somas
@@ -52,7 +52,8 @@ class TestModelResetWithSTDP(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
-            config_name="exp_pair_wise_stdp_config_0",
+            config_name="config_0",
+            learning_rule="exp_pair_wise_stdp",
         )
 
         # Setup the model
@@ -114,14 +115,15 @@ class TestModelResetWithSTDP(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         synapse_stdp = self.model.create_synapse(
             breed="single_exp_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
-            config_name="exp_pair_wise_stdp_config_0",
+            config_name="config_0",
+            learning_rule="exp_pair_wise_stdp",
         )
 
         # Setup and run first simulation with STDP learning
@@ -205,14 +207,15 @@ class TestModelResetWithSTDP(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         synapse_stdp = self.model.create_synapse(
             breed="single_exp_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
-            config_name="exp_pair_wise_stdp_config_0",
+            config_name="config_0",
+            learning_rule="exp_pair_wise_stdp",
         )
 
         # Setup and run first simulation with STDP learning
@@ -305,14 +308,15 @@ class TestModelResetWithSTDP(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         synapse_stdp = self.model.create_synapse(
             breed="single_exp_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
-            config_name="exp_pair_wise_stdp_config_0",
+            config_name="config_0",
+            learning_rule="exp_pair_wise_stdp",
         )
 
         default_weight = 14.0

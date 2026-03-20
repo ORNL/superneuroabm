@@ -136,8 +136,10 @@ def run():
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma,
-            config_name="masquelier_stdp_config_0",
-            learning_hyperparameters_overrides={"stdp_type": float(stdp_id)},
+            config_name="masquelier_config_0",
+            learning_rule="exp_pair_wise_stdp_bounded",
+            learning_rule_config="masquelier_default",
+            overrides={"learning_hyperparameters": {"stdp_type": float(stdp_id)}},
         )
         synapses.append(syn)
 

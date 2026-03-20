@@ -47,7 +47,7 @@ class TestRegistrationAPI(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         model.setup(use_gpu=True)
@@ -88,7 +88,7 @@ class TestRegistrationAPI(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         # Use the custom learning rule (override stdp_type to the new ID)
@@ -96,8 +96,9 @@ class TestRegistrationAPI(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
-            config_name="exp_pair_wise_stdp_config_0",
-            learning_hyperparameters_overrides={"stdp_type": float(rule_id)},
+            config_name="config_0",
+            learning_rule="exp_pair_wise_stdp",
+            overrides={"learning_hyperparameters": {"stdp_type": float(rule_id)}},
         )
 
         model.setup(use_gpu=True)
@@ -134,7 +135,7 @@ class TestRegistrationAPI(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
         model.setup(use_gpu=True)
 

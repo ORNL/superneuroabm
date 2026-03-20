@@ -105,7 +105,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         """
 
         self.micro_model_test_helper(
-            "lif_soma", "config_0", "single_exp_synapse", "no_learning_config_0"
+            "lif_soma", "config_0", "single_exp_synapse", "config_0"
         )
         self._check_baseline("test_lif_soma_single_exp_synapse")
 
@@ -121,7 +121,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         """
 
         self.micro_model_test_helper(
-            "izh_soma", "config_0", "single_exp_synapse", "no_learning_config_0"
+            "izh_soma", "config_0", "single_exp_synapse", "config_0"
         )
         self._check_baseline("test_izh_soma_single_exp_synapse")
 
@@ -143,7 +143,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,  # External input
             post_soma_id=soma_0,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         # Create synapse_4: external input -> soma_1 (spike to this one)
@@ -151,7 +151,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,  # External input
             post_soma_id=soma_0,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         # Initialize the simulation environment
@@ -203,7 +203,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_0,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
         
         # Create synapse_1 -> soma_1
@@ -211,7 +211,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_1,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         # Create synapse_2: soma_0 -> soma_2
@@ -219,7 +219,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=soma_0,
             post_soma_id=soma_2,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
         
         # Create synapse_3: soma_1 -> soma_2
@@ -227,7 +227,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=soma_1,
             post_soma_id=soma_2,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         # Initialize the simulation environment
@@ -298,7 +298,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,  # External input
             post_soma_id=soma_0,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         # Create synapse_3: soma_0 -> soma_1
@@ -306,7 +306,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=soma_0,
             post_soma_id=soma_1,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
         # Create synapse_2: external input -> soma_1
@@ -314,7 +314,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=-1,  # External input
             post_soma_id=soma_1,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
     
@@ -323,7 +323,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
             breed="single_exp_synapse",
             pre_soma_id=soma_1,  # External input
             post_soma_id=soma_0,
-            config_name="no_learning_config_0",
+            config_name="config_0",
         )
 
 

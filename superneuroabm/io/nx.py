@@ -252,8 +252,7 @@ def model_from_nx_graph(
                     local_idx=local_agent_map[agent_id],
                     breed=soma_breed,
                     config_name=config_name,
-                    hyperparameters_overrides=overrides.get("hyperparameters"),
-                    default_internal_state_overrides=overrides.get("internal_state"),
+                    overrides=overrides,
                     tags=tags,
                 )
 
@@ -275,14 +274,9 @@ def model_from_nx_graph(
                     pre_soma_id=pre_soma_id,
                     post_soma_id=post_soma_id,
                     config_name=config_name,
-                    hyperparameters_overrides=overrides.get("hyperparameters"),
-                    default_internal_state_overrides=overrides.get("internal_state"),
-                    learning_hyperparameters_overrides=overrides.get(
-                        "learning_hyperparameters"
-                    ),
-                    default_internal_learning_state_overrides=overrides.get(
-                        "default_internal_learning_state"
-                    ),
+                    learning_rule=data.get("learning_rule"),
+                    learning_rule_config=data.get("learning_rule_config", "default"),
+                    overrides=overrides,
                     tags=tags,
                 )
 
@@ -307,8 +301,7 @@ def model_from_nx_graph(
                         local_idx=local_agent_map[agent_id],
                         breed=soma_breed,
                         config_name=config_name,
-                        hyperparameters_overrides=overrides.get("hyperparameters"),
-                        default_internal_state_overrides=overrides.get("internal_state"),
+                        overrides=overrides,
                         tags=tags,
                     )
                 else:
@@ -340,14 +333,9 @@ def model_from_nx_graph(
                         pre_soma_id=pre_soma_id,
                         post_soma_id=post_soma_id,
                         config_name=config_name,
-                        hyperparameters_overrides=overrides.get("hyperparameters"),
-                        default_internal_state_overrides=overrides.get("internal_state"),
-                        learning_hyperparameters_overrides=overrides.get(
-                            "learning_hyperparameters"
-                        ),
-                        default_internal_learning_state_overrides=overrides.get(
-                            "default_internal_learning_state"
-                        ),
+                        learning_rule=data.get("learning_rule"),
+                        learning_rule_config=data.get("learning_rule_config", "default"),
+                        overrides=overrides,
                         tags=tags,
                     )
                 else:
@@ -387,8 +375,7 @@ def model_from_nx_graph(
             soma_id = model.create_soma(
                 breed=soma_breed,
                 config_name=config_name,
-                hyperparameters_overrides=overrides.get("hyperparameters"),
-                default_internal_state_overrides=overrides.get("internal_state"),
+                overrides=overrides,
                 tags=tags,
             )
             name2id[node] = soma_id
@@ -408,14 +395,9 @@ def model_from_nx_graph(
                 pre_soma_id=pre_soma_id,
                 post_soma_id=post_soma_id,
                 config_name=config_name,
-                hyperparameters_overrides=overrides.get("hyperparameters"),
-                default_internal_state_overrides=overrides.get("internal_state"),
-                learning_hyperparameters_overrides=overrides.get(
-                    "learning_hyperparameters"
-                ),
-                default_internal_learning_state_overrides=overrides.get(
-                    "default_internal_learning_state"
-                ),
+                learning_rule=data.get("learning_rule"),
+                learning_rule_config=data.get("learning_rule_config", "default"),
+                overrides=overrides,
                 tags=tags,
             )
 
@@ -469,13 +451,16 @@ def nx_graph_from_model(
             overrides.pop("internal_state", None)
             overrides.pop("internal_learning_state", None)
 
-        graph.add_edge(
-            pre_soma_id,
-            post_soma_id,
+        lr_info = model.agentid2learning_rule.get(synapse_id)
+        edge_data = dict(
             synapse_breed=synapse_breed,
             config=config,
             overrides=overrides,
         )
+        if lr_info is not None:
+            edge_data["learning_rule"] = lr_info[0]
+            edge_data["learning_rule_config"] = lr_info[1]
+        graph.add_edge(pre_soma_id, post_soma_id, **edge_data)
 
     return graph
 
@@ -506,14 +491,14 @@ if __name__ == "__main__":
         -1,
         "A",
         synapse_breed="single_exp_synapse",
-        config="no_learning_config_0",
+        config="config_0",
         overrides={"hyperparameters": {"weight": 13.5}},
     )
     graph.add_edge(
         "A",
         "B",
         synapse_breed="single_exp_synapse",
-        config="no_learning_config_0",
+        config="config_0",
         overrides={"hyperparameters": {"weight": 13.5}},
     )
 
