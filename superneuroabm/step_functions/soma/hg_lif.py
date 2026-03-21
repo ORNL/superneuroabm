@@ -43,7 +43,8 @@ import cupy as cp
 def hg_lif_soma_step_func(
     tick,
     agent_index,
-    globals,
+    dt,
+    I_bias,
     agent_ids,
     breeds,
     locations,
@@ -67,7 +68,7 @@ def hg_lif_soma_step_func(
             x_total += internal_state[synapse_index][0]  # I_synapse
 
     t_current = int(tick)
-    dt = globals[0]
+    # dt and I_bias received directly as scalar params
 
     # Hyperparameters
     T = neuron_params[agent_index][0]

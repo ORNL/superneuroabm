@@ -7,7 +7,8 @@ from cupyx import jit
 def get_soma_spike(
     tick,
     agent_index,
-    globals,
+    dt,
+    I_bias,
     agent_ids,
     pre_soma_index,  # Used to be pre_soma_id, now it's already an index
     t_current,
@@ -19,7 +20,8 @@ def get_soma_spike(
 
     Args:
         pre_soma_index: Local index of the pre-synaptic soma (-1 for external input)
-        globals, agent_ids: Kept for signature compatibility, not used anymore
+        dt, I_bias: Scalar globals auto-extracted by SAGESim framework
+        agent_ids: Kept for signature compatibility, not used anymore
 
     NOTE: output_spikes_tensor is NOT double-buffered. Reading t_current-1
     introduces a 1-tick synaptic delay (0.1ms at dt=1e-4), which is

@@ -7,7 +7,8 @@ from superneuroabm.step_functions.synapse.util import get_soma_spike
 def exp_pair_wise_stdp_memristive(
     tick,
     agent_index,
-    globals,
+    dt,
+    I_bias,
     agent_ids,
     breeds,
     locations,
@@ -22,9 +23,6 @@ def exp_pair_wise_stdp_memristive(
     internal_learning_states_buffer,
 ):
     t_current = int(tick)
-    dt = globals[0]
-    seed = globals[2]
-
     # =========================
     # ---- Synapse Params -----
     # =========================
@@ -74,14 +72,14 @@ def exp_pair_wise_stdp_memristive(
     post_soma_index = locations[agent_index][1]
 
     pre_spike = get_soma_spike(
-        tick, agent_index, globals,
+        tick, agent_index, dt, I_bias,
         agent_ids, pre_soma_index,
         t_current, input_spikes_tensor,
         output_spikes_tensor
     )
 
     post_spike = get_soma_spike(
-        tick, agent_index, globals,
+        tick, agent_index, dt, I_bias,
         agent_ids, post_soma_index,
         t_current, input_spikes_tensor,
         output_spikes_tensor
@@ -122,8 +120,8 @@ def exp_pair_wise_stdp_memristive(
         # =========================
         # ---- Gaussian Noise -----
         # =========================
-        randn_write = rand_normal(seed, tick, agent_index, 1)
-        randn_read  = rand_normal(seed, tick, agent_index, 2)
+        randn_write = rand_normal(tick, agent_index, 1)
+        randn_read  = rand_normal(tick, agent_index, 2)
 
         eps_write = mu_write + sigma_write * randn_write
 

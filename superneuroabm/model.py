@@ -114,9 +114,8 @@ class NeuromorphicModel(Model):
         self.enable_internal_state_tracking = enable_internal_state_tracking
         self._config_list_cache = {}
 
-        self.register_global_property("dt", 1e-3)  # Time step (100 μs)
-        self.register_global_property("I_bias", 0)  # No bias current
-        self.register_global_property("seed", int(np.random.randint(0, 2**31)))
+        self.register_global_property("dt", 1e-3)      # Time step (100 μs)
+        self.register_global_property("I_bias", 0)     # No bias current
 
         # Load and hold configurations (needed before property dicts are built)
         self.agentid2config = {}
@@ -414,7 +413,8 @@ class NeuromorphicModel(Model):
         imports the module, and returns (func, path).
         """
         CALL_ARGS = (
-            "            tick, agent_index, globals, agent_ids, breeds, locations,\n"
+            "            tick, agent_index, _seed, dt, I_bias,\n"
+            "            agent_ids, breeds, locations,\n"
             "            synapse_params, learning_params, internal_state,\n"
             "            internal_learning_state, synapse_history, input_spikes_tensor,\n"
             "            output_spikes_tensor, internal_states_buffer,\n"
@@ -462,7 +462,7 @@ class NeuromorphicModel(Model):
         lines.append('@jit.rawkernel(device="cuda")')
         lines.append("def learning_rule_selector(")
         lines.append(
-            "    tick, agent_index, globals, agent_ids, breeds, locations,"
+            "    tick, agent_index, _seed, dt, I_bias, agent_ids, breeds, locations,"
         )
         lines.append("    synapse_params, learning_params, internal_state,")
         lines.append(

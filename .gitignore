@@ -95,3 +95,4 @@ scaling_analysis/outputs/
 examples/__pycache__/
 examples/*.pyc
 examples/step_func_code.py
+examples/masquelier_2008/output_hg/

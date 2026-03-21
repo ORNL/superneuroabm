@@ -31,7 +31,8 @@ from superneuroabm.step_functions.synapse.util import get_soma_spike
 def exp_pair_wise_stdp_bounded_nn(
     tick,
     agent_index,
-    globals,
+    dt,
+    I_bias,
     agent_ids,
     breeds,
     locations,
@@ -46,7 +47,6 @@ def exp_pair_wise_stdp_bounded_nn(
     internal_learning_states_buffer,
 ):
     t_current = int(tick)
-    dt = globals[0]
 
     weight = synapse_params[agent_index][0]
 
@@ -65,12 +65,12 @@ def exp_pair_wise_stdp_bounded_nn(
     post_soma_index = locations[agent_index][1]
 
     pre_soma_spike = get_soma_spike(
-        tick, agent_index, globals, agent_ids,
+        tick, agent_index, dt, I_bias, agent_ids,
         pre_soma_index, t_current,
         input_spikes_tensor, output_spikes_tensor,
     )
     post_soma_spike = get_soma_spike(
-        tick, agent_index, globals, agent_ids,
+        tick, agent_index, dt, I_bias, agent_ids,
         post_soma_index, t_current,
         input_spikes_tensor, output_spikes_tensor,
     )

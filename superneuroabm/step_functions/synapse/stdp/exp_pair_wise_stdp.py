@@ -13,7 +13,8 @@ from superneuroabm.step_functions.synapse.util import get_soma_spike
 def exp_pair_wise_stdp(
     tick,
     agent_index,
-    globals,
+    dt,
+    I_bias,
     agent_ids,
     breeds,
     locations,
@@ -28,8 +29,6 @@ def exp_pair_wise_stdp(
     internal_learning_states_buffer,
 ):
     t_current = int(tick)
-
-    dt = globals[0]  # time step size
 
     # Get the synapse parameters:
     weight = synapse_params[agent_index][0]
@@ -57,7 +56,8 @@ def exp_pair_wise_stdp(
     pre_soma_spike = get_soma_spike(
         tick,
         agent_index,
-        globals,
+        dt,
+        I_bias,
         agent_ids,
         pre_soma_index,
         t_current,
@@ -68,7 +68,8 @@ def exp_pair_wise_stdp(
     post_soma_spike = get_soma_spike(
         tick,
         agent_index,
-        globals,
+        dt,
+        I_bias,
         agent_ids,
         post_soma_index,
         t_current,

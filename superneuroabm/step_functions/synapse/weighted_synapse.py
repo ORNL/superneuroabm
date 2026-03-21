@@ -14,7 +14,8 @@ from superneuroabm.step_functions.synapse.util import get_soma_spike
 def weighted_synapse_step_func(
     tick,
     agent_index,
-    globals,
+    dt,
+    I_bias,
     agent_ids,
     breeds,
     locations,
@@ -30,8 +31,6 @@ def weighted_synapse_step_func(
 ):
     t_current = int(tick)
 
-    dt = globals[0]  # time step size
-
     weight = synapse_params[agent_index][0]
     synaptic_delay = synapse_params[agent_index][1]
     
@@ -43,7 +42,8 @@ def weighted_synapse_step_func(
     spike = get_soma_spike(
         tick,
         agent_index,
-        globals,
+        dt,
+        I_bias,
         agent_ids,
         pre_soma_id,
         t_current,
