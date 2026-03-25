@@ -605,6 +605,7 @@ class NeuromorphicModel(Model):
         self._spike_record_count_gpu = None
         self._spike_mask_gpu = None  # rebuild mask on next prepare
         self._spikes_need_gather = False
+        self.set_property_neighbor_visible("breed", False)  # no step func reads neighbor breeds
         super().setup(use_gpu=use_gpu, skip_priority_barriers={100})
 
         if not self.enable_internal_state_tracking:

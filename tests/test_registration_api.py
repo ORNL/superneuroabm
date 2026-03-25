@@ -7,16 +7,20 @@ Verifies:
   - Error cases: after-setup and duplicate-name errors
 """
 
+import sys
 import unittest
 import copy
 from pathlib import Path
+
+# Add project root so examples/ is importable
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from superneuroabm.model import NeuromorphicModel
 from superneuroabm.step_functions.soma.lif import lif_soma_step_func
 from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp import (
     exp_pair_wise_stdp,
 )
-from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp_bounded_nn import (
+from examples.masquelier_2008.exp_pair_wise_stdp_bounded_nn import (
     exp_pair_wise_stdp_bounded_nn,
 )
 
@@ -67,10 +71,9 @@ class TestRegistrationAPI(unittest.TestCase):
         model = NeuromorphicModel(enable_internal_state_tracking=True)
 
         stdp_path = (
-            SUPERNEURO_DIR
-            / "step_functions"
-            / "synapse"
-            / "stdp"
+            Path(__file__).resolve().parent.parent
+            / "examples"
+            / "masquelier_2008"
             / "exp_pair_wise_stdp_bounded_nn.py"
         )
         rule_id = model.register_learning_rule(
