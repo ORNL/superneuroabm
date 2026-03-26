@@ -462,7 +462,7 @@ class NeuromorphicModel(Model):
         lines.append('@jit.rawkernel(device="cuda")')
         lines.append("def learning_rule_selector(")
         lines.append(
-            "    tick, agent_index, _seed, dt, I_bias, agent_ids, breeds, locations,"
+            "    tick, agent_index, dt, I_bias, agent_ids, breeds, locations,"
         )
         lines.append("    synapse_params, learning_params, internal_state,")
         lines.append(
@@ -1105,7 +1105,7 @@ class NeuromorphicModel(Model):
                     ],
                     True,  # once_per_breed
                     0,     # only_priority — only emit for soma priority
-                )
+                ),
             ],
         }
 
