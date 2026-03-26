@@ -13,6 +13,11 @@ from superneuroabm.model import NeuromorphicModel
 from superneuroabm.util import load_component_configurations
 
 
+def _none_safe(value):
+    """Treat the string 'None' (from GraphML round-trip) as None."""
+    return None if value is None or value == "None" else value
+
+
 def generate_metis_partition(graph: nx.DiGraph, num_workers: int) -> Dict[int, int]:
     """
     Generate network partition using METIS for optimal agent-to-worker assignment.
@@ -274,7 +279,7 @@ def model_from_nx_graph(
                     pre_soma_id=pre_soma_id,
                     post_soma_id=post_soma_id,
                     config_name=config_name,
-                    learning_rule=data.get("learning_rule"),
+                    learning_rule=_none_safe(data.get("learning_rule")),
                     learning_rule_config=data.get("learning_rule_config", "default"),
                     overrides=overrides,
                     tags=tags,
@@ -333,7 +338,7 @@ def model_from_nx_graph(
                         pre_soma_id=pre_soma_id,
                         post_soma_id=post_soma_id,
                         config_name=config_name,
-                        learning_rule=data.get("learning_rule"),
+                        learning_rule=_none_safe(data.get("learning_rule")),
                         learning_rule_config=data.get("learning_rule_config", "default"),
                         overrides=overrides,
                         tags=tags,
@@ -395,7 +400,7 @@ def model_from_nx_graph(
                 pre_soma_id=pre_soma_id,
                 post_soma_id=post_soma_id,
                 config_name=config_name,
-                learning_rule=data.get("learning_rule"),
+                learning_rule=_none_safe(data.get("learning_rule")),
                 learning_rule_config=data.get("learning_rule_config", "default"),
                 overrides=overrides,
                 tags=tags,
