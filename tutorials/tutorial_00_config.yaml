@@ -1,0 +1,169 @@
+# ==============================================================================
+# SuperNeuroABM Tutorial 00: Heterogeneous Network Configuration
+# ==============================================================================
+#
+# This file defines ALL component configurations for this tutorial.
+#
+# STRUCTURE
+# ---------
+# The config has three top-level sections:
+#
+#   soma:            Neuron (cell body) definitions
+#   synapse:         Connection definitions
+#   learning_rule:   Plasticity rule definitions
+#
+# Each section follows the same hierarchy:
+#
+#   <breed>:                  # Component type (must match a registered step function)
+#     <config_name>:          # A named parameter set you choose
+#       hyperparameters:      # Fixed parameters that govern the component's dynamics
+#         param_1: value
+#         param_2: value
+#       internal_state:       # Dynamic state variables that evolve each tick
+#         state_1: value
+#
+# HOW IT WORKS
+# ------------
+# - When you call create_soma(breed="lif_soma", config_name="tutorial_lif"),
+#   the model looks up soma -> lif_soma -> tutorial_lif in this file.
+# - All values are converted to floats internally.
+# - Parameter ORDER must match what the step function expects.
+#   (Follow the order used in component_base_config.yaml)
+# - A custom config REPLACES the built-in defaults entirely.
+#   Only breeds and config_names defined here are available.
+# ==============================================================================
+
+
+# ==============================================================================
+# SOMA CONFIGURATIONS
+# ==============================================================================
+
+soma:
+
+  # --- Leaky Integrate-and-Fire (LIF) Neuron --------------------------------
+  #
+  # Dynamics:
+  #   C * dV/dt = (Vrest - V) / R + I_synapse * scaling_factor + I_bias + I_in
+  #
+  # Spike rule:  V >= Vthr  -->  emit spike, V = Vreset, enter refractory
+  #
+  lif_soma:
+    tutorial_lif:
+      hyperparameters:
+        C: 10e-9                    # Membrane capacitance (F)       -- 10 nF
+        R: 1e6                      # Membrane resistance (Ohm)      -- 1 MOhm
+        vthr: -45                   # Spike threshold (mV)
+        tref: 5e-3                  # Refractory period (s)          -- 5 ms
+        vrest: -60                  # Resting membrane potential (mV)
+        vreset: -70                 # Post-spike reset potential (mV)
+        tref_allows_integration: 1  # 1 = keep integrating during refractory
+        I_in: 0                     # Constant input current (A)
+        scaling_factor: 1e-5        # Multiplier applied to synaptic current
+      internal_state:
+        v: -60.0                    # Membrane voltage (mV) -- starts at rest
+        tcount: 0.0                 # Simulation time counter
+        tlast: 0.0                  # Time of last spike (s)
+
+
+  # --- Izhikevich Neuron (Intrinsic Bursting) --------------------------------
+  #
+  # Dynamics:
+  #   C * dv/dt = k*(v - vrest)*(v - vthr) - u + I
+  #   du/dt     = a * (b*(v - vrest) - u)
+  #
+  # Spike rule:  v >= vpeak  -->  v = vreset, u = u + d
+  #
+  izh_soma:
+    tutorial_izh:
+      hyperparameters:
+        k: 1.2                      # Scaling factor
+        vthr: -45                   # Instantaneous threshold (mV)
+        C: 150                      # Membrane capacitance (pF)
+        a: 0.01                     # Recovery time constant
+        b: 5                        # Sensitivity of u to sub-threshold v
+        vpeak: 50                   # Spike cutoff voltage (mV)
+        vrest: -75                  # Resting potential (mV)
+        d: 130                      # After-spike recovery increment
+        vreset: -56                 # Reset voltage after spike (mV)
+        I_in: 500                   # Constant input current (pA)
+      internal_state:
+        v: -75                      # Membrane voltage (mV) -- starts at rest
+        u: 0                        # Recovery variable
+
+
+# ==============================================================================
+# SYNAPSE CONFIGURATIONS
+# ==============================================================================
+# Single Exponential Synapse dynamics:
+#   On presynaptic spike (after synaptic_delay ticks):
+#       I_synapse += weight * scale * spike_value
+#   Every tick:
+#       I_synapse *= exp(-dt / tau_fall)
+# ==============================================================================
+
+synapse:
+  single_exp_synapse:
+
+    # External input synapse -- strong
+    strong_input:
+      hyperparameters:
+        weight: 20.0                # Synaptic weight (strong drive)
+        synaptic_delay: 1.0         # Transmission delay (ticks)
+        scale: 1.0                  # Current scaling factor
+        tau_fall: 1e-2              # Exponential decay time constant (s)
+        tau_rise: 0                 # Rise time (0 = instantaneous)
+      internal_state:
+        I_synapse: 0.0              # Synaptic current
+
+    # External input synapse -- weak
+    weak_input:
+      hyperparameters:
+        weight: 10.0                # Synaptic weight (weaker drive)
+        synaptic_delay: 1.0
+        scale: 1.0
+        tau_fall: 1e-2
+        tau_rise: 0
+      internal_state:
+        I_synapse: 0.0
+
+    # Internal synapse with plasticity (LIF -> IZH)
+    internal_plastic:
+      hyperparameters:
+        weight: 0.5                 # Initial weight -- STDP will modify this
+        synaptic_delay: 1.0
+        scale: 1.0
+        tau_fall: 1e-2
+        tau_rise: 0
+      internal_state:
+        I_synapse: 0.0
+
+
+# ==============================================================================
+# LEARNING RULE CONFIGURATIONS
+# ==============================================================================
+# Bounded Exponential Pair-wise STDP:
+#   - Pre fires BEFORE post (causal)      -->  weight increases (LTP)
+#   - Post fires BEFORE pre (anti-causal)  -->  weight decreases (LTD)
+#   - Weight is clamped to [wmin, wmax] after each update
+#
+# Traces:
+#   pre_trace  decays with tau_pre_stdp,   jumps by a_exp_pre  on pre spike
+#   post_trace decays with tau_post_stdp,  jumps by a_exp_post on post spike
+# ==============================================================================
+
+learning_rule:
+  exp_pair_wise_stdp_bounded:
+    tutorial_stdp:
+      learning_hyperparameters:
+        stdp_type: 2.0              # 2 = bounded exp pair-wise STDP
+        tau_pre_stdp: 10e-3         # Pre-synaptic trace decay (s)
+        tau_post_stdp: 10e-3        # Post-synaptic trace decay (s)
+        a_exp_pre: 0.1              # LTP amplitude (pre before post)
+        a_exp_post: 0.04            # LTD amplitude (post before pre)
+        stdp_history_length: 100    # Spike history buffer size
+        wmin: 0.0                   # Minimum weight bound
+        wmax: 1.0                   # Maximum weight bound
+      internal_learning_state:
+        pre_trace: 0                # Pre-synaptic eligibility trace
+        post_trace: 0               # Post-synaptic eligibility trace
+        dW: 0                       # Accumulated weight change
