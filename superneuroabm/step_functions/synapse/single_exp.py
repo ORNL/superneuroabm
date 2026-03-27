@@ -15,7 +15,8 @@ from sagesim.utils import get_neighbor_data_from_tensor
 def synapse_single_exp_step_func(
     tick,
     agent_index,
-    globals,
+    dt,
+    I_bias,
     agent_ids,
     breeds,
     locations,
@@ -30,8 +31,6 @@ def synapse_single_exp_step_func(
     internal_learning_states_buffer,
 ):
     t_current = int(tick)
-
-    dt = globals[0]  # time step size
 
     weight = synapse_params[agent_index][0]
     synaptic_delay = synapse_params[agent_index][1]
@@ -49,7 +48,8 @@ def synapse_single_exp_step_func(
     spike = get_soma_spike(
         tick,
         agent_index,
-        globals,
+        dt,
+        I_bias,
         agent_ids,
         pre_soma_index,
         t_current,

@@ -36,7 +36,7 @@ for neurons in test_sizes:
             external_input_prob=0.1,
             soma_breed="lif_soma",
             synapse_breed="single_exp_synapse",
-            synapse_config="no_learning_config_0",
+            synapse_config="config_0",
             seed=42
         )
 

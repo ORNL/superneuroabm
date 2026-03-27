@@ -11,7 +11,8 @@ from cupyx import jit
 def izh_soma_step_func(
     tick,
     agent_index,
-    globals,
+    dt,
+    I_bias,
     agent_ids,
     breeds,
     locations,
@@ -38,8 +39,7 @@ def izh_soma_step_func(
 
     # Get the current time step value:
     t_current = int(tick)
-    dt = globals[0]  # time step size
-    I_bias = globals[1]  # bias current
+    # dt and I_bias received directly as scalar params
 
     # NOTE: neuron_params would need to be as long as the max number of params in any spiking neuron model
     k = neuron_params[agent_index][0]
@@ -77,7 +77,7 @@ def izh_soma_step_func(
     internal_state[agent_index][0] = v
     internal_state[agent_index][1] = u
 
-    output_spikes_tensor[agent_index][t_current] = s
+    output_spikes_tensor[agent_index][t_current % 2] = s
 
     # Safe buffer indexing: use modulo to prevent out-of-bounds access
     # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always

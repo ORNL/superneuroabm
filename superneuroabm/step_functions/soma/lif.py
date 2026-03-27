@@ -11,7 +11,8 @@ import cupy as cp
 def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_step_func
     tick,
     agent_index,
-    globals,
+    dt,
+    I_bias,
     agent_ids,
     breeds,
     locations,
@@ -38,8 +39,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
 
     # Get the current time step value:
     t_current = int(tick)  # Check if tcount is needed or if we ca use this directly.
-    dt = globals[0]  # time step size
-    I_bias = globals[1]  # bias current
+    # dt and I_bias received directly as scalar params
 
     # NOTE: neuron_params would need to as long as the max number of params in any spiking neuron model
     # Neuron Parameter
@@ -87,7 +87,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     internal_state[agent_index][1] += 1
     internal_state[agent_index][2] = tlast
 
-    output_spikes_tensor[agent_index][t_current] = s
+    output_spikes_tensor[agent_index][t_current % 2] = s
 
     # Safe buffer indexing: use modulo to prevent out-of-bounds access
     # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always
@@ -95,4 +95,3 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     internal_states_buffer[agent_index][buffer_idx][0] = v
     internal_states_buffer[agent_index][buffer_idx][1] = internal_state[agent_index][1] + 1
     internal_states_buffer[agent_index][buffer_idx][2] = tlast
- 

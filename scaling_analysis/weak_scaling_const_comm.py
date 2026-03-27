@@ -9,6 +9,7 @@ import sys
 import time
 import argparse
 import pickle
+import csv
 import os
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -20,7 +21,9 @@ try:
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
-    size = comm.Get_size()
+    # Use SLURM_STEP_NUM_TASKS to get actual worker count from srun
+    # Falls back to MPI size if env var not set (for non-SLURM runs)
+    size = int(os.environ.get('SLURM_STEP_NUM_TASKS', comm.Get_size()))
 except ImportError:
     rank = 0
     size = 1
@@ -60,7 +63,7 @@ def main():
                        help="Neurons per worker (constant for weak scaling)")
     parser.add_argument("--ticks", type=int, default=10,
                        help="Simulation ticks")
-    parser.add_argument("--update-ticks", type=int, default=5,
+    parser.add_argument("--update-ticks", type=int, default=1,
                        help="Update data every N ticks")
     parser.add_argument("--intra-cluster-degree", type=int, default=10,
                        help="Average degree per neuron within cluster (default: 10) - for PROPER weak scaling")
@@ -68,6 +71,8 @@ def main():
                        help="Number of edges in EACH direction for bidirectional pairs (default: 2000)")
     parser.add_argument("--num-neighbor-clusters", type=int, default=1,
                        help="Number of bidirectional neighbor pairs (default: 1 for TRUE weak scaling)")
+    parser.add_argument("--csv", type=str, default=None,
+                       help="Path to CSV file for appending timing results (rank 0 only)")
     args = parser.parse_args()
 
     neurons_per_worker = args.neurons_per_worker
@@ -86,6 +91,13 @@ def main():
         print(f"      - Constant edges per worker (O(n), not O(n²)!)")
         print(f"      - Constant communication per worker")
         print("="*70)
+        # Debug: Show MPI vs SLURM worker count
+        if comm is not None:
+            mpi_size = comm.Get_size()
+            slurm_tasks = os.environ.get('SLURM_STEP_NUM_TASKS', 'NOT SET')
+            print(f"[DEBUG] MPI.COMM_WORLD.Get_size() = {mpi_size}")
+            print(f"[DEBUG] SLURM_STEP_NUM_TASKS = {slurm_tasks}")
+            print(f"[DEBUG] Using size = {size}")
         print(f"Workers: {size}")
         print(f"Neurons per worker: {neurons_per_worker} (constant)")
         print(f"Intra-cluster degree: {intra_cluster_degree} edges/neuron (constant → O(n) scaling!)")
@@ -102,9 +114,11 @@ def main():
         print(f"Partitioning: Cluster-based")
         print("="*70)
 
+    t_pipeline_start = time.time()
+
     # Generate or load network from file
     # Use deterministic filename based on network parameters
-    network_dir = Path(__file__).parent / "output"
+    network_dir = Path(__file__).parent / "networks"
     network_dir.mkdir(exist_ok=True)
 
     network_filename = (
@@ -129,22 +143,29 @@ def main():
         file_exists = comm.bcast(file_exists, root=0)
 
     if file_exists:
-        # Load existing network
+        # Load network via MPI broadcast (rank 0 reads, broadcasts to all)
         if rank == 0:
             print(f"    Loading network from {network_path.name}...")
         t0 = time.time()
-        with open(network_path, 'rb') as f:
-            graph = pickle.load(f)
+        if comm is not None and size > 1:
+            if rank == 0:
+                with open(network_path, 'rb') as f:
+                    graph_bytes = f.read()
+            else:
+                graph_bytes = None
+            graph_bytes = comm.bcast(graph_bytes, root=0)
+            graph = pickle.loads(graph_bytes)
+            del graph_bytes
+        else:
+            with open(network_path, 'rb') as f:
+                graph = pickle.load(f)
         t1 = time.time()
+        network_load_time = t1 - t0
         if rank == 0:
-            print(f"    Network loaded in {t1-t0:.2f}s")
+            print(f"    Network loaded in {network_load_time:.2f}s")
             print(f"    Nodes: {graph.number_of_nodes()}, Edges: {graph.number_of_edges()}")
-
-        # Barrier to ensure all ranks finish loading before proceeding
-        if comm is not None:
-            comm.Barrier()
     else:
-        # Generate new network (only rank 0)
+        # Generate new network (only rank 0), then broadcast to all ranks
         if rank == 0:
             print(f"    Generating new network...")
             t0 = time.time()
@@ -157,11 +178,12 @@ def main():
                 external_input_prob=0.1,
                 soma_breed="lif_soma",      # LIF only
                 synapse_breed="single_exp_synapse",  # No learning
-                synapse_config="no_learning_config_0",
+                synapse_config="config_0",
                 seed=42
             )
             t1 = time.time()
-            print(f"    Network generated in {t1-t0:.2f}s")
+            network_load_time = t1 - t0
+            print(f"    Network generated in {network_load_time:.2f}s")
             print(f"    Nodes: {graph.number_of_nodes()}, Edges: {graph.number_of_edges()}")
 
             # Save to file
@@ -172,14 +194,20 @@ def main():
             t1 = time.time()
             print(f"    Network saved in {t1-t0:.2f}s")
 
-        # Other ranks wait for rank 0 to finish
-        if comm is not None:
-            comm.Barrier()
+            # Serialize for broadcast
+            graph_bytes = pickle.dumps(graph)
+        else:
+            graph_bytes = None
+            network_load_time = 0.0
 
-        # All non-zero ranks load the saved network
-        if rank != 0:
-            with open(network_path, 'rb') as f:
-                graph = pickle.load(f)
+        # Broadcast graph to all ranks via MPI tree-broadcast
+        if comm is not None and size > 1:
+            graph_bytes = comm.bcast(graph_bytes, root=0)
+            if rank != 0:
+                t0 = time.time()
+                graph = pickle.loads(graph_bytes)
+                network_load_time = time.time() - t0
+            del graph_bytes
 
     # Create cluster-based partition (after graph is loaded on all ranks)
     if rank == 0:
@@ -202,12 +230,16 @@ def main():
     model = model_from_nx_graph(
         graph,
         enable_internal_state_tracking=False,  # Disable for performance
-        partition_dict=cluster_partition  # Use cluster partition instead of METIS
+        partition_dict=cluster_partition,  # Use cluster partition instead of METIS
+        skip_remote_bookkeeping=True  # Skip remote agent bookkeeping for O(N_local) creation
     )
+    # Enable verbose timing after model creation
+    model._verbose_timing = True
     t1 = time.time()
+    model_creation_time = t1 - t0
 
     if rank == 0:
-        print(f"    Model created in {t1-t0:.2f}s")
+        print(f"    Model created in {model_creation_time:.2f}s")
 
     # Setup GPU
     if rank == 0:
@@ -216,9 +248,10 @@ def main():
     t0 = time.time()
     model.setup(use_gpu=True)
     t1 = time.time()
+    gpu_setup_time = t1 - t0
 
     if rank == 0:
-        print(f"    GPU setup in {t1-t0:.2f}s")
+        print(f"    GPU setup in {gpu_setup_time:.2f}s")
 
     # Add input spikes
     input_synapses = list(model.get_agents_with_tag("input_synapse"))
@@ -237,7 +270,11 @@ def main():
 
     start_time = time.time()
     model.simulate(ticks=simulation_ticks, update_data_ticks=update_ticks)
-    sim_time = time.time() - start_time
+    wall_time = time.time() - start_time
+    sim_time = getattr(model, '_simulation_time', wall_time)
+    construction_time = getattr(model, '_construction_time', 0.0)
+
+    total_time = time.time() - t_pipeline_start
 
     # Print results
     if rank == 0:
@@ -249,12 +286,37 @@ def main():
         print(f"  Total neurons: {total_neurons:,}")
         print(f"  Total edges: {graph.number_of_edges():,}")
         print(f"  Memory distributed across {size} worker(s)")
-        print(f"\nSimulation time: {sim_time:.3f}s")
+        print(f"\nConstruction time: {construction_time:.3f}s")
+        print(f"Simulation time: {sim_time:.3f}s")
+        print(f"Total wall time: {wall_time:.3f}s")
         print(f"\nNote: With {size} worker(s), we can handle {total_neurons:,} neurons")
         print(f"      that would be {size}x larger than single GPU limit")
         print("="*70)
         print("SUCCESS - Network simulation completed!")
         print("="*70)
+
+    # Write CSV timing results
+    if args.csv and rank == 0:
+        csv_path = Path(args.csv)
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not csv_path.exists()
+        with open(csv_path, 'a', newline='') as f:
+            writer = csv.writer(f)
+            if write_header:
+                writer.writerow([
+                    'job_id', 'nodes', 'workers', 'neurons', 'edges', 'ticks',
+                    'network_load_time', 'model_creation_time', 'gpu_setup_time',
+                    'construction_time', 'simulation_time', 'total_time'
+                ])
+            writer.writerow([
+                os.environ.get('SLURM_JOB_ID', ''),
+                os.environ.get('SLURM_NNODES', ''),
+                size, total_neurons, graph.number_of_edges(), simulation_ticks,
+                f'{network_load_time:.4f}', f'{model_creation_time:.4f}',
+                f'{gpu_setup_time:.4f}', f'{construction_time:.4f}',
+                f'{sim_time:.4f}', f'{total_time:.4f}'
+            ])
+        print(f"\nTiming results appended to {csv_path}")
 
 if __name__ == "__main__":
     main()

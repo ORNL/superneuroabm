@@ -1,0 +1,53 @@
+soma:
+  exp_lif_soma:
+    config_0:
+      hyperparameters:
+        tau_m: 20e-3            # Membrane time constant (20 ms)
+        vthr: -55.0             # Spike threshold (mV)
+        vrest: -65.0            # Resting potential (mV)
+        vreset: -65.0           # Reset potential after spike (mV)
+        tref: 2e-3              # Absolute refractory period (2 ms)
+        I_in: 0.0               # Constant external input current
+        scaling_factor: 1.0     # Synaptic current scaling
+      internal_state:
+        v: -65.0                # Initial membrane potential (mV)
+        tcount: 0.0             # Tick counter
+        tlast: 0.0              # Last spike time (s)
+
+synapse:
+  single_exp_synapse:
+    config_0:
+      hyperparameters:
+        weight: 14.0              # Synaptic weight (strength)
+        synaptic_delay: 1.0       # Transmission delay (ms)
+        scale: 1.0                # Scaling factor
+        tau_fall: 1e-2            # Decay time constant (1 ms)
+        tau_rise: 0               # Rise time constant (instantaneous)
+      internal_state:
+        I_synapse: 0.0            # Initial synaptic current
+
+  alpha_synapse:
+    config_0:
+      hyperparameters:
+        weight: 300.0           # Synaptic weight (strong enough to drive post-soma)
+        synaptic_delay: 1.0     # Transmission delay (unused)
+        scale: 1.0              # Scaling factor
+        tau: 10e-3              # Alpha kernel time constant (10 ms)
+      internal_state:
+        I_synapse: 0.0          # Output current
+        h: 0.0                  # Hidden state for alpha kernel
+
+learning_rule:
+  exp_pair_wise_stdp:
+    default:
+      learning_hyperparameters:
+        stdp_type: 0.0
+        tau_pre_stdp: 10e-3
+        tau_post_stdp: 10e-3
+        a_exp_pre: 0.005
+        a_exp_post: 0.005
+        stdp_history_length: 100
+      internal_learning_state:
+        pre_trace: 0.0
+        post_trace: 0.0
+        dW: 0.0
