@@ -7,7 +7,7 @@ long_description = (this_directory / "README.md").read_text()
 
 setup(
     name="superneuroabm",
-    version="1.0.0",
+    version="1.0.1",
     author="Chathika Gunaratne, Shruti Kulkarni, Ashish Gautam, Xi Zhang, Prasanna Date",
     author_email="gunaratnecs@ornl.gov",
     packages=[
