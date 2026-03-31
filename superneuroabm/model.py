@@ -414,7 +414,7 @@ class NeuromorphicModel(Model):
         """
         CALL_ARGS = (
             "            tick, agent_index, _seed, dt, I_bias,\n"
-            "            agent_ids, breeds, locations,\n"
+            "            agent_ids, logical_ids, breeds, locations,\n"
             "            synapse_params, learning_params, internal_state,\n"
             "            internal_learning_state, synapse_history, input_spikes_tensor,\n"
             "            output_spikes_tensor, internal_states_buffer,\n"
