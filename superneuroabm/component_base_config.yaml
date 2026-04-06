@@ -138,7 +138,7 @@ synapse:
         a_exp_post: 0.005  # Post-synaptic STDP learning rate
         stdp_history_length: 100  # Length of STDP history buffer
         wmin: 0.0  # Minimum synaptic weight
-        wmax: 24.0  # Maximum synaptic weight
+        wmax: 100.0  # Maximum synaptic weight
         num_levels: 8  # Number of quantization levels (3 bits)
       internal_learning_state:
         pre_trace: 0 # Pre-synaptic trace
@@ -161,7 +161,7 @@ synapse:
         a_exp_post: 0.005  # Post-synaptic STDP learning rate
         stdp_history_length: 100  # Length of STDP history buffer
         wmin: 0.0  # Minimum synaptic weight
-        wmax: 24.0  # Maximum synaptic weight
+        wmax: 100.0  # Maximum synaptic weight
         mu_write: 3.56  # Write noise bias (memristive device)
         sigma_write: 8.92  # Write noise std (memristive device)
         sigma_read: 4.06  # Read noise std (memristive device)
@@ -221,7 +221,7 @@ synapse:
         a_exp_post: 0.005  # Post-synaptic STDP learning rate
         stdp_history_length: 100  # Length of STDP history buffer
         wmin: 0.0  # Minimum synaptic weight
-        wmax: 24.0  # Maximum synaptic weight
+        wmax: 100.0  # Maximum synaptic weight
         num_levels: 8  # Number of quantization levels (3 bits)
       internal_learning_state:
         pre_trace: 0 # Pre-synaptic trace
@@ -244,7 +244,7 @@ synapse:
         a_exp_post: 0.005  # Post-synaptic STDP learning rate
         stdp_history_length: 100  # Length of STDP history buffer
         wmin: 0.0  # Minimum synaptic weight
-        wmax: 24.0  # Maximum synaptic weight
+        wmax: 100.0  # Maximum synaptic weight
         mu_write: 3.56  # Write noise bias (memristive device)
         sigma_write: 8.92  # Write noise std (memristive device)
         sigma_read: 4.06  # Read noise std (memristive device)
