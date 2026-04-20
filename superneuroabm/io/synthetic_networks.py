@@ -10,6 +10,7 @@ optimized for METIS partitioning, ensuring:
 
 import networkx as nx
 import numpy as np
+import random
 from typing import Optional, Dict, Tuple, List
 
 
@@ -311,13 +312,21 @@ def generate_clustered_network_constant_comm(
             # Each neuron connects to exactly intra_cluster_degree random targets
             for pre in cluster_neurons:
                 # Sample random targets (excluding self)
-                possible_targets = [n for n in cluster_neurons if n != pre]
-                num_targets = min(intra_cluster_degree, len(possible_targets))
+                # performing a list comprehension here makes this an O(N^2) block
+                # so instead we compute how many targets we need, and test until we get them
+                targets_desired = min(intra_cluster_degree, len(cluster_neurons)-1)
+                num_targets = 0
+                seen_indices = set()
+                seen_indices.add(pre)
 
-                if num_targets > 0:
-                    targets = np.random.choice(possible_targets, size=num_targets, replace=False)
+                # keep trying to find a non-self post neuron
+                while num_targets < targets_desired:
+                    # np.array needs to convert the list to a numpy array, built-in random does not
+                    post = random.choice(cluster_neurons)
 
-                    for post in targets:
+                    if post not in seen_indices:
+                        seen_indices.add(post)
+
                         pre_type = graph.nodes[pre]["type"]
                         weight = weight_exc if pre_type == "excitatory" else weight_inh
 
@@ -331,6 +340,7 @@ def generate_clustered_network_constant_comm(
                             cluster=cluster_id
                         )
                         intra_edges += 1
+                        num_targets += 1
         else:
             # PROBABILITY approach (creates O(n²) edges - NOT proper weak scaling!)
             for pre in cluster_neurons:
@@ -371,27 +381,37 @@ def generate_clustered_network_constant_comm(
             cluster_j = (cluster_i + offset) % num_clusters
             target_clusters.append(cluster_j)
 
+        pre_ids = neuron_ids[cluster_i]
+
         # Send cross_cluster_edges to each of the K target clusters
         for cluster_j in target_clusters:
+            post_ids = neuron_ids[cluster_j]
+            len_post = len(post_ids)
+
             edges_to_add = cross_cluster_edges
-            max_possible = neurons_per_cluster * neurons_per_cluster
+            max_possible = len(pre_ids) * len_post
             edges_to_add = min(edges_to_add, max_possible)
 
-            all_possible_edges = [
-                (pre, post)
-                for pre in neuron_ids[cluster_i]
-                for post in neuron_ids[cluster_j]
-            ]
+            # do not instantiate all possible edges, just pick an index and test it
+            new_edges = 0
+            seen_indices = set()
 
-            if len(all_possible_edges) > 0:
-                selected_edges = np.random.choice(
-                    len(all_possible_edges),
-                    size=min(edges_to_add, len(all_possible_edges)),
-                    replace=False
-                )
+            while new_edges < edges_to_add:
 
-                for edge_idx in selected_edges:
-                    pre, post = all_possible_edges[edge_idx]
+                # pick a random edge from the indexes of possible edges
+                test_edge = random.randrange(max_possible)
+
+                # as long as this was not picked already
+                if test_edge not in seen_indices:
+                    seen_indices.add(test_edge)
+                    new_edges += 1
+
+                    # divmod gives us local indicies
+                    ipre, ipost = divmod(test_edge, len_post)
+                    # retrieve the global indicies
+                    pre = pre_ids[ipre]
+                    post = post_ids[ipost]
+
                     pre_type = graph.nodes[pre]["type"]
                     weight = weight_exc if pre_type == "excitatory" else weight_inh
 

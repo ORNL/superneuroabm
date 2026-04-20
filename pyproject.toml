@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "superneuroabm"
+version = "1.0.1"
+description = "A GPU-based multi-agent simulation framework for neuromorphic computing."
+readme = "README.md"
+license = "BSD-3-Clause"
+requires-python = ">=3.11"
+authors = [
+    { name = "Xi Zhang, Ashish Gautam, Shruti Kulkarni, Chathika Gunaratne, Prasanna Date", email = "zhangx8@ornl.gov" },
+]
+dependencies = [
+    "sagesim==0.6.0",
+    "pyyaml",
+    "networkx",
+    "matplotlib",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+"Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/ORNL/superneuroabm"
+Source = "https://github.com/ORNL/superneuroabm"
+"Bug Tracker" = "https://github.com/ORNL/superneuroabm/issues"
+
+[tool.setuptools.packages.find]
+include = [
+    "superneuroabm",
+    "superneuroabm.*",
+]
+
+[tool.setuptools.package-data]
+superneuroabm = ["*.yaml"]
