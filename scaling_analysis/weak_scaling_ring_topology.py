@@ -94,19 +94,24 @@ def main():
         script_dir = Path(__file__).parent
         partition_dir = str(script_dir / "partitions" / f"{size}w_{neurons_per_worker}n")
 
-    # Each rank generates and saves only its own partition file
-    generate_and_save_local_partition(
-        output_dir=partition_dir,
-        my_rank=rank,
-        num_partitions=size,
-        neurons_per_partition=neurons_per_worker,
-        intra_cluster_degree=intra_cluster_degree,
-        cross_cluster_edges=cross_cluster_edges,
-        num_neighbor_clusters=num_neighbor_clusters,
-        topology_type="ring",
-        external_input_prob=EXTERNAL_INPUT_PROB,
-        seed=SEED,
-    )
+    # Each rank generates and saves only its own partition file (skip if exists)
+    partition_file = os.path.join(partition_dir, f"partition_{rank}.pkl")
+    if os.path.exists(partition_file):
+        if rank == 0:
+            print(f"    Partition files found in {partition_dir}, skipping generation.")
+    else:
+        generate_and_save_local_partition(
+            output_dir=partition_dir,
+            my_rank=rank,
+            num_partitions=size,
+            neurons_per_partition=neurons_per_worker,
+            intra_cluster_degree=intra_cluster_degree,
+            cross_cluster_edges=cross_cluster_edges,
+            num_neighbor_clusters=num_neighbor_clusters,
+            topology_type="ring",
+            external_input_prob=EXTERNAL_INPUT_PROB,
+            seed=SEED,
+        )
 
     t1 = time.time()
     generation_time = t1 - t0

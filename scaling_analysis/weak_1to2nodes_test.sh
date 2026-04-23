@@ -8,16 +8,24 @@
 
 unset SLURM_EXPORT_ENV
 
-module load PrgEnv-gnu/8.6.0
-module load cray-hdf5-parallel/1.12.2.11
-module load miniforge3/23.11.0-0
-module load rocm/6.4.1
+module load cpe/26.03
+module load PrgEnv-gnu
+module load miniforge3
+module load rocm/7.2.0
 module load craype-accel-amd-gfx90a
 
-source activate /lustre/orion/proj-shared/lrn088/objective3/envs/superneuroabm_env_xxz
+source activate /lustre/orion/proj-shared/lrn088/objective3/envs/superneuroabm_env_cupy14
 
-cd /lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/scaling_analysis
-mkdir -p outputs
+export LD_LIBRARY_PATH=$CRAY_LD_LIBRARY_PATH:$LD_LIBRARY_PATH
+
+# CuPy and profiling output — keep side by side
+WORK_DIR=/lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/scaling_analysis
+export CUPY_CACHE_DIR=${WORK_DIR}/outputs/cupy-cache
+export CUPY_CACHE_SAVE_CUDA_SOURCE=1
+export ROCPROF_OUTPUT_DIR=${WORK_DIR}/outputs/rocprof_${SLURM_JOB_ID}
+
+cd ${WORK_DIR}
+mkdir -p outputs outputs/cupy-cache
 
 NEURONS_PER_WORKER=5000
 TICKS=50
