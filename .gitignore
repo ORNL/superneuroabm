@@ -90,6 +90,7 @@ tests/test_lif_mixed_synapses_stdp_mpi.py
 # Scaling analysis data and outputs
 scaling_analysis/networks/
 scaling_analysis/outputs/
+scaling_analysis/partitions/
 
 # examples
 examples/__pycache__/

@@ -8,6 +8,8 @@ optimized for METIS partitioning, ensuring:
 3. Similar computational load per worker
 """
 
+from collections import defaultdict
+
 import networkx as nx
 import numpy as np
 import random
@@ -185,7 +187,8 @@ def generate_clustered_network_constant_comm(
     excitatory_ratio: float = 0.8,
     weight_exc: float = 14.0,
     weight_inh: float = -10.0,
-    seed: Optional[int] = None
+    seed: Optional[int] = None,
+    topology_type: str = "ring"
 ) -> nx.DiGraph:
     """
     Generate a clustered network for PROPER WEAK SCALING with constant per-worker work.
@@ -220,6 +223,7 @@ def generate_clustered_network_constant_comm(
         weight_exc: Weight for excitatory synapses (default: 14.0)
         weight_inh: Weight for inhibitory synapses (default: -10.0)
         seed: Random seed for reproducibility
+        topology_type: Connection topology - "ring" (sequential neighbors) or "random" (random selection)
 
     Returns:
         NetworkX DiGraph with neuron and synapse attributes
@@ -368,59 +372,66 @@ def generate_clustered_network_constant_comm(
         if num_clusters == 1 or num_neighbor_clusters == 0:
             continue  # No other clusters to connect to
 
-        # Select K neighbor clusters using DIRECTED RING topology
-        # Strategy: cluster i connects to next K clusters in ring (unidirectional)
-        # For K=1: 0→1→2→3→0 (directed ring, keeps network connected)
-        # Each cluster sends to K neighbors and receives from K neighbors
-        # With K=1: each cluster has 2 unique communication partners (send-to, receive-from)
-        #   - 2 workers: same neighbor for send/receive → 1 unique partner
-        #   - 4+ workers: different neighbors for send/receive → 2 unique partners (constant!)
-
+        # Select K neighbor clusters based on topology type
         target_clusters = []
-        for offset in range(1, num_neighbor_clusters + 1):
-            cluster_j = (cluster_i + offset) % num_clusters
-            target_clusters.append(cluster_j)
+
+        if topology_type == "ring":
+            # DIRECTED RING topology (original behavior)
+            # Strategy: cluster i connects to next K clusters in ring (unidirectional)
+            # For K=1: 0→1→2→3→0 (directed ring, keeps network connected)
+            # Each cluster sends to K neighbors and receives from K neighbors
+            # With K=1: each cluster has 2 unique communication partners (send-to, receive-from)
+            #   - 2 workers: same neighbor for send/receive → 1 unique partner
+            #   - 4+ workers: different neighbors for send/receive → 2 unique partners (constant!)
+            for offset in range(1, num_neighbor_clusters + 1):
+                cluster_j = (cluster_i + offset) % num_clusters
+                target_clusters.append(cluster_j)
+
+        elif topology_type == "random":
+            # RANDOM topology: randomly select K unique neighbors (excluding self)
+            # Each cluster randomly selects num_neighbor_clusters from all other clusters
+            # This tests realistic all-to-all communication patterns
+            possible_neighbors = [c for c in range(num_clusters) if c != cluster_i]
+            num_to_select = min(num_neighbor_clusters, len(possible_neighbors))
+            target_clusters = np.random.choice(
+                possible_neighbors,
+                size=num_to_select,
+                replace=False
+            ).tolist()
+
+        else:
+            raise ValueError(f"Unknown topology_type: {topology_type}. Must be 'ring' or 'random'.")
 
         pre_ids = neuron_ids[cluster_i]
 
         # Send cross_cluster_edges to each of the K target clusters
+        N = neurons_per_cluster
+        exc_boundary = int(N * excitatory_ratio)
+        pre_base = cluster_i * N
+
         for cluster_j in target_clusters:
-            post_ids = neuron_ids[cluster_j]
-            len_post = len(post_ids)
+            total_possible = N * N
+            edges_to_add = min(cross_cluster_edges, total_possible)
 
-            edges_to_add = cross_cluster_edges
-            max_possible = len(pre_ids) * len_post
-            edges_to_add = min(edges_to_add, max_possible)
+            if edges_to_add > 0:
+                # Deterministic strided pattern: evenly spaced across [0, N*N)
+                pair_offset = ((cluster_i * 7919 + cluster_j * 6271) ^ (seed if seed else 0)) % total_possible
+                flat_indices = (np.arange(edges_to_add, dtype=np.int64)
+                                * (total_possible // edges_to_add)
+                                + pair_offset) % total_possible
+                pre_offsets = flat_indices // N
+                post_offsets = flat_indices % N
+                pre_ids = pre_base + pre_offsets
+                post_ids = cluster_j * N + post_offsets
+                weights = np.where(pre_offsets < exc_boundary, weight_exc, weight_inh)
 
-            # do not instantiate all possible edges, just pick an index and test it
-            new_edges = 0
-            seen_indices = set()
-
-            while new_edges < edges_to_add:
-
-                # pick a random edge from the indexes of possible edges
-                test_edge = random.randrange(max_possible)
-
-                # as long as this was not picked already
-                if test_edge not in seen_indices:
-                    seen_indices.add(test_edge)
-                    new_edges += 1
-
-                    # divmod gives us local indicies
-                    ipre, ipost = divmod(test_edge, len_post)
-                    # retrieve the global indicies
-                    pre = pre_ids[ipre]
-                    post = post_ids[ipost]
-
-                    pre_type = graph.nodes[pre]["type"]
-                    weight = weight_exc if pre_type == "excitatory" else weight_inh
-
+                for idx in range(edges_to_add):
                     graph.add_edge(
-                        pre,
-                        post,
+                        int(pre_ids[idx]),
+                        int(post_ids[idx]),
                         synapse_breed=synapse_breed,
                         config=synapse_config,
-                        overrides={"hyperparameters": {"weight": weight}},
+                        overrides={"hyperparameters": {"weight": float(weights[idx])}},
                         connection_type="inter_cluster",
                         cluster=cluster_i
                     )
@@ -466,6 +477,343 @@ def generate_clustered_network_constant_comm(
     print(f"  - Scaling: {agents_per_worker:,.0f} agents/worker × {num_clusters} workers = {total_agents:,} total")
 
     return graph
+
+
+###############################################################################
+# Distributed network generation helpers
+# Each rank generates only its local cluster's edges independently.
+###############################################################################
+
+# Seed offsets to ensure independent RNG streams for different components
+_TOPOLOGY_SEED_OFFSET = 1_000_000
+_INTRA_SEED_OFFSET = 2_000_000
+_CROSS_SEED_OFFSET = 3_000_000
+_EXTERNAL_SEED_OFFSET = 4_000_000
+
+
+def compute_cluster_topology(
+    num_clusters: int,
+    num_neighbor_clusters: int,
+    topology_type: str = "ring",
+    seed: int = 42,
+) -> Tuple[Dict[int, List[int]], Dict[int, List[int]]]:
+    """
+    Compute the full cluster connectivity topology deterministically.
+
+    All ranks call this independently and get identical results.
+
+    Args:
+        num_clusters: Total number of clusters.
+        num_neighbor_clusters: K outgoing neighbors per cluster.
+        topology_type: "ring" or "random".
+        seed: Base random seed.
+
+    Returns:
+        (outgoing, incoming): dicts mapping cluster_id -> sorted list of
+        target/source cluster_ids.
+    """
+    num_neighbor_clusters = min(num_neighbor_clusters, num_clusters - 1)
+    outgoing: Dict[int, List[int]] = {}
+    incoming: Dict[int, List[int]] = defaultdict(list)
+
+    if num_clusters <= 1 or num_neighbor_clusters == 0:
+        for c in range(num_clusters):
+            outgoing[c] = []
+        return outgoing, dict(incoming)
+
+    rng = np.random.RandomState(seed + _TOPOLOGY_SEED_OFFSET)
+
+    for c in range(num_clusters):
+        if topology_type == "ring":
+            targets = [(c + offset) % num_clusters
+                       for offset in range(1, num_neighbor_clusters + 1)]
+        elif topology_type == "random":
+            possible = [x for x in range(num_clusters) if x != c]
+            targets = rng.choice(
+                possible,
+                size=min(num_neighbor_clusters, len(possible)),
+                replace=False,
+            ).tolist()
+        else:
+            raise ValueError(f"Unknown topology_type: {topology_type}")
+
+        outgoing[c] = sorted(targets)
+        for t in targets:
+            incoming[t].append(c)
+
+    # Sort incoming lists for deterministic ordering
+    for c in incoming:
+        incoming[c] = sorted(incoming[c])
+
+    return outgoing, dict(incoming)
+
+
+def compute_edge_counts_per_cluster(
+    num_clusters: int,
+    neurons_per_cluster: int,
+    intra_cluster_degree: int,
+    cross_cluster_edges: int,
+    outgoing: Dict[int, List[int]],
+    external_input_prob: float = 0.1,
+    seed: int = 42,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Compute per-cluster edge counts deterministically (no MPI needed).
+
+    Args:
+        num_clusters: Total number of clusters.
+        neurons_per_cluster: Neurons per cluster.
+        intra_cluster_degree: Edges per neuron within cluster.
+        cross_cluster_edges: Edges per outgoing neighbor pair.
+        outgoing: Outgoing topology map from compute_cluster_topology().
+        external_input_prob: Probability of external input per neuron.
+        seed: Base random seed.
+
+    Returns:
+        (intra_counts, cross_counts, ext_counts): int arrays of length num_clusters.
+    """
+    N = neurons_per_cluster
+    intra_counts = np.full(num_clusters, N * intra_cluster_degree, dtype=np.int64)
+    cross_counts = np.array(
+        [len(outgoing[c]) * cross_cluster_edges for c in range(num_clusters)],
+        dtype=np.int64,
+    )
+    ext_counts = np.empty(num_clusters, dtype=np.int64)
+    for c in range(num_clusters):
+        rng = np.random.RandomState(seed + _EXTERNAL_SEED_OFFSET + c)
+        ext_counts[c] = int(np.sum(rng.random(N) < external_input_prob))
+
+    return intra_counts, cross_counts, ext_counts
+
+
+def build_agent_id_to_rank(
+    num_clusters: int,
+    neurons_per_cluster: int,
+    intra_counts: np.ndarray,
+    cross_counts: np.ndarray,
+    ext_counts: np.ndarray,
+) -> Tuple[np.ndarray, int, int]:
+    """
+    Build the global agent_id_to_rank array deterministically.
+
+    Agent ID layout:
+      [0, num_somas):  soma agent IDs  (soma i -> cluster i//N)
+      [num_somas, total_agents):  synapse agent IDs in canonical order:
+        for each cluster c:
+          intra_counts[c] synapses owned by c
+          cross_counts[c] synapses owned by c
+          ext_counts[c]   synapses owned by c
+
+    Returns:
+        (agent_id_to_rank, num_somas, total_agents)
+    """
+    num_somas = num_clusters * neurons_per_cluster
+    total_synapses = int(intra_counts.sum() + cross_counts.sum() + ext_counts.sum())
+    total_agents = num_somas + total_synapses
+
+    agent_id_to_rank = np.empty(total_agents, dtype=np.int32)
+
+    # Soma assignments
+    for c in range(num_clusters):
+        start = c * neurons_per_cluster
+        end = start + neurons_per_cluster
+        agent_id_to_rank[start:end] = c
+
+    # Synapse assignments in canonical order
+    offset = num_somas
+    for c in range(num_clusters):
+        n_intra = int(intra_counts[c])
+        n_cross = int(cross_counts[c])
+        n_ext = int(ext_counts[c])
+        total_c = n_intra + n_cross + n_ext
+        agent_id_to_rank[offset:offset + total_c] = c
+        offset += total_c
+
+    return agent_id_to_rank, num_somas, total_agents
+
+
+def compute_synapse_id_ranges(
+    num_clusters: int,
+    num_somas: int,
+    intra_counts: np.ndarray,
+    cross_counts: np.ndarray,
+    ext_counts: np.ndarray,
+) -> List[Tuple[int, int, int, int, int, int]]:
+    """
+    Compute per-cluster synapse agent ID ranges.
+
+    Returns:
+        List of (intra_start, intra_end, cross_start, cross_end, ext_start, ext_end)
+        for each cluster.
+    """
+    ranges = []
+    offset = num_somas
+    for c in range(num_clusters):
+        n_intra = int(intra_counts[c])
+        n_cross = int(cross_counts[c])
+        n_ext = int(ext_counts[c])
+
+        intra_start = offset
+        intra_end = intra_start + n_intra
+        cross_start = intra_end
+        cross_end = cross_start + n_cross
+        ext_start = cross_end
+        ext_end = ext_start + n_ext
+
+        ranges.append((intra_start, intra_end, cross_start, cross_end, ext_start, ext_end))
+        offset = ext_end
+
+    return ranges
+
+
+def _generate_cross_edges_vectorized(
+    source_cluster: int,
+    target_cluster: int,
+    neurons_per_cluster: int,
+    cross_cluster_edges: int,
+    excitatory_ratio: float,
+    weight_exc: float,
+    weight_inh: float,
+    seed: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Generate cross-cluster edges for one (source, target) pair.
+
+    Uses deterministic strided connectivity: evenly space edges across
+    the N*N possible pairs. This is O(E) with no random sampling overhead.
+    """
+    N = neurons_per_cluster
+    total_possible = N * N
+    edges_to_add = min(cross_cluster_edges, total_possible)
+
+    # Deterministic strided pattern: evenly spaced indices across [0, N*N)
+    # Offset by (source_cluster ^ target_cluster) to vary pattern per pair
+    pair_offset = ((source_cluster * 7919 + target_cluster * 6271) ^ seed) % total_possible
+    flat_indices = (np.arange(edges_to_add, dtype=np.int64)
+                    * (total_possible // edges_to_add)
+                    + pair_offset) % total_possible
+
+    pre_offsets = flat_indices // N
+    post_offsets = flat_indices % N
+
+    pre_ids = source_cluster * N + pre_offsets
+    post_ids = target_cluster * N + post_offsets
+
+    exc_boundary = int(N * excitatory_ratio)
+    weights = np.where(pre_offsets < exc_boundary, weight_exc, weight_inh)
+
+    return pre_ids.astype(np.int64), post_ids.astype(np.int64), weights
+
+
+def generate_local_cluster_edges(
+    cluster_id: int,
+    neurons_per_cluster: int,
+    intra_cluster_degree: int,
+    cross_cluster_edges: int,
+    outgoing_targets: List[int],
+    incoming_sources: List[int],
+    excitatory_ratio: float = 0.8,
+    weight_exc: float = 14.0,
+    weight_inh: float = -10.0,
+    external_input_prob: float = 0.1,
+    seed: int = 42,
+) -> dict:
+    """
+    Generate all edges for one cluster's local view (vectorized).
+
+    Each rank calls this for its own cluster. Returns edge data as numpy arrays.
+
+    Returns:
+        dict with keys:
+        - 'intra': (pre_ids, post_ids, weights)  -- intra-cluster edges
+        - 'cross_out': (pre_ids, post_ids, weights, target_clusters)  -- outgoing cross-cluster
+        - 'cross_in': (pre_ids, post_ids, weights, source_clusters)   -- incoming cross-cluster
+        - 'external': (post_ids,)  -- external input edges
+    """
+    N = neurons_per_cluster
+    base = cluster_id * N
+    exc_boundary = int(N * excitatory_ratio)
+
+    # --- Intra-cluster edges (strided pattern) ---
+    degree = min(intra_cluster_degree, N - 1)
+    total_intra = N * degree
+
+    # For each neuron i, connect to (i + stride*k) % N for k=1..degree
+    # where stride ensures good spread. Skip self by starting at offset 1.
+    neuron_indices = np.arange(N, dtype=np.int64)
+    intra_pre = np.repeat(neuron_indices, degree)
+    offsets = np.tile(np.arange(1, degree + 1, dtype=np.int64), N)
+    # Use a stride that is coprime with N for good distribution
+    stride = max(1, (N // (degree + 1)))
+    intra_post = (intra_pre + offsets * stride) % N
+    intra_pre = base + intra_pre
+    intra_post = base + intra_post
+
+    # Vectorized weight assignment
+    pre_offsets = intra_pre - base
+    intra_weight = np.where(pre_offsets < exc_boundary, weight_exc, weight_inh)
+
+    # --- Outgoing cross-cluster edges (vectorized) ---
+    if outgoing_targets:
+        cross_out_parts_pre = []
+        cross_out_parts_post = []
+        cross_out_parts_weight = []
+        cross_out_parts_target = []
+        for target_c in outgoing_targets:
+            pre, post, w = _generate_cross_edges_vectorized(
+                cluster_id, target_c, N, cross_cluster_edges,
+                excitatory_ratio, weight_exc, weight_inh, seed,
+            )
+            cross_out_parts_pre.append(pre)
+            cross_out_parts_post.append(post)
+            cross_out_parts_weight.append(w)
+            cross_out_parts_target.append(np.full(len(pre), target_c, dtype=np.int64))
+        cross_out_pre = np.concatenate(cross_out_parts_pre)
+        cross_out_post = np.concatenate(cross_out_parts_post)
+        cross_out_weight = np.concatenate(cross_out_parts_weight)
+        cross_out_target = np.concatenate(cross_out_parts_target)
+    else:
+        cross_out_pre = np.empty(0, dtype=np.int64)
+        cross_out_post = np.empty(0, dtype=np.int64)
+        cross_out_weight = np.empty(0, dtype=np.float64)
+        cross_out_target = np.empty(0, dtype=np.int64)
+
+    # --- Incoming cross-cluster edges (vectorized) ---
+    if incoming_sources:
+        cross_in_parts_pre = []
+        cross_in_parts_post = []
+        cross_in_parts_weight = []
+        cross_in_parts_source = []
+        for source_c in incoming_sources:
+            # Use the SAME seed as the source cluster used for this pair
+            pre, post, w = _generate_cross_edges_vectorized(
+                source_c, cluster_id, N, cross_cluster_edges,
+                excitatory_ratio, weight_exc, weight_inh, seed,
+            )
+            cross_in_parts_pre.append(pre)
+            cross_in_parts_post.append(post)
+            cross_in_parts_weight.append(w)
+            cross_in_parts_source.append(np.full(len(pre), source_c, dtype=np.int64))
+        cross_in_pre = np.concatenate(cross_in_parts_pre)
+        cross_in_post = np.concatenate(cross_in_parts_post)
+        cross_in_weight = np.concatenate(cross_in_parts_weight)
+        cross_in_source = np.concatenate(cross_in_parts_source)
+    else:
+        cross_in_pre = np.empty(0, dtype=np.int64)
+        cross_in_post = np.empty(0, dtype=np.int64)
+        cross_in_weight = np.empty(0, dtype=np.float64)
+        cross_in_source = np.empty(0, dtype=np.int64)
+
+    # --- External inputs ---
+    rng_ext = np.random.RandomState(seed + _EXTERNAL_SEED_OFFSET + cluster_id)
+    mask = rng_ext.random(N) < external_input_prob
+    ext_post_ids = base + np.where(mask)[0]
+
+    return {
+        'intra': (intra_pre, intra_post, intra_weight),
+        'cross_out': (cross_out_pre, cross_out_post, cross_out_weight, cross_out_target),
+        'cross_in': (cross_in_pre, cross_in_post, cross_in_weight, cross_in_source),
+        'external': (ext_post_ids,),
+    }
 
 
 def generate_grid_network(
@@ -788,3 +1136,357 @@ def analyze_network_partition(
         "inter_worker_edges": inter_worker_edges,
         "edge_cut_ratio": edge_cut_ratio
     }
+
+
+def generate_and_save_partitions(
+    output_dir: str,
+    num_partitions: int,
+    neurons_per_partition: int,
+    intra_cluster_degree: int = 10,
+    cross_cluster_edges: int = 2000,
+    num_neighbor_clusters: int = 1,
+    topology_type: str = "ring",
+    soma_breed: str = "lif_soma",
+    soma_config: str = "config_0",
+    synapse_breed: str = "single_exp_synapse",
+    synapse_config: str = "config_0",
+    excitatory_ratio: float = 0.8,
+    weight_exc: float = 14.0,
+    weight_inh: float = -10.0,
+    external_input_prob: float = 0.1,
+    seed: int = 42,
+) -> None:
+    """Generate synthetic partitioned network and save as partition files.
+
+    Produces one partition file per rank in the format expected by
+    NeuromorphicModel.load_partition(). Can run on a single node (no MPI).
+
+    Args:
+        output_dir: Directory to write partition_{rank}.pkl files.
+        num_partitions: Number of partitions (should match MPI world size).
+        neurons_per_partition: Number of neurons per partition.
+        intra_cluster_degree: Edges per neuron within cluster.
+        cross_cluster_edges: Cross-cluster edges per neighbor pair.
+        num_neighbor_clusters: Number of neighbor clusters per partition.
+        topology_type: "ring" or "random".
+        soma_breed: Breed name for somas.
+        soma_config: Config name for somas.
+        synapse_breed: Breed name for synapses.
+        synapse_config: Config name for synapses.
+        excitatory_ratio: Fraction of excitatory neurons.
+        weight_exc: Excitatory synapse weight.
+        weight_inh: Inhibitory synapse weight.
+        external_input_prob: Probability of external input per neuron.
+        seed: Random seed.
+    """
+    import pickle
+    from pathlib import Path
+
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    size = num_partitions
+
+    # Deterministic topology (identical results regardless of caller)
+    outgoing, incoming = compute_cluster_topology(
+        num_clusters=size,
+        num_neighbor_clusters=num_neighbor_clusters,
+        topology_type=topology_type,
+        seed=seed,
+    )
+
+    intra_counts, cross_counts, ext_counts = compute_edge_counts_per_cluster(
+        num_clusters=size,
+        neurons_per_cluster=neurons_per_partition,
+        intra_cluster_degree=intra_cluster_degree,
+        cross_cluster_edges=cross_cluster_edges,
+        outgoing=outgoing,
+        external_input_prob=external_input_prob,
+        seed=seed,
+    )
+
+    agent_id_to_rank, num_somas, total_agents = build_agent_id_to_rank(
+        num_clusters=size,
+        neurons_per_cluster=neurons_per_partition,
+        intra_counts=intra_counts,
+        cross_counts=cross_counts,
+        ext_counts=ext_counts,
+    )
+
+    syn_ranges = compute_synapse_id_ranges(
+        num_clusters=size,
+        num_somas=num_somas,
+        intra_counts=intra_counts,
+        cross_counts=cross_counts,
+        ext_counts=ext_counts,
+    )
+
+    print(f"[generate_and_save_partitions] Generating {size} partitions...")
+    print(f"  Neurons/partition: {neurons_per_partition}, Total somas: {num_somas}")
+    print(f"  Total agents: {total_agents}")
+
+    for r in range(size):
+        edges_data = generate_local_cluster_edges(
+            cluster_id=r,
+            neurons_per_cluster=neurons_per_partition,
+            intra_cluster_degree=intra_cluster_degree,
+            cross_cluster_edges=cross_cluster_edges,
+            outgoing_targets=outgoing.get(r, []),
+            incoming_sources=incoming.get(r, []),
+            excitatory_ratio=excitatory_ratio,
+            weight_exc=weight_exc,
+            weight_inh=weight_inh,
+            external_input_prob=external_input_prob,
+            seed=seed,
+        )
+
+        intra_start, intra_end, cross_start, cross_end, ext_start, ext_end = syn_ranges[r]
+
+        # Local soma IDs
+        local_soma_ids = list(range(
+            r * neurons_per_partition,
+            (r + 1) * neurons_per_partition,
+        ))
+        local_id_set = set(local_soma_ids)
+
+        # Build agents list
+        agents = []
+        for soma_id in local_soma_ids:
+            agents.append({
+                'id': soma_id,
+                'breed': soma_breed,
+                'config': soma_config,
+            })
+
+        # Build synapse agents + edges + remote_agent_ranks
+        edges = []
+        remote_agent_ranks = {}
+
+        # Helper to add synapse + its edges
+        def add_synapse(syn_id, pre_id, post_id, weight, conn_type):
+            agents.append({
+                'id': syn_id,
+                'breed': synapse_breed,
+                'config': synapse_config,
+                'pre_id': int(pre_id),
+                'post_id': int(post_id),
+                'weight': float(weight),
+            })
+            local_id_set.add(syn_id)
+
+            # Edge: synapse → pre_soma (synapse reads pre-soma spikes)
+            if pre_id != -1:
+                edges.append({'source': syn_id, 'target': int(pre_id)})
+                if int(pre_id) not in local_id_set:
+                    remote_agent_ranks[int(pre_id)] = int(agent_id_to_rank[int(pre_id)])
+
+            # Edge: synapse → post_soma (synapse connects to post-soma)
+            if post_id != -1:
+                edges.append({'source': syn_id, 'target': int(post_id)})
+                post_rank = int(agent_id_to_rank[int(post_id)])
+                if post_rank != r:
+                    remote_agent_ranks[int(post_id)] = post_rank
+                else:
+                    # Local post-soma: add reverse edge (post reads synapse for STDP)
+                    edges.append({'source': int(post_id), 'target': syn_id})
+
+        # Intra-cluster synapses
+        intra_pre, intra_post, intra_weight = edges_data['intra']
+        for i in range(len(intra_pre)):
+            add_synapse(intra_start + i, int(intra_pre[i]), int(intra_post[i]),
+                        float(intra_weight[i]), "intra_cluster")
+
+        # Outgoing cross-cluster synapses
+        cross_out_pre, cross_out_post, cross_out_weight, _ = edges_data['cross_out']
+        for i in range(len(cross_out_pre)):
+            add_synapse(cross_start + i, int(cross_out_pre[i]), int(cross_out_post[i]),
+                        float(cross_out_weight[i]), "inter_cluster")
+
+        # External input synapses
+        ext_post_ids = edges_data['external'][0]
+        for i in range(len(ext_post_ids)):
+            add_synapse(ext_start + i, -1, int(ext_post_ids[i]),
+                        float(weight_exc), "external")
+
+        # Ghost edges: incoming cross-cluster (remote synapse → local post-soma)
+        cross_in_pre, cross_in_post, cross_in_weight, cross_in_source = edges_data['cross_in']
+        for i in range(len(cross_in_pre)):
+            source_c = int(cross_in_source[i])
+            source_cross_start = syn_ranges[source_c][2]
+            source_targets = outgoing[source_c]
+            offset_to_r = source_targets.index(r) * cross_cluster_edges
+            ghost_syn_id = source_cross_start + offset_to_r + i % cross_cluster_edges
+            local_post_id = int(cross_in_post[i])
+
+            # Ghost edge: local post-soma reads remote synapse
+            edges.append({'source': local_post_id, 'target': ghost_syn_id})
+            remote_agent_ranks[ghost_syn_id] = source_c
+
+        partition = {
+            'agents': agents,
+            'edges': edges,
+            'remote_agent_ranks': remote_agent_ranks,
+        }
+
+        out_file = out_dir / f"partition_{r}.pkl"
+        with open(out_file, 'wb') as f:
+            pickle.dump(partition, f)
+
+    print(f"[generate_and_save_partitions] Saved {size} partition files to {out_dir}")
+
+
+def generate_and_save_local_partition(
+    output_dir: str,
+    my_rank: int,
+    num_partitions: int,
+    neurons_per_partition: int,
+    intra_cluster_degree: int = 10,
+    cross_cluster_edges: int = 2000,
+    num_neighbor_clusters: int = 1,
+    topology_type: str = "ring",
+    soma_breed: str = "lif_soma",
+    soma_config: str = "config_0",
+    synapse_breed: str = "single_exp_synapse",
+    synapse_config: str = "config_0",
+    excitatory_ratio: float = 0.8,
+    weight_exc: float = 14.0,
+    weight_inh: float = -10.0,
+    external_input_prob: float = 0.1,
+    seed: int = 42,
+) -> str:
+    """Generate and save only this rank's partition file (distributed).
+
+    Each rank calls this independently — no MPI needed. All ranks compute
+    identical deterministic topology, then each generates only its own edges.
+
+    Returns:
+        Path to the saved partition file.
+    """
+    import pickle
+    from pathlib import Path
+
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    size = num_partitions
+    r = my_rank
+
+    # Deterministic topology (identical on all ranks)
+    outgoing, incoming = compute_cluster_topology(
+        num_clusters=size,
+        num_neighbor_clusters=num_neighbor_clusters,
+        topology_type=topology_type,
+        seed=seed,
+    )
+
+    intra_counts, cross_counts, ext_counts = compute_edge_counts_per_cluster(
+        num_clusters=size,
+        neurons_per_cluster=neurons_per_partition,
+        intra_cluster_degree=intra_cluster_degree,
+        cross_cluster_edges=cross_cluster_edges,
+        outgoing=outgoing,
+        external_input_prob=external_input_prob,
+        seed=seed,
+    )
+
+    agent_id_to_rank, num_somas, total_agents = build_agent_id_to_rank(
+        num_clusters=size,
+        neurons_per_cluster=neurons_per_partition,
+        intra_counts=intra_counts,
+        cross_counts=cross_counts,
+        ext_counts=ext_counts,
+    )
+
+    syn_ranges = compute_synapse_id_ranges(
+        num_clusters=size,
+        num_somas=num_somas,
+        intra_counts=intra_counts,
+        cross_counts=cross_counts,
+        ext_counts=ext_counts,
+    )
+
+    # Generate only this rank's edges
+    edges_data = generate_local_cluster_edges(
+        cluster_id=r,
+        neurons_per_cluster=neurons_per_partition,
+        intra_cluster_degree=intra_cluster_degree,
+        cross_cluster_edges=cross_cluster_edges,
+        outgoing_targets=outgoing.get(r, []),
+        incoming_sources=incoming.get(r, []),
+        excitatory_ratio=excitatory_ratio,
+        weight_exc=weight_exc,
+        weight_inh=weight_inh,
+        external_input_prob=external_input_prob,
+        seed=seed,
+    )
+
+    intra_start, intra_end, cross_start, cross_end, ext_start, ext_end = syn_ranges[r]
+
+    local_soma_ids = list(range(r * neurons_per_partition, (r + 1) * neurons_per_partition))
+    local_id_set = set(local_soma_ids)
+
+    agents = []
+    for soma_id in local_soma_ids:
+        agents.append({'id': soma_id, 'breed': soma_breed, 'config': soma_config})
+
+    edges = []
+    remote_agent_ranks = {}
+
+    def add_synapse(syn_id, pre_id, post_id, weight):
+        agents.append({
+            'id': syn_id, 'breed': synapse_breed, 'config': synapse_config,
+            'pre_id': int(pre_id), 'post_id': int(post_id), 'weight': float(weight),
+        })
+        local_id_set.add(syn_id)
+
+        if pre_id != -1:
+            edges.append({'source': syn_id, 'target': int(pre_id)})
+            if int(pre_id) not in local_id_set:
+                remote_agent_ranks[int(pre_id)] = int(agent_id_to_rank[int(pre_id)])
+
+        if post_id != -1:
+            edges.append({'source': syn_id, 'target': int(post_id)})
+            post_rank = int(agent_id_to_rank[int(post_id)])
+            if post_rank != r:
+                remote_agent_ranks[int(post_id)] = post_rank
+            else:
+                edges.append({'source': int(post_id), 'target': syn_id})
+
+    # Intra-cluster
+    intra_pre, intra_post, intra_weight = edges_data['intra']
+    for i in range(len(intra_pre)):
+        add_synapse(intra_start + i, int(intra_pre[i]), int(intra_post[i]), float(intra_weight[i]))
+
+    # Outgoing cross-cluster
+    cross_out_pre, cross_out_post, cross_out_weight, _ = edges_data['cross_out']
+    for i in range(len(cross_out_pre)):
+        add_synapse(cross_start + i, int(cross_out_pre[i]), int(cross_out_post[i]), float(cross_out_weight[i]))
+
+    # External input
+    ext_post_ids = edges_data['external'][0]
+    for i in range(len(ext_post_ids)):
+        add_synapse(ext_start + i, -1, int(ext_post_ids[i]), float(weight_exc))
+
+    # Ghost edges
+    cross_in_pre, cross_in_post, cross_in_weight, cross_in_source = edges_data['cross_in']
+    for i in range(len(cross_in_pre)):
+        source_c = int(cross_in_source[i])
+        source_cross_start = syn_ranges[source_c][2]
+        source_targets = outgoing[source_c]
+        offset_to_r = source_targets.index(r) * cross_cluster_edges
+        ghost_syn_id = source_cross_start + offset_to_r + i % cross_cluster_edges
+        local_post_id = int(cross_in_post[i])
+        edges.append({'source': local_post_id, 'target': ghost_syn_id})
+        remote_agent_ranks[ghost_syn_id] = source_c
+
+    partition = {
+        'agents': agents,
+        'edges': edges,
+        'remote_agent_ranks': remote_agent_ranks,
+    }
+
+    out_file = out_dir / f"partition_{r}.pkl"
+    with open(out_file, 'wb') as f:
+        pickle.dump(partition, f)
+
+    return str(out_file)

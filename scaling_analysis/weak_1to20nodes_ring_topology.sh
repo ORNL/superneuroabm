@@ -74,7 +74,7 @@ for CROSS_CLUSTER_EDGES in "${CROSS_CLUSTER_EDGES_ARRAY[@]}"; do
         # Run test - Python script will append to shared CSV
         set +e
         OUTPUT=$(srun -N$NNODES -n$NWORKERS -c7 --ntasks-per-gpu=1 --gpu-bind=closest \
-            python weak_scaling_const_comm.py \
+            python weak_scaling_ring_topology.py \
             --neurons-per-worker $NEURONS_PER_WORKER \
             --ticks $TICKS \
             --update-ticks $UPDATE_TICKS \
