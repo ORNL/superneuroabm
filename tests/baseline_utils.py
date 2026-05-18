@@ -44,8 +44,7 @@ class BaselineComparator:
             Dictionary of spike times saved
         """
         # Get all valid soma IDs
-        all_soma_ids = model.soma2synapse_map.keys()
-        soma_ids = [sid for sid in all_soma_ids if sid >= 0 and not np.isnan(sid)]
+        soma_ids = sorted(model._soma_ids)
 
         # Collect spike times
         baseline_data = {}
@@ -104,8 +103,7 @@ class BaselineComparator:
             return False, f"❌ No baseline found for '{test_name}'. Run with --save-baseline first."
 
         # Get current spike times
-        all_soma_ids = model.soma2synapse_map.keys()
-        soma_ids = [sid for sid in all_soma_ids if sid >= 0 and not np.isnan(sid)]
+        soma_ids = sorted(model._soma_ids)
 
         current_data = {}
         for soma_id in sorted(soma_ids):
@@ -165,8 +163,7 @@ class BaselineComparator:
         Args:
             model: NeuromorphicModel instance after simulation
         """
-        all_soma_ids = model.soma2synapse_map.keys()
-        soma_ids = [sid for sid in all_soma_ids if sid >= 0 and not np.isnan(sid)]
+        soma_ids = sorted(model._soma_ids)
 
         print("\n=== Spike Times ===")
         for soma_id in sorted(soma_ids):

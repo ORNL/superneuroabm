@@ -164,8 +164,7 @@ class TestInternalStateTracking(unittest.TestCase):
 
         # Print spike times (no visualization when tracking disabled)
         print("\nSpike times without tracking:")
-        all_soma_ids_without = model_without_tracking.soma2synapse_map.keys()
-        soma_ids_without = [sid for sid in all_soma_ids_without if sid >= 0]
+        soma_ids_without = sorted(model_without_tracking._soma_ids)
         for soma_id in sorted(soma_ids_without):
             spike_times = list(model_without_tracking.get_spike_times(soma_id=soma_id))
             print(f"  Soma {soma_id}: {spike_times}")
@@ -175,8 +174,7 @@ class TestInternalStateTracking(unittest.TestCase):
         print("Comparing spike times: Tracking ON vs Tracking OFF")
         print("=" * 70)
 
-        all_soma_ids_with = model_with_tracking.soma2synapse_map.keys()
-        soma_ids_with = [sid for sid in all_soma_ids_with if sid >= 0 and not np.isnan(sid)]
+        soma_ids_with = sorted(model_with_tracking._soma_ids)
 
         for soma_id in sorted(soma_ids_with):
             spikes_with = list(model_with_tracking.get_spike_times(soma_id=soma_id))

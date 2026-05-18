@@ -171,9 +171,8 @@ class NeuromorphicModel(Model):
             "internal_states_buffer": ([], False),
             "internal_learning_states_buffer": ([], False),  # learning states buffer
         }
-        self._synapse_ids = []
-        self._soma_ids = []
-        self._soma_reset_states = {}
+        self._synapse_ids = set()
+        self._soma_ids = set()
 
         # Store property definitions for use by registration API
         self._soma_properties = soma_properties
@@ -203,18 +202,11 @@ class NeuromorphicModel(Model):
         self._spike_mask_gpu = None      # CuPy float32 bitmask, built lazily
         self._spikes_need_gather = False
 
-        self.tag2component = defaultdict(set)  # tag -> agent_id
+        self._metadata = defaultdict(set)  # user-provided label -> set(agent_ids)
+        self._soma_outgoing_synapses = defaultdict(set)  # soma_id -> set(synapse_ids)
+        self.agentid2overrides = {}  # agent_id -> overrides dict
 
-        self.synapse2soma_map = defaultdict(
-            dict
-        )  # synapse_id -> "pre" or "post" -> soma_id
-        self.soma2synapse_map = defaultdict(
-            lambda: defaultdict(set)
-        )  # soma_id -> "pre" or "post" -> List[synapse_id]
-        self._synapse2defaultparameters: Dict[int, List[float]] = {}
-        self._synapse2defaultlearningparameters: Dict[int, List[float]] = {}
-        self._synapse2defaultinternalstate: Dict[int, List[float]] = {}
-        self._synapse2defaultinternallearningstate: Dict[int, List[float]] = {}
+        self._breed_names = list(self._agent_factory._breeds.keys())
 
         # Learning rule registry
         if learning_rule_info is None:
@@ -234,10 +226,7 @@ class NeuromorphicModel(Model):
         """
         Returns the breed of the agent with the given ID.
         """
-        breed_idx = int(
-            self.get_agent_property_value(id=agent_id, property_name="breed")
-        )
-        return list(self._agent_factory.breeds)[breed_idx]
+        return self._breed_names[self._agent_factory._agent2breed[agent_id]]
 
     def get_synapse_connectivity(self, synapse_id: int) -> List[int]:
         """
@@ -247,20 +236,23 @@ class NeuromorphicModel(Model):
         Note: This returns the ordered locations [pre_soma_id, post_soma_id].
         These are agent IDs, not local indices.
         """
-
         return self.get_agent_property_value(
             id=synapse_id, property_name="locations"
         )
+
+    def get_soma_outgoing_synapses(self, soma_id: int) -> Set[int]:
+        """
+        Returns the set of synapse IDs where this soma is the pre-synaptic source.
+        """
+        return self._soma_outgoing_synapses.get(soma_id, set())
 
 
     def get_agent_config_diff(self, agent_id: int) -> Dict[str, any]:
         """
         Returns the configuration overrides for the agent with the given ID.
         """
-        component_class = (
-            "soma" if agent_id in self.get_agents_with_tag("soma") else "synapse"
-        )
-        breed_name = self.get_agent_breed(agent_id).name
+        component_class = "soma" if agent_id in self._soma_ids else "synapse"
+        breed_name = self.get_agent_breed(agent_id)
         config_name = self.get_agent_config_name(agent_id)
         config = self._component_configurations[component_class][breed_name][
             config_name
@@ -297,14 +289,14 @@ class NeuromorphicModel(Model):
 
         return overrides
 
-    def get_agents_with_tag(self, tag: str) -> Set[int]:
+    def get_agents_with_label(self, label: str) -> Set[int]:
         """
-        Returns a list of agent IDs associated with the given tag.
+        Returns the set of agent IDs associated with the given metadata label.
 
-        :param tag: The tag to filter agents by.
-        :return: List of agent IDs that have the specified tag.
+        :param label: The metadata label to filter agents by.
+        :return: Set of agent IDs that have the specified label.
         """
-        return self.tag2component.get(tag, set())
+        return self._metadata.get(label, set())
 
     def _make_soma_breed(self, name: str, step_func, step_func_path: Path) -> Breed:
         breed = Breed(name)
@@ -349,6 +341,7 @@ class NeuromorphicModel(Model):
         soma_breed = self._make_soma_breed(name, step_func, step_func_path)
         self.register_breed(soma_breed)
         self._soma_breeds[name] = soma_breed
+        self._breed_names = list(self._agent_factory._breeds.keys())
 
     def register_synapse_type(self, name: str, step_func, step_func_path: Path) -> None:
         """Register a custom synapse type with its step function.
@@ -370,6 +363,7 @@ class NeuromorphicModel(Model):
         synapse_breed = self._make_synapse_breed(name, step_func, step_func_path)
         self.register_breed(synapse_breed)
         self._synapse_breeds[name] = synapse_breed
+        self._breed_names = list(self._agent_factory._breeds.keys())
 
     def register_learning_rule(
         self, step_func, step_func_path: Path
@@ -516,8 +510,7 @@ class NeuromorphicModel(Model):
     def _reset_agents(self, retain_parameters: bool = True) -> None:
         """
         Internal method to reset all soma and synapse agents to their initial states.
-        Iterates only local agents and writes directly to data tensors,
-        avoiding MPI broadcasts from get/set_agent_property_value.
+        Recomputes defaults from (breed, config, overrides) via config cache.
 
         :param retain_parameters: If True, keeps current learned parameters.
             If False, resets parameters to their default values.
@@ -529,24 +522,35 @@ class NeuromorphicModel(Model):
             rank = 0
         local_agent_map = af._rank2agentid2agentidx.get(rank, {})
         data = af._property_name_2_agent_data_tensor
-        synapse_set = set(self._synapse_ids)
 
         for agent_id, idx in local_agent_map.items():
-            if agent_id in synapse_set:
-                # Reset synapse
+            if agent_id in self._synapse_ids:
+                # Reset synapse — recompute defaults from config
+                breed_name = self._breed_names[af._agent2breed[agent_id]]
+                config_name = self.agentid2config[agent_id]
+                overrides = self.agentid2overrides.get(agent_id, {})
+                lr = self.agentid2learning_rule.get(agent_id)
+                lr_breed, lr_config = lr if lr else (None, "default")
+                _, hp, lhp, is_state, ils = self._get_synapse_properties(
+                    breed_name, config_name, overrides, lr_breed, lr_config)
+
                 data["input_spikes_tensor"][idx] = [-1, 0.0]
-                synapse_delay = int(self._synapse2defaultparameters[agent_id][1])
-                data["synapse_delay_reg"][idx] = [0] * synapse_delay
-                data["internal_state"][idx] = self._synapse2defaultinternalstate[agent_id].copy()
-                data["internal_learning_state"][idx] = self._synapse2defaultinternallearningstate[agent_id].copy()
+                data["synapse_delay_reg"][idx] = [0] * int(hp[1])
+                data["internal_state"][idx] = is_state
+                data["internal_learning_state"][idx] = ils
                 if not retain_parameters:
-                    data["hyperparameters"][idx] = self._synapse2defaultparameters[agent_id].copy()
-                    data["learning_hyperparameters"][idx] = self._synapse2defaultlearningparameters[agent_id].copy()
-            else:
-                # Reset soma
-                if agent_id in self._soma_reset_states:
-                    data["internal_state"][idx] = self._soma_reset_states[agent_id].copy()
-                    data["output_spikes_tensor"][idx] = [0.0, 0.0]
+                    data["hyperparameters"][idx] = hp
+                    data["learning_hyperparameters"][idx] = lhp
+            elif agent_id in self._soma_ids:
+                # Reset soma — recompute defaults from config
+                breed_name = self._breed_names[af._agent2breed[agent_id]]
+                config_name = self.agentid2config[agent_id]
+                overrides = self.agentid2overrides.get(agent_id, {})
+                hp, is_state = self._get_soma_properties(breed_name, config_name, overrides)
+                data["internal_state"][idx] = is_state
+                data["output_spikes_tensor"][idx] = [0.0, 0.0]
+                if not retain_parameters:
+                    data["hyperparameters"][idx] = hp
 
     def reset(self, retain_parameters: bool = True) -> None:
         """
@@ -582,6 +586,7 @@ class NeuromorphicModel(Model):
         Always resets to default state. Call once before simulation loop.
         """
         self._setup_called = True
+        self._breed_names = list(self._agent_factory._breeds.keys())
 
         # Always generate selector from registry, attach to all synapse breeds
         new_func, new_path = self._generate_learning_rule_selector()
@@ -636,8 +641,6 @@ class NeuromorphicModel(Model):
         rank = MPI.COMM_WORLD.Get_rank()
         local_agent_map = af._rank2agentid2agentidx.get(rank, {})
         data = af._property_name_2_agent_data_tensor
-        soma_set = set(self._soma_ids)
-
         if self.enable_internal_state_tracking:
             for agent_id, idx in local_agent_map.items():
                 state = data["internal_state"][idx]
@@ -646,7 +649,7 @@ class NeuromorphicModel(Model):
                 ls = data["internal_learning_state"][idx]
                 data["internal_learning_states_buffer"][idx] = [ls[::] for _ in range(ticks)]
 
-                if agent_id not in soma_set:
+                if agent_id in self._synapse_ids:
                     spikes = data["input_spikes_tensor"][idx]
                     if len(spikes) > 2:
                         pairs = [(spikes[i], spikes[i + 1]) for i in range(2, len(spikes), 2)]
@@ -658,7 +661,7 @@ class NeuromorphicModel(Model):
                         data["input_spikes_tensor"][idx] = sorted_spikes
         else:
             for agent_id, idx in local_agent_map.items():
-                if agent_id not in soma_set:
+                if agent_id in self._synapse_ids:
                     spikes = data["input_spikes_tensor"][idx]
                     if len(spikes) > 2:
                         pairs = [(spikes[i], spikes[i + 1]) for i in range(2, len(spikes), 2)]
@@ -692,7 +695,7 @@ class NeuromorphicModel(Model):
         breed: str,
         config_name: str,
         overrides: Dict[str, Dict[str, float]] = None,
-        tags: Set[str] = None,
+        metadata: List[str] = None,
         agent_id: int = None,
     ) -> int:
         """
@@ -700,11 +703,12 @@ class NeuromorphicModel(Model):
 
         :param overrides: Dict keyed by property type, e.g.
             {"hyperparameters": {"R": 1.1e6}, "internal_state": {"v": -55.0}}
+        :param metadata: List of user-provided string labels for this agent.
         :param agent_id: Explicit global agent ID. If provided, uses this ID
             instead of auto-incrementing. Used for partition-based loading.
         :return: SAGESim agent id of soma
         """
-        tags = tags if tags else set()
+        metadata = metadata or []
         overrides = overrides or {}
 
         # Cached config list construction — avoids copy.deepcopy per agent
@@ -734,14 +738,12 @@ class NeuromorphicModel(Model):
             output_spikes_tensor=[0.0, 0.0],
         )
 
-        self._soma_ids.append(soma_id)
-        self._soma_reset_states[soma_id] = default_internal_state
-
+        self._soma_ids.add(soma_id)
         self.agentid2config[soma_id] = config_name
+        self.agentid2overrides[soma_id] = overrides
 
-        tags.update({"soma", breed})
-        for tag in tags:
-            self.tag2component[tag].add(soma_id)
+        for label in metadata:
+            self._metadata[label].add(soma_id)
         return soma_id
 
     def create_synapse(
@@ -753,7 +755,7 @@ class NeuromorphicModel(Model):
         learning_rule: str = None,
         learning_rule_config: str = "default",
         overrides: Dict[str, Dict[str, float]] = None,
-        tags: Set[str] = None,
+        metadata: List[str] = None,
         agent_id: int = None,
         skip_post_connection: bool = False,
     ) -> int:
@@ -769,16 +771,16 @@ class NeuromorphicModel(Model):
             learning_rule_config (str): Config name within the learning rule breed (default: "default").
             overrides (dict, optional): Dict keyed by property type, e.g.
                 {"hyperparameters": {"weight": 0.5}, "learning_hyperparameters": {"a_exp_pre": 0.01}}
-            tags (set of str, optional): Tags to associate with this synapse.
+            metadata (list of str, optional): User-provided labels for this synapse.
             agent_id (int, optional): Explicit global agent ID. Used for partition-based loading.
             skip_post_connection (bool): If True, skip the reverse connection from
-                post_soma to synapse (and soma2synapse bookkeeping). Used when post_soma
-                is on a remote rank — the remote rank handles its own ghost connection.
+                post_soma to synapse. Used when post_soma is on a remote rank —
+                the remote rank handles its own ghost connection.
 
         Returns:
             int: SAGESim agent ID of the created synapse.
         """
-        tags = tags if tags else set()
+        metadata = metadata or []
         overrides = overrides or {}
 
         # Synapse config cache (hp + is only — no learning params in synapse config)
@@ -835,13 +837,10 @@ class NeuromorphicModel(Model):
             synapse_delay_reg=delay_reg,
             input_spikes_tensor=[-1, 0.0],
         )
-        self._synapse2defaultparameters[synapse_id] = hyperparameters
-        self._synapse2defaultlearningparameters[synapse_id] = learning_hyperparameters
-        self._synapse2defaultinternalstate[synapse_id] = default_internal_state
-        self._synapse2defaultinternallearningstate[synapse_id] = (
-            default_internal_learning_state
-        )
-        self._synapse_ids.append(synapse_id)
+
+        self._synapse_ids.add(synapse_id)
+        self.agentid2config[synapse_id] = config_name
+        self.agentid2overrides[synapse_id] = overrides
         self.agentid2learning_rule[synapse_id] = (learning_rule, learning_rule_config) if learning_rule else None
 
         network_space: NetworkSpace = self.get_space()
@@ -850,123 +849,326 @@ class NeuromorphicModel(Model):
         # With ordered=True, connections are maintained in insertion order
         # So synapse's locations will be [pre_soma_id, post_soma_id] after we connect them
 
-        # IMPORTANT: Connect in order [pre, post] to maintain ordered locations
         # First connection: pre_soma (if exists)
-        # -1 indicates external input
         if pre_soma_id != -1:
             network_space.connect_agents(synapse_id, pre_soma_id, directed=True)
-            self.soma2synapse_map[pre_soma_id]["post"].add(synapse_id)
-            self.synapse2soma_map[synapse_id]["pre"] = pre_soma_id
+            self._soma_outgoing_synapses[pre_soma_id].add(synapse_id)
         else:
             # For external input, manually add -1 to locations to maintain [pre, post] order
             network_space.get_location(synapse_id).append(-1)
-            self.synapse2soma_map[synapse_id]["pre"] = -1  # External input
-            tags.add("input_synapse")
-
+            metadata.append("input_synapse")
 
         # Second connection: post_soma (if exists)
-        # -1 indicates external output
         if post_soma_id != -1:
             network_space.connect_agents(synapse_id, post_soma_id, directed=True)
-            self.synapse2soma_map[synapse_id]["post"] = post_soma_id
             if not skip_post_connection:
                 network_space.connect_agents(post_soma_id, synapse_id, directed=True)  # Bidirectional for STDP
-                self.soma2synapse_map[post_soma_id]["pre"].add(synapse_id)
         else:
-            self.synapse2soma_map[synapse_id]["post"] = -1
             # For external output (rare), manually add -1
             network_space.get_location(synapse_id).append(-1)
 
-        self.agentid2config[synapse_id] = config_name
-        tags.update({"synapse", breed})
-        for tag in tags:
-            self.tag2component[tag].add(synapse_id)
+        for label in metadata:
+            self._metadata[label].add(synapse_id)
         return synapse_id
 
-    def load_partition(self, partition_file: str) -> None:
-        """Load a preprocessed partition file with soma/synapse semantics.
+    def _get_soma_properties(self, breed: str, config_name: str, overrides: dict = None):
+        """Compute soma property values from config without creating an agent.
 
-        Each rank loads only its own partition file. Creates somas and synapses
-        using the standard create_soma/create_synapse API with explicit agent IDs.
-        Ghost edges (remote source, local target) are connected for STDP.
-
-        Partition file format::
-
-            {
-                'agents': [
-                    {'id': int, 'breed': str, 'config': str, 'overrides': dict,
-                     'pre_id': int, 'post_id': int,  # synapse-only fields
-                     'weight': float, 'learning_rule': str, 'learning_rule_config': str},
-                    ...
-                ],
-                'edges': [
-                    {'source': int, 'target': int},  # source is always local
-                    ...
-                ],
-                'remote_agent_ranks': {int: int, ...},
-            }
-
-        :param partition_file: Path to enriched partition_{rank}.pkl
+        :return: (hyperparameters, internal_state) as lists
         """
-        import pickle
+        overrides = overrides or {}
+        cache_key = ("soma", breed, config_name)
+        if cache_key not in self._config_list_cache:
+            config = self._component_configurations["soma"][breed][config_name]
+            hp_keys = list(config["hyperparameters"].keys())
+            hp_vals = [float(v) for v in config["hyperparameters"].values()]
+            is_keys = list(config["internal_state"].keys())
+            is_vals = [float(v) for v in config["internal_state"].values()]
+            self._config_list_cache[cache_key] = (hp_keys, hp_vals, is_keys, is_vals)
+        hp_keys, hp_defaults, is_keys, is_defaults = self._config_list_cache[cache_key]
 
-        rank = MPI.COMM_WORLD.Get_rank()
+        hp = hp_defaults[:]
+        for k, v in overrides.get("hyperparameters", {}).items():
+            hp[hp_keys.index(k)] = float(v)
+        is_state = is_defaults[:]
+        for k, v in overrides.get("internal_state", {}).items():
+            is_state[is_keys.index(k)] = float(v)
+        return hp, is_state
 
-        with open(partition_file, 'rb') as f:
-            partition = pickle.load(f)
+    def _get_synapse_properties(self, breed: str, config_name: str,
+                                overrides: dict = None, learning_rule: str = None,
+                                learning_rule_config: str = "default"):
+        """Compute synapse property values from config without creating an agent.
 
-        agents = partition['agents']
-        edges = partition['edges']
-        remote_agent_ranks = partition.get('remote_agent_ranks', {})
+        :param overrides: Dict keyed by property type, e.g.
+            {"hyperparameters": {"weight": 14.0}, "learning_hyperparameters": {"a_exp_pre": 0.01}}
+        :return: (props_dict, hp, lhp, is_state, ils)
+        """
+        overrides = overrides or {}
+        cache_key = ("synapse", breed, config_name)
+        if cache_key not in self._config_list_cache:
+            config = self._component_configurations["synapse"][breed][config_name]
+            hp_keys = list(config["hyperparameters"].keys())
+            hp_vals = [float(v) for v in config["hyperparameters"].values()]
+            is_keys = list(config["internal_state"].keys())
+            is_vals = [float(v) for v in config["internal_state"].values()]
+            self._config_list_cache[cache_key] = (hp_keys, hp_vals, is_keys, is_vals)
+        hp_keys, hp_defaults, is_keys, is_defaults = self._config_list_cache[cache_key]
 
-        # Separate somas and synapses by breed
-        somas = [a for a in agents if a['breed'] in self._soma_breeds]
-        synapses = [a for a in agents if a['breed'] in self._synapse_breeds]
+        if learning_rule is not None:
+            lr_cache_key = ("learning_rule", learning_rule, learning_rule_config)
+            if lr_cache_key not in self._config_list_cache:
+                lr_config = self._learning_rule_configurations[learning_rule][learning_rule_config]
+                lhp_keys = list(lr_config["learning_hyperparameters"].keys())
+                lhp_vals = [float(v) for v in lr_config["learning_hyperparameters"].values()]
+                ils_keys = list(lr_config.get("internal_learning_state", {}).keys())
+                ils_vals = [float(v) for v in lr_config.get("internal_learning_state", {}).values()]
+                self._config_list_cache[lr_cache_key] = (lhp_keys, lhp_vals, ils_keys, ils_vals)
+            lhp_keys, lhp_defaults, ils_keys, ils_defaults = self._config_list_cache[lr_cache_key]
+        else:
+            lhp_keys, lhp_defaults = ["stdp_type"], [-1.0]
+            ils_keys, ils_defaults = [], []
 
-        local_ids = sorted([a['id'] for a in agents])
-        local_id_set = set(local_ids)
+        hp = hp_defaults[:]
+        for k, v in overrides.get("hyperparameters", {}).items():
+            hp[hp_keys.index(k)] = float(v)
+        is_state = is_defaults[:]
+        for k, v in overrides.get("internal_state", {}).items():
+            is_state[is_keys.index(k)] = float(v)
+        lhp = lhp_defaults[:]
+        for k, v in overrides.get("learning_hyperparameters", {}).items():
+            lhp[lhp_keys.index(k)] = float(v)
+        ils = ils_defaults[:]
+        for k, v in overrides.get("internal_learning_state", {}).items():
+            ils[ils_keys.index(k)] = float(v)
 
-        # Initialize sparse space + remote agent ranks
-        self._init_partition(local_ids, remote_agent_ranks)
+        synaptic_delay = int(hp[1])
+        delay_reg = [0 for _ in range(synaptic_delay)]
 
-        # Create somas
-        for neuron in somas:
-            self.create_soma(
-                breed=neuron['breed'],
-                config_name=neuron.get('config', 'config_0'),
-                overrides=neuron.get('overrides', {}),
-                agent_id=neuron['id'],
+        return {
+            'hyperparameters': hp,
+            'learning_hyperparameters': lhp,
+            'internal_state': is_state,
+            'internal_learning_state': ils,
+            'synapse_delay_reg': delay_reg,
+            'input_spikes_tensor': [-1, 0.0],
+        }, hp, lhp, is_state, ils
+
+    @staticmethod
+    def _read_partition_file(partition_file: str) -> dict:
+        """Read a per-rank partition file, auto-detecting format from extension.
+
+        Normalizes all formats to the same internal dict structure:
+            {'nodes': [...], 'edges': [...], 'remote_nodes': {...}}
+
+        Supported formats: .pkl/.pickle, .graphml, .json
+        """
+        import json as json_mod
+
+        fpath = Path(partition_file)
+        ext = fpath.suffix.lower()
+
+        if ext in ('.pkl', '.pickle'):
+            import pickle
+            with open(partition_file, 'rb') as f:
+                data = pickle.load(f)
+            # Normalize legacy format: 'attributes' → top-level keys
+            # Legacy nodes: {'id': x, 'attributes': {'breed': ...}}
+            # New nodes: {'id': x, 'breed': ..., 'config': ...}
+            if data.get('nodes') and 'attributes' in data['nodes'][0]:
+                for node in data['nodes']:
+                    attrs = node.pop('attributes', {})
+                    node.update(attrs)
+            # Legacy edges: {'source': x, 'target': y, 'synapse_id': z, 'attributes': {...}}
+            # New edges: {'source': x, 'target': y, 'breed': ..., ...}
+            if data.get('edges') and 'attributes' in data['edges'][0]:
+                for edge in data['edges']:
+                    attrs = edge.pop('attributes', {})
+                    edge.update(attrs)
+            # Normalize key: 'remote_node_ranks' → 'remote_nodes'
+            if 'remote_node_ranks' in data and 'remote_nodes' not in data:
+                data['remote_nodes'] = data.pop('remote_node_ranks')
+            return data
+
+        elif ext == '.graphml':
+            import networkx as nx
+            graph = nx.read_graphml(partition_file)
+
+            def _try_parse(val):
+                """Deserialize JSON-string attributes from GraphML."""
+                if isinstance(val, str):
+                    stripped = val.strip()
+                    if (stripped.startswith('{') and stripped.endswith('}')) or \
+                       (stripped.startswith('[') and stripped.endswith(']')):
+                        try:
+                            return json_mod.loads(stripped)
+                        except (json_mod.JSONDecodeError, ValueError):
+                            pass
+                return val
+
+            nodes = []
+            for node_id, attrs in graph.nodes(data=True):
+                node = {'id': int(node_id)}
+                for k, v in attrs.items():
+                    node[k] = _try_parse(v)
+                nodes.append(node)
+
+            edges = []
+            remote_nodes = {}
+            for u, v, attrs in graph.edges(data=True):
+                edge = {'source': int(u), 'target': int(v)}
+                for k, val in attrs.items():
+                    edge[k] = _try_parse(val)
+                edges.append(edge)
+
+            # Extract remote_nodes from graph-level attribute if present
+            if 'remote_nodes' in graph.graph:
+                remote_nodes = _try_parse(graph.graph['remote_nodes'])
+                if isinstance(remote_nodes, dict):
+                    remote_nodes = {int(k): int(v) for k, v in remote_nodes.items()}
+
+            return {'nodes': nodes, 'edges': edges, 'remote_nodes': remote_nodes}
+
+        elif ext == '.json':
+            with open(partition_file, 'r') as f:
+                data = json_mod.load(f)
+            # JSON keys are always strings — convert node IDs and remote_nodes keys to int
+            if 'remote_nodes' in data:
+                data['remote_nodes'] = {int(k): int(v) for k, v in data['remote_nodes'].items()}
+            return data
+
+        else:
+            raise ValueError(
+                f"Unsupported partition file format: {ext}. "
+                f"Supported: .pkl, .pickle, .graphml, .json"
             )
 
-        # Create synapses
-        for syn in synapses:
-            post_id = syn.get('post_id', -1)
-            is_post_remote = post_id not in local_id_set and post_id != -1
-            overrides = syn.get('overrides', {})
-            if 'weight' in syn and 'hyperparameters' not in overrides:
-                overrides['hyperparameters'] = {'weight': syn['weight']}
-            elif 'weight' in syn:
-                overrides['hyperparameters']['weight'] = syn['weight']
+    def load_from_file(self, partition_file: str,
+                       soma_breed: str = "lif_soma",
+                       soma_config: str = "config_0",
+                       synapse_breed: str = "single_exp_synapse",
+                       synapse_config: str = "config_0") -> None:
+        """Load a network definition file and build the neuromorphic model.
 
-            self.create_synapse(
-                breed=syn['breed'],
-                pre_soma_id=syn.get('pre_id', -1),
-                post_soma_id=post_id,
-                config_name=syn.get('config', 'config_0'),
-                overrides=overrides,
-                learning_rule=syn.get('learning_rule'),
-                learning_rule_config=syn.get('learning_rule_config', 'default'),
-                agent_id=syn['id'],
-                skip_post_connection=is_post_remote,
-            )
+        Reads a graph file (GraphML, pkl, or JSON), computes property
+        values from breed configs, builds connections, and calls SAGESim's
+        build_from_local_data() for bulk creation.
 
-        # Ghost edges: remote source → local target neighbor list
-        network_space = self.get_space()
-        for edge in edges:
-            if edge['source'] not in local_id_set:
-                network_space.connect_agents(
-                    edge['target'], edge['source'], directed=True
+        The file must contain nodes (with breed/config), edges (with
+        synapse_id/breed/config), and remote_agents mapping all remote agent
+        IDs (both somas and synapses) to their owning rank.
+
+        :param partition_file: Path to network file (auto-detected format)
+        :param soma_breed: Default soma breed name
+        :param soma_config: Default soma config name
+        :param synapse_breed: Default synapse breed name
+        :param synapse_config: Default synapse config name
+        """
+        data = self._read_partition_file(partition_file)
+
+        nodes = data['nodes']
+        graph_edges = data['edges']
+        # remote_agents maps ALL remote agent IDs (somas + synapses) to ranks
+        remote_agents = data.get('remote_agents', data.get('remote_nodes', {}))
+        local_node_ids = set(n['id'] for n in nodes)
+
+        # Separate local edges (source local → create synapse agent) from
+        # ghost edges (source remote → just a connection for STDP reads)
+        local_edges = [e for e in graph_edges
+                       if e['source'] in local_node_ids or e['source'] == -1]
+        ghost_edges = [e for e in graph_edges
+                       if e['source'] not in local_node_ids and e['source'] != -1]
+
+        # Validate that all edges have synapse_id
+        for edge in local_edges:
+            if 'synapse_id' not in edge:
+                raise ValueError(
+                    f"Edge from {edge['source']} to {edge['target']} missing "
+                    f"required 'synapse_id'. Assign synapse IDs before saving."
                 )
+
+        agents = []
+        connections = []
+        remote_agent_ranks = dict(remote_agents)
+
+        # --- Somas from nodes ---
+        for node in nodes:
+            breed = node.get('breed', soma_breed)
+            config = node.get('config', soma_config)
+            overrides = node.get('overrides', {})
+            hp, is_state = self._get_soma_properties(breed, config, overrides)
+
+            agents.append({
+                'id': node['id'],
+                'breed': self._soma_breeds[breed],
+                'properties': {
+                    'hyperparameters': hp,
+                    'internal_state': is_state,
+                    'output_spikes_tensor': [0.0, 0.0],
+                },
+            })
+
+            nid = node['id']
+            self._soma_ids.add(nid)
+            self.agentid2config[nid] = config
+            self.agentid2overrides[nid] = overrides
+            for label in node.get('metadata', []):
+                self._metadata[label].add(nid)
+
+        # --- Synapses from local edges ---
+        for edge in local_edges:
+            syn_id = edge['synapse_id']
+            pre_id = edge['source']
+            post_id = edge['target']
+            breed = edge.get('breed', synapse_breed)
+            config = edge.get('config', synapse_config)
+            overrides = edge.get('overrides', {})
+            learning_rule = edge.get('learning_rule', None)
+            learning_rule_config = edge.get('learning_rule_config', 'default')
+
+            props, hp, lhp, is_state, ils = self._get_synapse_properties(
+                breed, config, overrides, learning_rule, learning_rule_config)
+
+            agents.append({
+                'id': syn_id,
+                'breed': self._synapse_breeds[breed],
+                'properties': props,
+            })
+
+            # Connections: synapse reads pre_soma and post_soma;
+            # post_soma reads synapse (for STDP) only if post_soma is local.
+            # For input synapses (pre_id == -1), we still add (syn_id, -1)
+            # so that -1 occupies index 0 in the locations list.
+            connections.append((syn_id, pre_id))
+            if post_id != -1:
+                connections.append((syn_id, post_id))
+            if post_id != -1 and post_id in local_node_ids:
+                connections.append((post_id, syn_id))
+
+            # Bookkeeping
+            self._synapse_ids.add(syn_id)
+            self.agentid2config[syn_id] = config
+            self.agentid2overrides[syn_id] = overrides
+            self.agentid2learning_rule[syn_id] = (learning_rule, learning_rule_config) if learning_rule else None
+            if pre_id != -1:
+                self._soma_outgoing_synapses[pre_id].add(syn_id)
+            edge_metadata = list(edge.get('metadata', []))
+            if pre_id == -1:
+                edge_metadata.append("input_synapse")
+            for label in edge_metadata:
+                self._metadata[label].add(syn_id)
+
+        # --- Ghost edges: local post-soma reads remote synapse ---
+        # The synapse agent lives on the source's rank. The local post-soma
+        # connects to it as a ghost neighbor. synapse_id and its rank must
+        # be in the file (synapse_id on the edge, rank in remote_agents).
+        for edge in ghost_edges:
+            syn_id = edge['synapse_id']
+            post_id = edge['target']
+            connections.append((post_id, syn_id))
+
+        # --- Bulk build via SAGESim ---
+        self.build_from_local_data(agents, connections, remote_agent_ranks, directed=True)
 
     def add_spike(self, synapse_id: int, tick: int, value: float) -> None:
         """
@@ -1039,7 +1241,11 @@ class NeuromorphicModel(Model):
             buf = self._gpu_buffers
             mask = cp.zeros(buf.agent_capacity, dtype=cp.float32)
             if self._recorded_soma_ids is None:
-                mask[:num_local_agents] = 1.0  # record all
+                # Record all somas (not synapses — they don't produce output spikes)
+                for sid in self._soma_ids:
+                    idx = buf.agent_id_to_index.get(sid, -1)
+                    if 0 <= idx < num_local_agents:
+                        mask[idx] = 1.0
             else:
                 for sid in self._recorded_soma_ids:
                     idx = buf.agent_id_to_index.get(sid, -1)

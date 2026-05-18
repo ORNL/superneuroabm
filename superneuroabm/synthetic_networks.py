@@ -94,7 +94,7 @@ def generate_clustered_network(
                 config=soma_config,
                 cluster=cluster_id,  # Store cluster ID for analysis
                 type="excitatory" if is_excitatory else "inhibitory",
-                tags=[f"cluster_{cluster_id}"]
+                metadata=[f"cluster_{cluster_id}"]
             )
             cluster_neurons.append(neuron_id)
 
@@ -153,7 +153,7 @@ def generate_clustered_network(
                     config=synapse_config,
                     overrides={"hyperparameters": {"weight": weight_exc}},
                     connection_type="external",
-                    tags=["input_synapse"],
+                    metadata=["input_synapse"],
                     cluster=cluster_id  # Assign to post-synaptic neuron's cluster
                 )
                 external_inputs += 1
@@ -302,7 +302,7 @@ def generate_clustered_network_constant_comm(
                 config=soma_config,
                 cluster=cluster_id,
                 type="excitatory" if is_excitatory else "inhibitory",
-                tags=[f"cluster_{cluster_id}"]
+                metadata=[f"cluster_{cluster_id}"]
             )
             cluster_neurons.append(neuron_id)
 
@@ -449,7 +449,7 @@ def generate_clustered_network_constant_comm(
                     config=synapse_config,
                     overrides={"hyperparameters": {"weight": weight_exc}},
                     connection_type="external",
-                    tags=["input_synapse"],
+                    metadata=["input_synapse"],
                     cluster=cluster_id  # Assign to post-synaptic neuron's cluster
                 )
                 external_inputs += 1
@@ -921,7 +921,7 @@ def generate_grid_network(
                 synapse_breed=synapse_breed,
                 config=synapse_config,
                 overrides={"hyperparameters": {"weight": weight_exc}},
-                tags=["input_synapse"]
+                metadata=["input_synapse"]
             )
             external_inputs += 1
 
@@ -1007,7 +1007,7 @@ def generate_ring_of_clusters(
                 config=soma_config,
                 cluster=cluster_id,
                 type="excitatory" if is_excitatory else "inhibitory",
-                tags=[f"cluster_{cluster_id}"]
+                metadata=[f"cluster_{cluster_id}"]
             )
             cluster_neurons.append(neuron_id)
 
@@ -1061,7 +1061,7 @@ def generate_ring_of_clusters(
                     synapse_breed=synapse_breed,
                     config=synapse_config,
                     overrides={"hyperparameters": {"weight": weight_exc}},
-                    tags=["input_synapse"]
+                    metadata=["input_synapse"]
                 )
                 external_inputs += 1
 
@@ -1159,7 +1159,7 @@ def generate_and_save_partitions(
     """Generate synthetic partitioned network and save as partition files.
 
     Produces one partition file per rank in the format expected by
-    NeuromorphicModel.load_partition(). Can run on a single node (no MPI).
+    NeuromorphicModel.load_from_file(). Can run on a single node (no MPI).
 
     Args:
         output_dir: Directory to write partition_{rank}.pkl files.
@@ -1242,73 +1242,39 @@ def generate_and_save_partitions(
 
         intra_start, intra_end, cross_start, cross_end, ext_start, ext_end = syn_ranges[r]
 
-        # Local soma IDs
         local_soma_ids = list(range(
             r * neurons_per_partition,
             (r + 1) * neurons_per_partition,
         ))
         local_id_set = set(local_soma_ids)
 
-        # Build agents list
-        agents = []
-        for soma_id in local_soma_ids:
-            agents.append({
-                'id': soma_id,
-                'breed': soma_breed,
-                'config': soma_config,
+        nodes = [{'id': soma_id} for soma_id in local_soma_ids]
+        graph_edges = []
+        remote_node_ranks = {}
+
+        def add_edge(syn_id, pre_id, post_id, weight):
+            graph_edges.append({
+                'source': int(pre_id), 'target': int(post_id),
+                'synapse_id': syn_id,
+                'attributes': {'weight': float(weight)},
             })
+            if int(pre_id) >= 0 and int(pre_id) not in local_id_set:
+                remote_node_ranks[int(pre_id)] = int(agent_id_to_rank[int(pre_id)])
+            if int(post_id) >= 0 and int(post_id) not in local_id_set:
+                remote_node_ranks[int(post_id)] = int(agent_id_to_rank[int(post_id)])
 
-        # Build synapse agents + edges + remote_agent_ranks
-        edges = []
-        remote_agent_ranks = {}
-
-        # Helper to add synapse + its edges
-        def add_synapse(syn_id, pre_id, post_id, weight, conn_type):
-            agents.append({
-                'id': syn_id,
-                'breed': synapse_breed,
-                'config': synapse_config,
-                'pre_id': int(pre_id),
-                'post_id': int(post_id),
-                'weight': float(weight),
-            })
-            local_id_set.add(syn_id)
-
-            # Edge: synapse → pre_soma (synapse reads pre-soma spikes)
-            if pre_id != -1:
-                edges.append({'source': syn_id, 'target': int(pre_id)})
-                if int(pre_id) not in local_id_set:
-                    remote_agent_ranks[int(pre_id)] = int(agent_id_to_rank[int(pre_id)])
-
-            # Edge: synapse → post_soma (synapse connects to post-soma)
-            if post_id != -1:
-                edges.append({'source': syn_id, 'target': int(post_id)})
-                post_rank = int(agent_id_to_rank[int(post_id)])
-                if post_rank != r:
-                    remote_agent_ranks[int(post_id)] = post_rank
-                else:
-                    # Local post-soma: add reverse edge (post reads synapse for STDP)
-                    edges.append({'source': int(post_id), 'target': syn_id})
-
-        # Intra-cluster synapses
         intra_pre, intra_post, intra_weight = edges_data['intra']
         for i in range(len(intra_pre)):
-            add_synapse(intra_start + i, int(intra_pre[i]), int(intra_post[i]),
-                        float(intra_weight[i]), "intra_cluster")
+            add_edge(intra_start + i, int(intra_pre[i]), int(intra_post[i]), float(intra_weight[i]))
 
-        # Outgoing cross-cluster synapses
         cross_out_pre, cross_out_post, cross_out_weight, _ = edges_data['cross_out']
         for i in range(len(cross_out_pre)):
-            add_synapse(cross_start + i, int(cross_out_pre[i]), int(cross_out_post[i]),
-                        float(cross_out_weight[i]), "inter_cluster")
+            add_edge(cross_start + i, int(cross_out_pre[i]), int(cross_out_post[i]), float(cross_out_weight[i]))
 
-        # External input synapses
         ext_post_ids = edges_data['external'][0]
         for i in range(len(ext_post_ids)):
-            add_synapse(ext_start + i, -1, int(ext_post_ids[i]),
-                        float(weight_exc), "external")
+            add_edge(ext_start + i, -1, int(ext_post_ids[i]), float(weight_exc))
 
-        # Ghost edges: incoming cross-cluster (remote synapse → local post-soma)
         cross_in_pre, cross_in_post, cross_in_weight, cross_in_source = edges_data['cross_in']
         for i in range(len(cross_in_pre)):
             source_c = int(cross_in_source[i])
@@ -1316,16 +1282,16 @@ def generate_and_save_partitions(
             source_targets = outgoing[source_c]
             offset_to_r = source_targets.index(r) * cross_cluster_edges
             ghost_syn_id = source_cross_start + offset_to_r + i % cross_cluster_edges
-            local_post_id = int(cross_in_post[i])
-
-            # Ghost edge: local post-soma reads remote synapse
-            edges.append({'source': local_post_id, 'target': ghost_syn_id})
-            remote_agent_ranks[ghost_syn_id] = source_c
+            graph_edges.append({
+                'source': int(cross_in_pre[i]), 'target': int(cross_in_post[i]),
+                'synapse_id': ghost_syn_id,
+            })
+            remote_node_ranks[int(cross_in_pre[i])] = source_c
 
         partition = {
-            'agents': agents,
-            'edges': edges,
-            'remote_agent_ranks': remote_agent_ranks,
+            'nodes': nodes,
+            'edges': graph_edges,
+            'remote_node_ranks': remote_node_ranks,
         }
 
         out_file = out_dir / f"partition_{r}.pkl"
@@ -1425,49 +1391,40 @@ def generate_and_save_local_partition(
     local_soma_ids = list(range(r * neurons_per_partition, (r + 1) * neurons_per_partition))
     local_id_set = set(local_soma_ids)
 
-    agents = []
-    for soma_id in local_soma_ids:
-        agents.append({'id': soma_id, 'breed': soma_breed, 'config': soma_config})
+    # Graph format: nodes = neurons, edges = synapses
+    nodes = [{'id': soma_id} for soma_id in local_soma_ids]
+    graph_edges = []
+    remote_node_ranks = {}
 
-    edges = []
-    remote_agent_ranks = {}
-
-    def add_synapse(syn_id, pre_id, post_id, weight):
-        agents.append({
-            'id': syn_id, 'breed': synapse_breed, 'config': synapse_config,
-            'pre_id': int(pre_id), 'post_id': int(post_id), 'weight': float(weight),
+    def add_edge(syn_id, pre_id, post_id, weight):
+        graph_edges.append({
+            'source': int(pre_id),
+            'target': int(post_id),
+            'synapse_id': syn_id,
+            'attributes': {'weight': float(weight)},
         })
-        local_id_set.add(syn_id)
-
-        if pre_id != -1:
-            edges.append({'source': syn_id, 'target': int(pre_id)})
-            if int(pre_id) not in local_id_set:
-                remote_agent_ranks[int(pre_id)] = int(agent_id_to_rank[int(pre_id)])
-
-        if post_id != -1:
-            edges.append({'source': syn_id, 'target': int(post_id)})
-            post_rank = int(agent_id_to_rank[int(post_id)])
-            if post_rank != r:
-                remote_agent_ranks[int(post_id)] = post_rank
-            else:
-                edges.append({'source': int(post_id), 'target': syn_id})
+        # Track remote node ranks
+        if int(pre_id) >= 0 and int(pre_id) not in local_id_set:
+            remote_node_ranks[int(pre_id)] = int(agent_id_to_rank[int(pre_id)])
+        if int(post_id) >= 0 and int(post_id) not in local_id_set:
+            remote_node_ranks[int(post_id)] = int(agent_id_to_rank[int(post_id)])
 
     # Intra-cluster
     intra_pre, intra_post, intra_weight = edges_data['intra']
     for i in range(len(intra_pre)):
-        add_synapse(intra_start + i, int(intra_pre[i]), int(intra_post[i]), float(intra_weight[i]))
+        add_edge(intra_start + i, int(intra_pre[i]), int(intra_post[i]), float(intra_weight[i]))
 
     # Outgoing cross-cluster
     cross_out_pre, cross_out_post, cross_out_weight, _ = edges_data['cross_out']
     for i in range(len(cross_out_pre)):
-        add_synapse(cross_start + i, int(cross_out_pre[i]), int(cross_out_post[i]), float(cross_out_weight[i]))
+        add_edge(cross_start + i, int(cross_out_pre[i]), int(cross_out_post[i]), float(cross_out_weight[i]))
 
     # External input
     ext_post_ids = edges_data['external'][0]
     for i in range(len(ext_post_ids)):
-        add_synapse(ext_start + i, -1, int(ext_post_ids[i]), float(weight_exc))
+        add_edge(ext_start + i, -1, int(ext_post_ids[i]), float(weight_exc))
 
-    # Ghost edges
+    # Ghost edges (incoming cross-cluster: remote source → local target)
     cross_in_pre, cross_in_post, cross_in_weight, cross_in_source = edges_data['cross_in']
     for i in range(len(cross_in_pre)):
         source_c = int(cross_in_source[i])
@@ -1475,14 +1432,17 @@ def generate_and_save_local_partition(
         source_targets = outgoing[source_c]
         offset_to_r = source_targets.index(r) * cross_cluster_edges
         ghost_syn_id = source_cross_start + offset_to_r + i % cross_cluster_edges
-        local_post_id = int(cross_in_post[i])
-        edges.append({'source': local_post_id, 'target': ghost_syn_id})
-        remote_agent_ranks[ghost_syn_id] = source_c
+        graph_edges.append({
+            'source': int(cross_in_pre[i]),
+            'target': int(cross_in_post[i]),
+            'synapse_id': ghost_syn_id,
+        })
+        remote_node_ranks[int(cross_in_pre[i])] = source_c
 
     partition = {
-        'agents': agents,
-        'edges': edges,
-        'remote_agent_ranks': remote_agent_ranks,
+        'nodes': nodes,
+        'edges': graph_edges,
+        'remote_node_ranks': remote_node_ranks,
     }
 
     out_file = out_dir / f"partition_{r}.pkl"

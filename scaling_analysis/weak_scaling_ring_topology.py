@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from superneuroabm.io.synthetic_networks import generate_and_save_local_partition
+from superneuroabm.synthetic_networks import generate_and_save_local_partition
 from superneuroabm.model import NeuromorphicModel
 
 try:
@@ -126,7 +126,7 @@ def main():
     t0 = time.time()
     model = NeuromorphicModel(enable_internal_state_tracking=False)
     partition_file = os.path.join(partition_dir, f"partition_{rank}.pkl")
-    model.load_partition(partition_file)
+    model.load_from_file(partition_file)
     model._verbose_timing = True
     t1 = time.time()
     model_creation_time = t1 - t0
@@ -147,7 +147,7 @@ def main():
         print(f"    GPU setup in {gpu_setup_time:.2f}s")
 
     # Add input spikes
-    input_synapses = list(model.get_agents_with_tag("input_synapse"))
+    input_synapses = list(model.get_agents_with_label("input_synapse"))
     if rank == 0:
         print(f"\n    Adding spikes to {len(input_synapses)} input synapses...")
 
@@ -168,7 +168,7 @@ def main():
 
     total_time = time.time() - t_pipeline_start
     total_neurons = size * neurons_per_worker
-    total_edges = len(model.get_agents_with_tag("synapse"))
+    total_edges = len(model._synapse_ids)
 
     if rank == 0:
         print("\n" + "="*70)
