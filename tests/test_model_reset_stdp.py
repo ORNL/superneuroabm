@@ -16,7 +16,7 @@ class TestModelResetWithSTDP(unittest.TestCase):
 
     def setUp(self):
         """Set up a fresh model for each test."""
-        self.model = NeuromorphicModel(enable_internal_state_tracking=True)
+        self.model = NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_stdp_learning_changes_weights(self):
         """

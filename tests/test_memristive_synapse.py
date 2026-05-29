@@ -19,7 +19,7 @@ class TestMemristiveSynapse(unittest.TestCase):
 
 
     def _make_model(self):
-        return NeuromorphicModel(enable_internal_state_tracking=True)
+        return NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_single_spike_response(self):
 

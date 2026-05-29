@@ -11,7 +11,7 @@ soma:
         tref_allows_integration: 0    # No integration during refractory period
         I_in: 0                       # No external current
         scaling_factor: 1.0           # No scaling
-      internal_state:
+      internal_states:
         v: 0.0                        # Initial membrane voltage at rest
         tcount: 0.0                   # Time counter
         tlast: 0.0                    # Last spike time
@@ -27,7 +27,7 @@ soma:
         tau_m: 10e-3                  # Afterhyperpolarization decay time constant (10ms)
         scaling_factor: 1.0           # Overall scaling
         I_in: 0                       # No external current
-      internal_state:
+      internal_states:
         v: 0.0                        # Membrane potential
         tcount: 0.0                   # Time counter
         tlast: 0.0                    # Last spike time
@@ -44,7 +44,7 @@ soma:
         taum: 10e-3                   # Membrane time constant (10ms)
         deltaa: 1.0                   # Adaptation reset value on spike
         I_in: 0                       # No external current
-      internal_state:
+      internal_states:
         u: 0.0                        # Membrane potential
         tcount: 0.0                   # Time counter
         tlast: 0.0                    # Last spike time
@@ -59,7 +59,7 @@ synapse:
         scale: 1.0                    # deltax = 1 (pre-spike increment)
         tau_fall: 2.5e-3              # tausyn = 2.5ms
         tau_rise: 0                   # Instantaneous rise
-      internal_state:
+      internal_states:
         I_synapse: 0.0                # Synaptic current (x variable)
         unused_1: 0.0                 # Padding
         pre_trace: 0.0                # Written by STDP kernel at index [2]
@@ -73,7 +73,7 @@ synapse:
         scale: 1.0                    # Scaling factor
         tau_fall: 2.5e-3              # tau_s (fast synaptic filter, 2.5ms)
         tau_rise: 10e-3               # tau_m (slow membrane filter, 10ms)
-      internal_state:
+      internal_states:
         I_fast: 0.0                   # Fast-filtered synaptic current (tau_s)
         I_slow: 0.0                   # Slow-filtered synaptic current (tau_m)
         pre_trace: 0.0                # (unused by synapse, read by STDP)
@@ -91,7 +91,7 @@ learning_rule:
         stdp_history_length: 100      # STDP history buffer length
         wmin: 0.0                     # Minimum weight bound
         wmax: 1.0                     # Maximum weight bound
-      internal_learning_state:
+      learning_internal_states:
         pre_trace: 0                  # Pre-synaptic trace
         post_trace: 0                 # Post-synaptic trace
         dW: 0                         # Weight change accumulator

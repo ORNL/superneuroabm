@@ -17,7 +17,7 @@ class TestSpikeMask(unittest.TestCase):
 
         Both somas fire, but only soma_1 spikes should appear in the record.
         """
-        model = NeuromorphicModel(enable_internal_state_tracking=False)
+        model = NeuromorphicModel(enable_internal_states_tracking=False)
 
         soma_0 = model.create_soma(breed="lif_soma", config_name="config_0")
         soma_1 = model.create_soma(breed="lif_soma", config_name="config_0")
@@ -64,7 +64,7 @@ class TestSpikeMask(unittest.TestCase):
         """
         Without calling set_recorded_somas, all somas are recorded (backward compat).
         """
-        model = NeuromorphicModel(enable_internal_state_tracking=False)
+        model = NeuromorphicModel(enable_internal_states_tracking=False)
 
         soma_0 = model.create_soma(breed="lif_soma", config_name="config_0")
         soma_1 = model.create_soma(breed="lif_soma", config_name="config_0")
@@ -100,7 +100,7 @@ class TestSpikeMask(unittest.TestCase):
         """
         Verify get_all_spike_times returns dict keyed by soma ID.
         """
-        model = NeuromorphicModel(enable_internal_state_tracking=False)
+        model = NeuromorphicModel(enable_internal_states_tracking=False)
 
         soma_0 = model.create_soma(breed="lif_soma", config_name="config_0")
         soma_1 = model.create_soma(breed="lif_soma", config_name="config_0")

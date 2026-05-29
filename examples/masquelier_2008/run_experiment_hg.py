@@ -116,7 +116,7 @@ def run():
     # Build HG-LIF model
     # ------------------------------------------------------------------
     print("Building HG-LIF model ...")
-    model = NeuromorphicModel(user_config=CONFIG_DIR / "masquelier_config.yaml", enable_internal_state_tracking=False)
+    model = NeuromorphicModel(user_config=CONFIG_DIR / "masquelier_config.yaml", enable_internal_states_tracking=False)
     stdp_id = model.register_learning_rule(
         exp_pair_wise_stdp_bounded_nn,
         CONFIG_DIR / "exp_pair_wise_stdp_bounded_nn.py",

@@ -22,13 +22,13 @@ def synapse_single_exp_step_func(
     locations,
     synapse_params,  # scale, time constant (tau_rise and tau_fall)
     learning_params,
-    internal_state,  #
-    internal_learning_state,
+    internal_states,  #
+    learning_internal_states,
     synapse_history,  # delay
     input_spikes_tensor,  # input spikes
     output_spikes_tensor,
     internal_states_buffer,
-    internal_learning_states_buffer,
+    learning_internal_states_buffer,
 ):
     t_current = int(tick)
 
@@ -57,11 +57,11 @@ def synapse_single_exp_step_func(
         output_spikes_tensor,
     )
 
-    I_synapse = internal_state[agent_index][0]
+    I_synapse = internal_states[agent_index][0]
 
     I_synapse = I_synapse * (1 - dt / tau_fall) + spike * scale * weight
 
-    internal_state[agent_index][0] = I_synapse
+    internal_states[agent_index][0] = I_synapse
 
     # Safe buffer indexing: use modulo to prevent out-of-bounds access
     # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always

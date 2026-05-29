@@ -48,13 +48,13 @@ def _none_safe(value):
     return None if value is None or value == "None" else value
 
 
-def nx_graph_from_model(model, override_internal_state: bool = True):
+def nx_graph_from_model(model, override_internal_states: bool = True):
     """Convert a NeuromorphicModel to a NetworkX graph.
 
     Args:
         model: A NeuromorphicModel object.
-        override_internal_state: If True, adds overrides of internal_state
-            and internal_learning_state with post-simulation values.
+        override_internal_states: If True, adds overrides of internal_states
+            and learning_internal_states with post-simulation values.
 
     Returns:
         A NetworkX DiGraph representing the model.
@@ -69,9 +69,9 @@ def nx_graph_from_model(model, override_internal_state: bool = True):
         config = model.get_agent_config_name(soma_id)
         overrides = model.get_agent_config_diff(soma_id)
 
-        if not override_internal_state:
-            overrides.pop("internal_state", None)
-            overrides.pop("internal_learning_state", None)
+        if not override_internal_states:
+            overrides.pop("internal_states", None)
+            overrides.pop("learning_internal_states", None)
 
         graph.add_node(
             soma_id,
@@ -86,9 +86,9 @@ def nx_graph_from_model(model, override_internal_state: bool = True):
         config = model.get_agent_config_name(synapse_id)
         overrides = model.get_agent_config_diff(synapse_id)
 
-        if not override_internal_state:
-            overrides.pop("internal_state", None)
-            overrides.pop("internal_learning_state", None)
+        if not override_internal_states:
+            overrides.pop("internal_states", None)
+            overrides.pop("learning_internal_states", None)
 
         lr_info = model.agentid2learning_rule.get(synapse_id)
         edge_data = dict(

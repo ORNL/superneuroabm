@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Test to verify that enable_internal_state_tracking=True/False produces same spike times.
+Test to verify that enable_internal_states_tracking=True/False produces same spike times.
 
 This test runs the same simulation with both settings and compares:
 1. Spike times should be identical
@@ -9,10 +9,10 @@ This test runs the same simulation with both settings and compares:
 
 Usage:
     # First run to create baseline:
-    python test_internal_state_tracking.py TestInternalStateTracking.save_baseline
+    python test_internal_states_tracking.py TestInternalStatesTracking.save_baseline
 
     # Subsequent runs to verify against baseline:
-    python -m unittest test_internal_state_tracking.TestInternalStateTracking
+    python -m unittest test_internal_states_tracking.TestInternalStatesTracking
 """
 
 import sys
@@ -31,7 +31,7 @@ from superneuroabm.model import NeuromorphicModel
 from tests.util import vizualize_responses
 
 
-def test_lif_soma_mixed_synapses(enable_internal_state_tracking=True, use_gpu=True):
+def test_lif_soma_mixed_synapses(enable_internal_states_tracking=True, use_gpu=True):
     """
     Tests multi-synapse integration with a two-soma network.
 
@@ -41,14 +41,14 @@ def test_lif_soma_mixed_synapses(enable_internal_state_tracking=True, use_gpu=Tr
     - soma_1 -> synapse_5 -> soma_0 (to test bidirectional connections)
 
     Args:
-        enable_internal_state_tracking: Whether to track internal states
+        enable_internal_states_tracking: Whether to track internal states
         use_gpu: Whether to use GPU acceleration
 
     Returns:
         NeuromorphicModel instance after simulation
     """
     # Create NeuromorphicModel instance for testing
-    model = NeuromorphicModel(enable_internal_state_tracking=enable_internal_state_tracking)
+    model = NeuromorphicModel(enable_internal_states_tracking=enable_internal_states_tracking)
 
     # Define input spike patterns for synapses
     spike_times = [
@@ -124,25 +124,25 @@ def test_lif_soma_mixed_synapses(enable_internal_state_tracking=True, use_gpu=Tr
     return model
 
 
-class TestInternalStateTracking(unittest.TestCase):
+class TestInternalStatesTracking(unittest.TestCase):
     """
     Test suite to verify internal state tracking consistency.
 
-    Tests that enable_internal_state_tracking=True/False produce identical spike times
+    Tests that enable_internal_states_tracking=True/False produce identical spike times
     and compares against saved baselines to detect model breaking changes.
     """
 
     def test_tracking_consistency(self):
         """Test that tracking ON/OFF produces same spike times."""
         print("\n" + "=" * 70)
-        print("Testing: enable_internal_state_tracking comparison")
+        print("Testing: enable_internal_states_tracking comparison")
         print("=" * 70)
 
         # Run with tracking ENABLED
-        print("\n[1/2] Running with enable_internal_state_tracking=True")
+        print("\n[1/2] Running with enable_internal_states_tracking=True")
         print("-" * 70)
         model_with_tracking = test_lif_soma_mixed_synapses(
-            enable_internal_state_tracking=True,
+            enable_internal_states_tracking=True,
             use_gpu=True
         )
 
@@ -150,15 +150,15 @@ class TestInternalStateTracking(unittest.TestCase):
         vizualize_responses(
             model_with_tracking,
             vthr=-45,
-            fig_name="test_internal_state_tracking_enabled.png"
+            fig_name="test_internal_states_tracking_enabled.png"
         )
-        print("✓ Visualization saved: output/test_internal_state_tracking_enabled.png")
+        print("✓ Visualization saved: output/test_internal_states_tracking_enabled.png")
 
         # Run with tracking DISABLED
-        print("\n[2/2] Running with enable_internal_state_tracking=False")
+        print("\n[2/2] Running with enable_internal_states_tracking=False")
         print("-" * 70)
         model_without_tracking = test_lif_soma_mixed_synapses(
-            enable_internal_state_tracking=False,
+            enable_internal_states_tracking=False,
             use_gpu=True
         )
 
@@ -194,5 +194,5 @@ class TestInternalStateTracking(unittest.TestCase):
 
 if __name__ == "__main__":
     # Usage:
-    #   python test_internal_state_tracking.py  # Run test
+    #   python test_internal_states_tracking.py  # Run test
     unittest.main()

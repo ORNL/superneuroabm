@@ -38,13 +38,13 @@ def alpha_synapse_step_func(
     locations,
     synapse_params,
     learning_params,
-    internal_state,
-    internal_learning_state,
+    internal_states,
+    learning_internal_states,
     synapse_history,
     input_spikes_tensor,
     output_spikes_tensor,
     internal_states_buffer,
-    internal_learning_states_buffer,
+    learning_internal_states_buffer,
 ):
     t_current = int(tick)
 
@@ -72,16 +72,16 @@ def alpha_synapse_step_func(
     )
 
     # Read internal state
-    I_synapse = internal_state[agent_index][0]
-    h = internal_state[agent_index][1]
+    I_synapse = internal_states[agent_index][0]
+    h = internal_states[agent_index][1]
 
     # Alpha synapse dynamics
     h = h * (1 - dt / tau) + spike * weight * scale / tau
     I_synapse = I_synapse * (1 - dt / tau) + h * dt
 
     # Write back
-    internal_state[agent_index][0] = I_synapse
-    internal_state[agent_index][1] = h
+    internal_states[agent_index][0] = I_synapse
+    internal_states[agent_index][1] = h
 
     buffer_idx = t_current % len(internal_states_buffer[agent_index])
     internal_states_buffer[agent_index][buffer_idx][0] = I_synapse

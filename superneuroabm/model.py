@@ -85,7 +85,7 @@ class NeuromorphicModel(Model):
         synapse_breed_info=None,
         learning_rule_info=None,
         user_config=None,
-        enable_internal_state_tracking: bool = True,
+        enable_internal_states_tracking: bool = True,
     ) -> None:
         """
         Creates an SNN Model and provides methods to create, simulate,
@@ -99,7 +99,7 @@ class NeuromorphicModel(Model):
         :param learning_rule_info: Dict of rule id to dict with
             "func_name" and "import_line" keys. If specified, will
             override the default learning rules.
-        :param enable_internal_state_tracking: If True, tracks and stores
+        :param enable_internal_states_tracking: If True, tracks and stores
             internal states history for all agents during simulation.
             If False, disables tracking to reduce memory usage and improve
             performance. Default is True for backward compatibility.
@@ -111,7 +111,7 @@ class NeuromorphicModel(Model):
         if synapse_breed_info is None:
             synapse_breed_info = _default_synapse_breeds()
 
-        self.enable_internal_state_tracking = enable_internal_state_tracking
+        self.enable_internal_states_tracking = enable_internal_states_tracking
         self._config_list_cache = {}
 
         self.register_global_property("dt", 1e-3)      # Time step (100 μs)
@@ -140,18 +140,18 @@ class NeuromorphicModel(Model):
             "learning_hyperparameters": (
                 [0.0] * max_sizes.get("learning_hyperparameters", 0), False
             ),
-            "internal_state": ([0.0] * max_sizes.get("internal_state", 0), False),
-            "internal_learning_state": (
-                [0.0] * max_sizes.get("internal_learning_state", 0), False
+            "internal_states": ([0.0] * max_sizes.get("internal_states", 0), False),
+            "learning_internal_states": (
+                [0.0] * max_sizes.get("learning_internal_states", 0), False
             ),
             "synapse_delay_reg": ([], False),  # Synapse delay
             "input_spikes_tensor": ([], False),  # input spikes tensor
             "output_spikes_tensor": ([], True),  # NEIGHBOR-VISIBLE: synapses read soma spikes
             "internal_states_buffer": ([], False),
-            "internal_learning_states_buffer": ([], False),  # learning states buffer
+            "learning_internal_states_buffer": ([], False),  # learning states buffer
         }
         # Synapse properties: (default_value, neighbor_visible)
-        # Only internal_state is read by neighbors (somas read I_synapse from synapses)
+        # Only internal_states is read by neighbors (somas read I_synapse from synapses)
         synapse_properties = {
             "hyperparameters": (
                 [0.0] * max_sizes.get("hyperparameters", 0), False
@@ -159,17 +159,17 @@ class NeuromorphicModel(Model):
             "learning_hyperparameters": (
                 [0.0] * max_sizes.get("learning_hyperparameters", 0), False
             ),
-            "internal_state": (
-                [0.0] * max_sizes.get("internal_state", 0), True
+            "internal_states": (
+                [0.0] * max_sizes.get("internal_states", 0), True
             ),  # NEIGHBOR-VISIBLE: somas read Isyn
-            "internal_learning_state": (
-                [0.0] * max_sizes.get("internal_learning_state", 0), False
+            "learning_internal_states": (
+                [0.0] * max_sizes.get("learning_internal_states", 0), False
             ),
             "synapse_delay_reg": ([], False),  # Synapse delay
             "input_spikes_tensor": ([], False),  # input spikes tensor
             "output_spikes_tensor": ([], False),
             "internal_states_buffer": ([], False),
-            "internal_learning_states_buffer": ([], False),  # learning states buffer
+            "learning_internal_states_buffer": ([], False),  # learning states buffer
         }
         self._synapse_ids = set()
         self._soma_ids = set()
@@ -259,7 +259,7 @@ class NeuromorphicModel(Model):
         ]
         overrides = {}
 
-        # Diff synapse/soma config properties (hyperparameters, internal_state)
+        # Diff synapse/soma config properties (hyperparameters, internal_states)
         for property_name in config:
             config_property_key_values = config.get(property_name, {})
             current_property_key_values = self.get_agent_property_value(
@@ -409,10 +409,10 @@ class NeuromorphicModel(Model):
         CALL_ARGS = (
             "            tick, agent_index, _seed, dt, I_bias,\n"
             "            agent_ids, logical_ids, breeds, locations,\n"
-            "            synapse_params, learning_params, internal_state,\n"
-            "            internal_learning_state, synapse_history, input_spikes_tensor,\n"
+            "            synapse_params, learning_params, internal_states,\n"
+            "            learning_internal_states, synapse_history, input_spikes_tensor,\n"
             "            output_spikes_tensor, internal_states_buffer,\n"
-            "            internal_learning_states_buffer,\n"
+            "            learning_internal_states_buffer,\n"
         )
 
         # Collect sys.path entries and import lines
@@ -458,12 +458,12 @@ class NeuromorphicModel(Model):
         lines.append(
             "    tick, agent_index, dt, I_bias, agent_ids, breeds, locations,"
         )
-        lines.append("    synapse_params, learning_params, internal_state,")
+        lines.append("    synapse_params, learning_params, internal_states,")
         lines.append(
-            "    internal_learning_state, synapse_history, input_spikes_tensor,"
+            "    learning_internal_states, synapse_history, input_spikes_tensor,"
         )
         lines.append("    output_spikes_tensor, internal_states_buffer,")
-        lines.append("    internal_learning_states_buffer,")
+        lines.append("    learning_internal_states_buffer,")
         lines.append("):")
         lines.extend(branches)
         lines.append("")
@@ -536,8 +536,8 @@ class NeuromorphicModel(Model):
 
                 data["input_spikes_tensor"][idx] = [-1, 0.0]
                 data["synapse_delay_reg"][idx] = [0] * int(hp[1])
-                data["internal_state"][idx] = is_state
-                data["internal_learning_state"][idx] = ils
+                data["internal_states"][idx] = is_state
+                data["learning_internal_states"][idx] = ils
                 if not retain_parameters:
                     data["hyperparameters"][idx] = hp
                     data["learning_hyperparameters"][idx] = lhp
@@ -547,7 +547,7 @@ class NeuromorphicModel(Model):
                 config_name = self.agentid2config[agent_id]
                 overrides = self.agentid2overrides.get(agent_id, {})
                 hp, is_state = self._get_soma_properties(breed_name, config_name, overrides)
-                data["internal_state"][idx] = is_state
+                data["internal_states"][idx] = is_state
                 data["output_spikes_tensor"][idx] = [0.0, 0.0]
                 if not retain_parameters:
                     data["hyperparameters"][idx] = hp
@@ -613,16 +613,16 @@ class NeuromorphicModel(Model):
         self.set_property_neighbor_visible("breed", False)  # no step func reads neighbor breeds
         super().setup(use_gpu=use_gpu, skip_priority_barriers={100})
 
-        if not self.enable_internal_state_tracking:
+        if not self.enable_internal_states_tracking:
             af = self._agent_factory
             rank = MPI.COMM_WORLD.Get_rank()
             local_agent_map = af._rank2agentid2agentidx.get(rank, {})
             data = af._property_name_2_agent_data_tensor
             for agent_id, idx in local_agent_map.items():
-                state = data["internal_state"][idx]
+                state = data["internal_states"][idx]
                 data["internal_states_buffer"][idx] = [state[::]]
-                ls = data["internal_learning_state"][idx]
-                data["internal_learning_states_buffer"][idx] = [ls[::]]
+                ls = data["learning_internal_states"][idx]
+                data["learning_internal_states_buffer"][idx] = [ls[::]]
 
     def simulate(
         self, ticks: int, update_data_ticks: int = 1  # , num_cpu_proc: int = 4
@@ -641,13 +641,13 @@ class NeuromorphicModel(Model):
         rank = MPI.COMM_WORLD.Get_rank()
         local_agent_map = af._rank2agentid2agentidx.get(rank, {})
         data = af._property_name_2_agent_data_tensor
-        if self.enable_internal_state_tracking:
+        if self.enable_internal_states_tracking:
             for agent_id, idx in local_agent_map.items():
-                state = data["internal_state"][idx]
+                state = data["internal_states"][idx]
                 data["internal_states_buffer"][idx] = [state[::] for _ in range(ticks)]
 
-                ls = data["internal_learning_state"][idx]
-                data["internal_learning_states_buffer"][idx] = [ls[::] for _ in range(ticks)]
+                ls = data["learning_internal_states"][idx]
+                data["learning_internal_states_buffer"][idx] = [ls[::] for _ in range(ticks)]
 
                 if agent_id in self._synapse_ids:
                     spikes = data["input_spikes_tensor"][idx]
@@ -702,7 +702,7 @@ class NeuromorphicModel(Model):
         Creates a soma agent.
 
         :param overrides: Dict keyed by property type, e.g.
-            {"hyperparameters": {"R": 1.1e6}, "internal_state": {"v": -55.0}}
+            {"hyperparameters": {"R": 1.1e6}, "internal_states": {"v": -55.0}}
         :param metadata: List of user-provided string labels for this agent.
         :param agent_id: Explicit global agent ID. If provided, uses this ID
             instead of auto-incrementing. Used for partition-based loading.
@@ -717,8 +717,8 @@ class NeuromorphicModel(Model):
             config = self._component_configurations["soma"][breed][config_name]
             hp_keys = list(config["hyperparameters"].keys())
             hp_vals = [float(v) for v in config["hyperparameters"].values()]
-            is_keys = list(config["internal_state"].keys())
-            is_vals = [float(v) for v in config["internal_state"].values()]
+            is_keys = list(config["internal_states"].keys())
+            is_vals = [float(v) for v in config["internal_states"].values()]
             self._config_list_cache[cache_key] = (hp_keys, hp_vals, is_keys, is_vals)
         hp_keys, hp_defaults, is_keys, is_defaults = self._config_list_cache[cache_key]
 
@@ -726,15 +726,15 @@ class NeuromorphicModel(Model):
         for k, v in overrides.get("hyperparameters", {}).items():
             hyperparameters[hp_keys.index(k)] = float(v)
 
-        default_internal_state = is_defaults[:]
-        for k, v in overrides.get("internal_state", {}).items():
-            default_internal_state[is_keys.index(k)] = float(v)
+        default_internal_states = is_defaults[:]
+        for k, v in overrides.get("internal_states", {}).items():
+            default_internal_states[is_keys.index(k)] = float(v)
 
         soma_id = super().create_agent_of_breed(
             breed=self._soma_breeds[breed],
             agent_id=agent_id,
             hyperparameters=hyperparameters,
-            internal_state=default_internal_state,
+            internal_states=default_internal_states,
             output_spikes_tensor=[0.0, 0.0],
         )
 
@@ -789,8 +789,8 @@ class NeuromorphicModel(Model):
             config = self._component_configurations["synapse"][breed][config_name]
             hp_keys = list(config["hyperparameters"].keys())
             hp_vals = [float(v) for v in config["hyperparameters"].values()]
-            is_keys = list(config["internal_state"].keys())
-            is_vals = [float(v) for v in config["internal_state"].values()]
+            is_keys = list(config["internal_states"].keys())
+            is_vals = [float(v) for v in config["internal_states"].values()]
             self._config_list_cache[cache_key] = (hp_keys, hp_vals, is_keys, is_vals)
         hp_keys, hp_defaults, is_keys, is_defaults = self._config_list_cache[cache_key]
 
@@ -801,8 +801,8 @@ class NeuromorphicModel(Model):
                 lr_config = self._learning_rule_configurations[learning_rule][learning_rule_config]
                 lhp_keys = list(lr_config["learning_hyperparameters"].keys())
                 lhp_vals = [float(v) for v in lr_config["learning_hyperparameters"].values()]
-                ils_keys = list(lr_config.get("internal_learning_state", {}).keys())
-                ils_vals = [float(v) for v in lr_config.get("internal_learning_state", {}).values()]
+                ils_keys = list(lr_config.get("learning_internal_states", {}).keys())
+                ils_vals = [float(v) for v in lr_config.get("learning_internal_states", {}).values()]
                 self._config_list_cache[lr_cache_key] = (lhp_keys, lhp_vals, ils_keys, ils_vals)
             lhp_keys, lhp_defaults, ils_keys, ils_defaults = self._config_list_cache[lr_cache_key]
         else:
@@ -813,17 +813,17 @@ class NeuromorphicModel(Model):
         for k, v in overrides.get("hyperparameters", {}).items():
             hyperparameters[hp_keys.index(k)] = float(v)
 
-        default_internal_state = is_defaults[:]
-        for k, v in overrides.get("internal_state", {}).items():
-            default_internal_state[is_keys.index(k)] = float(v)
+        default_internal_states = is_defaults[:]
+        for k, v in overrides.get("internal_states", {}).items():
+            default_internal_states[is_keys.index(k)] = float(v)
 
         learning_hyperparameters = lhp_defaults[:]
         for k, v in overrides.get("learning_hyperparameters", {}).items():
             learning_hyperparameters[lhp_keys.index(k)] = float(v)
 
-        default_internal_learning_state = ils_defaults[:]
-        for k, v in overrides.get("internal_learning_state", {}).items():
-            default_internal_learning_state[ils_keys.index(k)] = float(v)
+        default_learning_internal_states = ils_defaults[:]
+        for k, v in overrides.get("learning_internal_states", {}).items():
+            default_learning_internal_states[ils_keys.index(k)] = float(v)
 
         synaptic_delay = int(hyperparameters[1])
         delay_reg = [0 for _ in range(synaptic_delay)]
@@ -832,8 +832,8 @@ class NeuromorphicModel(Model):
             agent_id=agent_id,
             hyperparameters=hyperparameters,
             learning_hyperparameters=learning_hyperparameters,
-            internal_state=default_internal_state,
-            internal_learning_state=default_internal_learning_state,
+            internal_states=default_internal_states,
+            learning_internal_states=default_learning_internal_states,
             synapse_delay_reg=delay_reg,
             input_spikes_tensor=[-1, 0.0],
         )
@@ -874,7 +874,7 @@ class NeuromorphicModel(Model):
     def _get_soma_properties(self, breed: str, config_name: str, overrides: dict = None):
         """Compute soma property values from config without creating an agent.
 
-        :return: (hyperparameters, internal_state) as lists
+        :return: (hyperparameters, internal_states) as lists
         """
         overrides = overrides or {}
         cache_key = ("soma", breed, config_name)
@@ -882,8 +882,8 @@ class NeuromorphicModel(Model):
             config = self._component_configurations["soma"][breed][config_name]
             hp_keys = list(config["hyperparameters"].keys())
             hp_vals = [float(v) for v in config["hyperparameters"].values()]
-            is_keys = list(config["internal_state"].keys())
-            is_vals = [float(v) for v in config["internal_state"].values()]
+            is_keys = list(config["internal_states"].keys())
+            is_vals = [float(v) for v in config["internal_states"].values()]
             self._config_list_cache[cache_key] = (hp_keys, hp_vals, is_keys, is_vals)
         hp_keys, hp_defaults, is_keys, is_defaults = self._config_list_cache[cache_key]
 
@@ -891,7 +891,7 @@ class NeuromorphicModel(Model):
         for k, v in overrides.get("hyperparameters", {}).items():
             hp[hp_keys.index(k)] = float(v)
         is_state = is_defaults[:]
-        for k, v in overrides.get("internal_state", {}).items():
+        for k, v in overrides.get("internal_states", {}).items():
             is_state[is_keys.index(k)] = float(v)
         return hp, is_state
 
@@ -910,8 +910,8 @@ class NeuromorphicModel(Model):
             config = self._component_configurations["synapse"][breed][config_name]
             hp_keys = list(config["hyperparameters"].keys())
             hp_vals = [float(v) for v in config["hyperparameters"].values()]
-            is_keys = list(config["internal_state"].keys())
-            is_vals = [float(v) for v in config["internal_state"].values()]
+            is_keys = list(config["internal_states"].keys())
+            is_vals = [float(v) for v in config["internal_states"].values()]
             self._config_list_cache[cache_key] = (hp_keys, hp_vals, is_keys, is_vals)
         hp_keys, hp_defaults, is_keys, is_defaults = self._config_list_cache[cache_key]
 
@@ -921,8 +921,8 @@ class NeuromorphicModel(Model):
                 lr_config = self._learning_rule_configurations[learning_rule][learning_rule_config]
                 lhp_keys = list(lr_config["learning_hyperparameters"].keys())
                 lhp_vals = [float(v) for v in lr_config["learning_hyperparameters"].values()]
-                ils_keys = list(lr_config.get("internal_learning_state", {}).keys())
-                ils_vals = [float(v) for v in lr_config.get("internal_learning_state", {}).values()]
+                ils_keys = list(lr_config.get("learning_internal_states", {}).keys())
+                ils_vals = [float(v) for v in lr_config.get("learning_internal_states", {}).values()]
                 self._config_list_cache[lr_cache_key] = (lhp_keys, lhp_vals, ils_keys, ils_vals)
             lhp_keys, lhp_defaults, ils_keys, ils_defaults = self._config_list_cache[lr_cache_key]
         else:
@@ -933,13 +933,13 @@ class NeuromorphicModel(Model):
         for k, v in overrides.get("hyperparameters", {}).items():
             hp[hp_keys.index(k)] = float(v)
         is_state = is_defaults[:]
-        for k, v in overrides.get("internal_state", {}).items():
+        for k, v in overrides.get("internal_states", {}).items():
             is_state[is_keys.index(k)] = float(v)
         lhp = lhp_defaults[:]
         for k, v in overrides.get("learning_hyperparameters", {}).items():
             lhp[lhp_keys.index(k)] = float(v)
         ils = ils_defaults[:]
-        for k, v in overrides.get("internal_learning_state", {}).items():
+        for k, v in overrides.get("learning_internal_states", {}).items():
             ils[ils_keys.index(k)] = float(v)
 
         synaptic_delay = int(hp[1])
@@ -948,11 +948,50 @@ class NeuromorphicModel(Model):
         return {
             'hyperparameters': hp,
             'learning_hyperparameters': lhp,
-            'internal_state': is_state,
-            'internal_learning_state': ils,
+            'internal_states': is_state,
+            'learning_internal_states': ils,
             'synapse_delay_reg': delay_reg,
             'input_spikes_tensor': [-1, 0.0],
         }, hp, lhp, is_state, ils
+
+    @staticmethod
+    def _normalize_snn_partition(data: dict) -> dict:
+        """Map the SNN-native file schema to the internal representation.
+
+        Input (canonical): {'somas': [...], 'synapses': [...], 'remote_ranks': {...}}
+          - soma:    {'id', 'breed', 'config', 'overrides', 'metadata'}
+          - synapse: {'id', 'pre', 'post', 'breed', 'config', 'learning_rule',
+                      'learning_rule_config', 'overrides', 'metadata'}  (pre = -1 → input)
+        Output (internal): {'nodes': [...], 'edges': [...], 'remote_nodes': {...}}
+          where each edge has 'source'/'target'/'synapse_id'.
+
+        Raises on the legacy graph-centric schema (nodes/edges/source/target) so old
+        files fail loudly instead of silently dropping unmatched override keys.
+        """
+        if 'somas' in data or 'synapses' in data:
+            edges = []
+            for syn in data.get('synapses', []):
+                edge = {k: v for k, v in syn.items() if k not in ('id', 'pre', 'post')}
+                edge['synapse_id'] = syn['id']
+                edge['source'] = syn['pre']
+                edge['target'] = syn['post']
+                edges.append(edge)
+            return {
+                'nodes': list(data.get('somas', [])),
+                'edges': edges,
+                'remote_nodes': data.get('remote_ranks', data.get('remote_nodes', {})),
+            }
+        if 'nodes' in data or 'edges' in data:
+            raise ValueError(
+                "Legacy graph-centric network format detected (found "
+                f"{sorted(k for k in ('nodes', 'edges') if k in data)}). The schema is now "
+                "SNN-native: use 'somas'/'synapses' with per-synapse 'id'/'pre'/'post' and "
+                "'remote_ranks'. Regenerate the file with the updated producer "
+                "(e.g. build_network_from_data.py)."
+            )
+        raise ValueError(
+            "Unrecognized network file: expected top-level 'somas' and 'synapses' keys."
+        )
 
     @staticmethod
     def _read_partition_file(partition_file: str) -> dict:
@@ -972,23 +1011,7 @@ class NeuromorphicModel(Model):
             import pickle
             with open(partition_file, 'rb') as f:
                 data = pickle.load(f)
-            # Normalize legacy format: 'attributes' → top-level keys
-            # Legacy nodes: {'id': x, 'attributes': {'breed': ...}}
-            # New nodes: {'id': x, 'breed': ..., 'config': ...}
-            if data.get('nodes') and 'attributes' in data['nodes'][0]:
-                for node in data['nodes']:
-                    attrs = node.pop('attributes', {})
-                    node.update(attrs)
-            # Legacy edges: {'source': x, 'target': y, 'synapse_id': z, 'attributes': {...}}
-            # New edges: {'source': x, 'target': y, 'breed': ..., ...}
-            if data.get('edges') and 'attributes' in data['edges'][0]:
-                for edge in data['edges']:
-                    attrs = edge.pop('attributes', {})
-                    edge.update(attrs)
-            # Normalize key: 'remote_node_ranks' → 'remote_nodes'
-            if 'remote_node_ranks' in data and 'remote_nodes' not in data:
-                data['remote_nodes'] = data.pop('remote_node_ranks')
-            return data
+            return NeuromorphicModel._normalize_snn_partition(data)
 
         elif ext == '.graphml':
             import networkx as nx
@@ -1050,15 +1073,24 @@ class NeuromorphicModel(Model):
                        synapse_config: str = "config_0") -> None:
         """Load a network definition file and build the neuromorphic model.
 
-        Reads a graph file (GraphML, pkl, or JSON), computes property
-        values from breed configs, builds connections, and calls SAGESim's
+        Reads an SNN-native network file (pkl), computes property values from
+        breed configs, builds connections, and calls SAGESim's
         build_from_local_data() for bulk creation.
 
-        The file must contain nodes (with breed/config), edges (with
-        synapse_id/breed/config), and remote_agents mapping all remote agent
-        IDs (both somas and synapses) to their owning rank.
+        Canonical file schema (a dict with 2 required keys + 1 optional):
+            {
+              "somas":    [{"id", "breed", "config", "overrides", "metadata"}, ...],
+              "synapses": [{"id", "pre", "post", "breed", "config",
+                            "learning_rule", "learning_rule_config",
+                            "overrides", "metadata"}, ...],   # pre = -1 → external input
+              "remote_ranks": {agent_id: rank}   # optional; only for multi-GPU
+            }
+        `overrides` is grouped: "hyperparameters", "internal_states",
+        "learning_hyperparameters", "learning_internal_states". Legacy
+        graph-centric files (nodes/edges/source/target) are rejected with a
+        clear error — regenerate them with the updated producer.
 
-        :param partition_file: Path to network file (auto-detected format)
+        :param partition_file: Path to network file (.pkl)
         :param soma_breed: Default soma breed name
         :param soma_config: Default soma config name
         :param synapse_breed: Default synapse breed name
@@ -1103,7 +1135,7 @@ class NeuromorphicModel(Model):
                 'breed': self._soma_breeds[breed],
                 'properties': {
                     'hyperparameters': hp,
-                    'internal_state': is_state,
+                    'internal_states': is_state,
                     'output_spikes_tensor': [0.0, 0.0],
                 },
             })
@@ -1291,16 +1323,16 @@ class NeuromorphicModel(Model):
         return dict(result)
 
     def get_internal_states_history(self, agent_id: int) -> np.array:
-        if not self.enable_internal_state_tracking:
+        if not self.enable_internal_states_tracking:
             return []
         return super().get_agent_property_value(
             id=agent_id, property_name="internal_states_buffer"
         )
 
-    def get_internal_learning_states_history(self, agent_id: int) -> np.array:
-        if not self.enable_internal_state_tracking:
+    def get_learning_internal_states_history(self, agent_id: int) -> np.array:
+        if not self.enable_internal_states_tracking:
             return []
         return super().get_agent_property_value(
-            id=agent_id, property_name="internal_learning_states_buffer"
+            id=agent_id, property_name="learning_internal_states_buffer"
         )
 

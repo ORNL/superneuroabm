@@ -32,7 +32,7 @@ class TestRegistrationAPI(unittest.TestCase):
 
     def test_register_soma_type(self):
         """Register existing LIF soma under a new name and verify it fires."""
-        model = NeuromorphicModel(enable_internal_state_tracking=True)
+        model = NeuromorphicModel(enable_internal_states_tracking=True)
 
         lif_path = SUPERNEURO_DIR / "step_functions" / "soma" / "lif.py"
         model.register_soma_type(
@@ -68,7 +68,7 @@ class TestRegistrationAPI(unittest.TestCase):
 
     def test_register_learning_rule(self):
         """Register exp_pair_wise_stdp_bounded_nn and verify learning works."""
-        model = NeuromorphicModel(enable_internal_state_tracking=True)
+        model = NeuromorphicModel(enable_internal_states_tracking=True)
 
         stdp_path = (
             Path(__file__).resolve().parent.parent

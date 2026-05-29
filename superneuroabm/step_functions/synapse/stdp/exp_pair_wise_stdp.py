@@ -20,13 +20,13 @@ def exp_pair_wise_stdp(
     locations,
     synapse_params,  # scale, time constant (tau_rise and tau_fall)
     learning_params,
-    internal_state,  #
-    internal_learning_state,  # learning state variables
+    internal_states,  #
+    learning_internal_states,  # learning state variables
     synapse_history,  # delay
     input_spikes_tensor,  # input spikes
     output_spikes_tensor,
     internal_states_buffer,
-    internal_learning_states_buffer,
+    learning_internal_states_buffer,
 ):
     t_current = int(tick)
 
@@ -43,9 +43,9 @@ def exp_pair_wise_stdp(
     stdp_history_length = learning_params[agent_index][5]
     # Wmax, Wmin
 
-    pre_trace = internal_learning_state[agent_index][0]
-    post_trace = internal_learning_state[agent_index][1]
-    dW = internal_learning_state[agent_index][2]
+    pre_trace = learning_internal_states[agent_index][0]
+    post_trace = learning_internal_states[agent_index][1]
+    dW = learning_internal_states[agent_index][2]
 
     # locations[agent_index] = [pre_soma_index, post_soma_index]
     # SAGESim has already converted agent IDs to local indices
@@ -84,16 +84,16 @@ def exp_pair_wise_stdp(
     weight += dW  # Update the weight
     synapse_params[agent_index][0] = weight  # Update the weight in synapse_params
 
-    internal_learning_state[agent_index][0] = pre_trace
-    internal_learning_state[agent_index][1] = post_trace
-    internal_learning_state[agent_index][2] = dW
+    learning_internal_states[agent_index][0] = pre_trace
+    learning_internal_states[agent_index][1] = post_trace
+    learning_internal_states[agent_index][2] = dW
 
     # Safe buffer indexing: use modulo to prevent out-of-bounds access
     # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always
-    buffer_idx = t_current % len(internal_learning_states_buffer[agent_index])
-    internal_learning_states_buffer[agent_index][buffer_idx][0] = pre_trace
-    internal_learning_states_buffer[agent_index][buffer_idx][1] = post_trace
-    internal_learning_states_buffer[agent_index][buffer_idx][2] = dW
+    buffer_idx = t_current % len(learning_internal_states_buffer[agent_index])
+    learning_internal_states_buffer[agent_index][buffer_idx][0] = pre_trace
+    learning_internal_states_buffer[agent_index][buffer_idx][1] = post_trace
+    learning_internal_states_buffer[agent_index][buffer_idx][2] = dW
 
     # spike_pre_[t_current] = pre_soma_spike #spike_pre_ is an array of size (stdp_history_length, number of input neurons), pre_soma_spike is (number of input neurons,)
     # spike_post_[:, t_current] = post_soma_spike#spike_post_ is an array of size (number of output neurons,stdp_history_length), post_soma_spike is (number of output neurons,)

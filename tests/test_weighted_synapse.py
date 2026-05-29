@@ -17,7 +17,7 @@ class TestWeightedSynapse(unittest.TestCase):
 
 
     def _make_model(self):
-        return NeuromorphicModel(enable_internal_state_tracking=True)
+        return NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_single_spike_response_with_wtd_synaspe(self):
 
@@ -61,7 +61,7 @@ class TestWeightedSynapseExpPairWiseSTDP(unittest.TestCase):
     """Tests for weighted synapse with unbounded exponential pair-wise STDP."""
 
     def _make_model(self):
-        return NeuromorphicModel(enable_internal_state_tracking=True)
+        return NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_single_spike_response(self):
         """A single input spike should propagate through the STDP synapse and cause the soma to fire."""
@@ -140,7 +140,7 @@ class TestWeightedSynapseBoundedSTDP(unittest.TestCase):
     """Tests for weighted synapse with bounded exponential pair-wise STDP."""
 
     def _make_model(self):
-        return NeuromorphicModel(enable_internal_state_tracking=True)
+        return NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_single_spike_response(self):
         """A single input spike should propagate through the bounded STDP synapse and cause the soma to fire."""
@@ -260,7 +260,7 @@ class TestWeightedSynapseThreeBitSTDP(unittest.TestCase):
     """Tests for weighted synapse with 3-bit quantized STDP."""
 
     def _make_model(self):
-        return NeuromorphicModel(enable_internal_state_tracking=True)
+        return NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_single_spike_response(self):
         """A single input spike should propagate through the quantized STDP synapse and cause the soma to fire."""
@@ -428,7 +428,7 @@ class TestWeightedSynapseMemristiveSTDP(unittest.TestCase):
     """Tests for weighted synapse with memristive exponential pair-wise STDP."""
 
     def _make_model(self):
-        return NeuromorphicModel(enable_internal_state_tracking=True)
+        return NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_single_spike_response(self):
         """A single input spike should propagate through the memristive STDP synapse and cause the soma to fire."""

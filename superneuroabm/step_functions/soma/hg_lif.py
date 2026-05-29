@@ -16,7 +16,7 @@ Integration uses the exact analytical solution for linear ODEs (matching
 Brian2's method='linear').
 
 On spike: u = 2*T, a = deltaa.  x = 0 is handled by the STDP kernel
-(learning_rule_selector zeros synapse internal_state on post-spike).
+(learning_rule_selector zeros synapse internal_states on post-spike).
 
 Hyperparameters (neuron_params):
   [0] T         - spike threshold (e.g. 500)
@@ -50,13 +50,13 @@ def hg_lif_soma_step_func(
     locations,
     neuron_params,
     learning_params,
-    internal_state,
-    internal_learning_state,
+    internal_states,
+    learning_internal_states,
     synapse_history,
     input_spikes_tensor,
     output_spikes_tensor,
     internal_states_buffer,
-    internal_learning_states_buffer,
+    learning_internal_states_buffer,
 ):
     synapse_indices = locations[agent_index]
 
@@ -65,7 +65,7 @@ def hg_lif_soma_step_func(
     for i in range(len(synapse_indices)):
         synapse_index = int(synapse_indices[i])
         if synapse_index >= 0 and not cp.isnan(synapse_indices[i]):
-            x_total += internal_state[synapse_index][0]  # I_synapse
+            x_total += internal_states[synapse_index][0]  # I_synapse
 
     t_current = int(tick)
     # dt and I_bias received directly as scalar params
@@ -81,10 +81,10 @@ def hg_lif_soma_step_func(
     I_in = neuron_params[agent_index][7]
 
     # Internal state
-    u = internal_state[agent_index][0]
-    tcount = internal_state[agent_index][1]
-    tlast = internal_state[agent_index][2]
-    a = internal_state[agent_index][3]
+    u = internal_states[agent_index][0]
+    tcount = internal_states[agent_index][1]
+    tlast = internal_states[agent_index][2]
+    a = internal_states[agent_index][3]
 
     # Exact integration (matching Brian2 method='linear')
     decay_u = cp.exp(-dt / taum)
@@ -121,10 +121,10 @@ def hg_lif_soma_step_func(
     tlast = tlast * (1.0 - s) + tcount * s
 
     # Update internal state
-    internal_state[agent_index][0] = u
-    internal_state[agent_index][1] = tcount + 1
-    internal_state[agent_index][2] = tlast
-    internal_state[agent_index][3] = a
+    internal_states[agent_index][0] = u
+    internal_states[agent_index][1] = tcount + 1
+    internal_states[agent_index][2] = tlast
+    internal_states[agent_index][3] = a
 
     output_spikes_tensor[agent_index][t_current % 2] = s
 

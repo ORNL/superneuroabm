@@ -41,18 +41,18 @@ class TestSynapseAndSomaModels(unittest.TestCase):
     # Class variable to control baseline saving mode
     SAVE_BASELINE_MODE = False
 
-    def __init__(self, methodName: str = ..., enable_internal_state_tracking: bool = True) -> None:
+    def __init__(self, methodName: str = ..., enable_internal_states_tracking: bool = True) -> None:
         """
         Initialize the test case with a NeuromorphicModel instance.
 
         Args:
             methodName: Name of the test method to run
-            enable_internal_state_tracking: If True, tracks internal states for visualization.
+            enable_internal_states_tracking: If True, tracks internal states for visualization.
                 If False, only spike times are printed (useful for performance testing).
         """
         super().__init__(methodName)
         # Create NeuromorphicModel instance for testing
-        self._model = NeuromorphicModel(enable_internal_state_tracking=enable_internal_state_tracking)
+        self._model = NeuromorphicModel(enable_internal_states_tracking=enable_internal_states_tracking)
         # Set to use CPU for base test (GPU variant in separate class)
         self._use_gpu = True
 
@@ -400,7 +400,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         minimum_expected_spikes = 2
 
         # Extract the synaptic current history from synapse_0 (if tracking is enabled)
-        # if self._model.enable_internal_state_tracking:
+        # if self._model.enable_internal_states_tracking:
         #     internal_states_history_syn0 = np.array(
         #         self._model.get_internal_states_history(agent_id=synapse_0)
         #     )

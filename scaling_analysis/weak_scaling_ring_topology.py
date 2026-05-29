@@ -124,7 +124,7 @@ def main():
         print("\n[2/4] Loading partition files...")
 
     t0 = time.time()
-    model = NeuromorphicModel(enable_internal_state_tracking=False)
+    model = NeuromorphicModel(enable_internal_states_tracking=False)
     partition_file = os.path.join(partition_dir, f"partition_{rank}.pkl")
     model.load_from_file(partition_file)
     model._verbose_timing = True

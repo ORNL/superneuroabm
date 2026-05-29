@@ -19,7 +19,7 @@
 #       hyperparameters:      # Fixed parameters that govern the component's dynamics
 #         param_1: value
 #         param_2: value
-#       internal_state:       # Dynamic state variables that evolve each tick
+#       internal_states:       # Dynamic state variables that evolve each tick
 #         state_1: value
 #
 # HOW IT WORKS
@@ -59,7 +59,7 @@ soma:
         tref_allows_integration: 1  # 1 = keep integrating during refractory
         I_in: 0                     # Constant input current (A)
         scaling_factor: 1e-5        # Multiplier applied to synaptic current
-      internal_state:
+      internal_states:
         v: -60.0                    # Membrane voltage (mV) -- starts at rest
         tcount: 0.0                 # Simulation time counter
         tlast: 0.0                  # Time of last spike (s)
@@ -86,7 +86,7 @@ soma:
         d: 130                      # After-spike recovery increment
         vreset: -56                 # Reset voltage after spike (mV)
         I_in: 500                   # Constant input current (pA)
-      internal_state:
+      internal_states:
         v: -75                      # Membrane voltage (mV) -- starts at rest
         u: 0                        # Recovery variable
 
@@ -112,7 +112,7 @@ synapse:
         scale: 1.0                  # Current scaling factor
         tau_fall: 1e-2              # Exponential decay time constant (s)
         tau_rise: 0                 # Rise time (0 = instantaneous)
-      internal_state:
+      internal_states:
         I_synapse: 0.0              # Synaptic current
 
     # External input synapse -- weak
@@ -123,7 +123,7 @@ synapse:
         scale: 1.0
         tau_fall: 1e-2
         tau_rise: 0
-      internal_state:
+      internal_states:
         I_synapse: 0.0
 
     # Internal synapse with plasticity (LIF -> IZH)
@@ -134,7 +134,7 @@ synapse:
         scale: 1.0
         tau_fall: 1e-2
         tau_rise: 0
-      internal_state:
+      internal_states:
         I_synapse: 0.0
 
 
@@ -163,7 +163,7 @@ learning_rule:
         stdp_history_length: 100    # Spike history buffer size
         wmin: 0.0                   # Minimum weight bound
         wmax: 1.0                   # Maximum weight bound
-      internal_learning_state:
+      learning_internal_states:
         pre_trace: 0                # Pre-synaptic eligibility trace
         post_trace: 0               # Post-synaptic eligibility trace
         dW: 0                       # Accumulated weight change

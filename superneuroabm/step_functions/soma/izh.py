@@ -18,13 +18,13 @@ def izh_soma_step_func(
     locations,
     neuron_params,  # k, vth, C, a, b,
     learning_params,
-    internal_state,  # v, u
-    internal_learning_state,
+    internal_states,  # v, u
+    learning_internal_states,
     synapse_history,  # Synapse delay
     input_spikes_tensor,  # input spikes
     output_spikes_tensor,
     internal_states_buffer,
-    internal_learning_states_buffer,
+    learning_internal_states_buffer,
 ):
     synapse_indices = locations[agent_index]  # network location is defined by neighbors
 
@@ -35,7 +35,7 @@ def izh_soma_step_func(
     for i in range(len(synapse_indices)):
         synapse_index = int(synapse_indices[i])
         if synapse_index >= 0 and not cp.isnan(synapse_indices[i]):
-            I_synapse += internal_state[synapse_index][0]
+            I_synapse += internal_states[synapse_index][0]
 
     # Get the current time step value:
     t_current = int(tick)
@@ -58,12 +58,12 @@ def izh_soma_step_func(
     # u' = a(bv - u)
     # if v=30mV: v = c, u = u + d, spike
 
-    # dv = (k*(internal_state[my_idx]-vrest)*(internal_state[my_idx]-vthr)-u[my_idx]+I) / C
-    # internal_state: [0] - v, [1] - u
-    # NOTE: size of internal_state would need to be set as the maximum possible state variables of any spiking neuron
+    # dv = (k*(internal_states[my_idx]-vrest)*(internal_states[my_idx]-vthr)-u[my_idx]+I) / C
+    # internal_states: [0] - v, [1] - u
+    # NOTE: size of internal_states would need to be set as the maximum possible state variables of any spiking neuron
 
-    v = internal_state[agent_index][0]
-    u = internal_state[agent_index][1]
+    v = internal_states[agent_index][0]
+    u = internal_states[agent_index][1]
 
     dv = (k * (v - vrest) * (v - vthr) - u + I_synapse + I_bias + I_in) / C
     v = v + dt * dv * 1e3
@@ -74,8 +74,8 @@ def izh_soma_step_func(
     u = u + d * s  # If spiked, update recovery variable
     v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
 
-    internal_state[agent_index][0] = v
-    internal_state[agent_index][1] = u
+    internal_states[agent_index][0] = v
+    internal_states[agent_index][1] = u
 
     output_spikes_tensor[agent_index][t_current % 2] = s
 

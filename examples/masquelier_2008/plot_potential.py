@@ -125,7 +125,7 @@ def record_window(cfg, spike_trains, snap_times, snap_weights,
     print(f"  Simulating {start_s:.1f}-{end_s:.1f}s "
           f"({total_ticks} ticks, {n_subs} sub-chunks, weights from snap {snap_idx}) ...")
 
-    model = NeuromorphicModel(user_config=BASE_DIR / "masquelier_config.yaml", enable_internal_state_tracking=True)
+    model = NeuromorphicModel(user_config=BASE_DIR / "masquelier_config.yaml", enable_internal_states_tracking=True)
     model.set_global_property_value("dt", dt_sim)
 
     soma = model.create_soma(
