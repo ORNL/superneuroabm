@@ -202,7 +202,6 @@ class NeuromorphicModel(Model):
         self._spike_mask_gpu = None      # CuPy float32 bitmask, built lazily
         self._spikes_need_gather = False
 
-        self._metadata = defaultdict(set)  # user-provided label -> set(agent_ids)
         self._soma_outgoing_synapses = defaultdict(set)  # soma_id -> set(synapse_ids)
         self.agentid2overrides = {}  # agent_id -> overrides dict
 
@@ -215,6 +214,11 @@ class NeuromorphicModel(Model):
         self._learning_rule_names = {r["func_name"]: rid for rid, r in self._learning_rules.items()}
         self._next_learning_rule_id = len(self._learning_rules)
         self._setup_called = False
+        # Construction-mode lock: a model is built EITHER incrementally via
+        # create_soma/create_synapse OR in one shot via load_from_file — never
+        # both. load_from_file overwrites the agent factory wholesale, so the two
+        # paths cannot be combined. Set True by load_from_file().
+        self._built_from_file = False
 
     def get_agent_config_name(self, agent_id: int) -> Dict[str, any]:
         """
@@ -288,15 +292,6 @@ class NeuromorphicModel(Model):
                 }
 
         return overrides
-
-    def get_agents_with_label(self, label: str) -> Set[int]:
-        """
-        Returns the set of agent IDs associated with the given metadata label.
-
-        :param label: The metadata label to filter agents by.
-        :return: Set of agent IDs that have the specified label.
-        """
-        return self._metadata.get(label, set())
 
     def _make_soma_breed(self, name: str, step_func, step_func_path: Path) -> Breed:
         breed = Breed(name)
@@ -695,7 +690,6 @@ class NeuromorphicModel(Model):
         breed: str,
         config_name: str,
         overrides: Dict[str, Dict[str, float]] = None,
-        metadata: List[str] = None,
         agent_id: int = None,
     ) -> int:
         """
@@ -703,12 +697,18 @@ class NeuromorphicModel(Model):
 
         :param overrides: Dict keyed by property type, e.g.
             {"hyperparameters": {"R": 1.1e6}, "internal_states": {"v": -55.0}}
-        :param metadata: List of user-provided string labels for this agent.
         :param agent_id: Explicit global agent ID. If provided, uses this ID
-            instead of auto-incrementing. Used for partition-based loading.
+            instead of auto-incrementing; must be unique (a collision with an
+            existing agent raises). Used for partition-based loading.
         :return: SAGESim agent id of soma
         """
-        metadata = metadata or []
+        if self._built_from_file:
+            raise RuntimeError(
+                "Cannot create_soma() on a model built via load_from_file(). "
+                "load_from_file() builds the entire model in one shot and is "
+                "mutually exclusive with incremental create_soma/create_synapse — "
+                "use one construction path per model."
+            )
         overrides = overrides or {}
 
         # Cached config list construction — avoids copy.deepcopy per agent
@@ -741,9 +741,6 @@ class NeuromorphicModel(Model):
         self._soma_ids.add(soma_id)
         self.agentid2config[soma_id] = config_name
         self.agentid2overrides[soma_id] = overrides
-
-        for label in metadata:
-            self._metadata[label].add(soma_id)
         return soma_id
 
     def create_synapse(
@@ -755,7 +752,6 @@ class NeuromorphicModel(Model):
         learning_rule: str = None,
         learning_rule_config: str = "default",
         overrides: Dict[str, Dict[str, float]] = None,
-        metadata: List[str] = None,
         agent_id: int = None,
         skip_post_connection: bool = False,
     ) -> int:
@@ -771,8 +767,8 @@ class NeuromorphicModel(Model):
             learning_rule_config (str): Config name within the learning rule breed (default: "default").
             overrides (dict, optional): Dict keyed by property type, e.g.
                 {"hyperparameters": {"weight": 0.5}, "learning_hyperparameters": {"a_exp_pre": 0.01}}
-            metadata (list of str, optional): User-provided labels for this synapse.
-            agent_id (int, optional): Explicit global agent ID. Used for partition-based loading.
+            agent_id (int, optional): Explicit global agent ID; must be unique
+                (a collision with an existing agent raises). Used for partition-based loading.
             skip_post_connection (bool): If True, skip the reverse connection from
                 post_soma to synapse. Used when post_soma is on a remote rank —
                 the remote rank handles its own ghost connection.
@@ -780,7 +776,13 @@ class NeuromorphicModel(Model):
         Returns:
             int: SAGESim agent ID of the created synapse.
         """
-        metadata = metadata or []
+        if self._built_from_file:
+            raise RuntimeError(
+                "Cannot create_synapse() on a model built via load_from_file(). "
+                "load_from_file() builds the entire model in one shot and is "
+                "mutually exclusive with incremental create_soma/create_synapse — "
+                "use one construction path per model."
+            )
         overrides = overrides or {}
 
         # Synapse config cache (hp + is only — no learning params in synapse config)
@@ -856,7 +858,6 @@ class NeuromorphicModel(Model):
         else:
             # For external input, manually add -1 to locations to maintain [pre, post] order
             network_space.get_location(synapse_id).append(-1)
-            metadata.append("input_synapse")
 
         # Second connection: post_soma (if exists)
         if post_soma_id != -1:
@@ -867,8 +868,6 @@ class NeuromorphicModel(Model):
             # For external output (rare), manually add -1
             network_space.get_location(synapse_id).append(-1)
 
-        for label in metadata:
-            self._metadata[label].add(synapse_id)
         return synapse_id
 
     def _get_soma_properties(self, breed: str, config_name: str, overrides: dict = None):
@@ -959,9 +958,11 @@ class NeuromorphicModel(Model):
         """Map the SNN-native file schema to the internal representation.
 
         Input (canonical): {'somas': [...], 'synapses': [...], 'remote_ranks': {...}}
-          - soma:    {'id', 'breed', 'config', 'overrides', 'metadata'}
+          - soma:    {'id', 'breed', 'config', 'overrides'}
           - synapse: {'id', 'pre', 'post', 'breed', 'config', 'learning_rule',
-                      'learning_rule_config', 'overrides', 'metadata'}  (pre = -1 → input)
+                      'learning_rule_config', 'overrides'}  (pre = -1 → input)
+        Any legacy 'metadata' key on a soma/synapse is ignored — labels are an
+        application concern, not framework state.
         Output (internal): {'nodes': [...], 'edges': [...], 'remote_nodes': {...}}
           where each edge has 'source'/'target'/'synapse_id'.
 
@@ -1077,14 +1078,21 @@ class NeuromorphicModel(Model):
         breed configs, builds connections, and calls SAGESim's
         build_from_local_data() for bulk creation.
 
+        This is a one-shot, whole-model builder: it overwrites the agent factory
+        and is MUTUALLY EXCLUSIVE with incremental create_soma/create_synapse.
+        Call it exactly once, on a fresh model, and do not mix the two paths
+        (doing so raises RuntimeError).
+
         Canonical file schema (a dict with 2 required keys + 1 optional):
             {
-              "somas":    [{"id", "breed", "config", "overrides", "metadata"}, ...],
+              "somas":    [{"id", "breed", "config", "overrides"}, ...],
               "synapses": [{"id", "pre", "post", "breed", "config",
                             "learning_rule", "learning_rule_config",
-                            "overrides", "metadata"}, ...],   # pre = -1 → external input
+                            "overrides"}, ...],   # pre = -1 → external input
               "remote_ranks": {agent_id: rank}   # optional; only for multi-GPU
             }
+        A legacy "metadata" key on any soma/synapse is ignored (labels are an
+        application concern, not framework state).
         `overrides` is grouped: "hyperparameters", "internal_states",
         "learning_hyperparameters", "learning_internal_states". Legacy
         graph-centric files (nodes/edges/source/target) are rejected with a
@@ -1096,6 +1104,15 @@ class NeuromorphicModel(Model):
         :param synapse_breed: Default synapse breed name
         :param synapse_config: Default synapse config name
         """
+        if self._soma_ids or self._synapse_ids:
+            raise RuntimeError(
+                "load_from_file() builds the entire model in one shot and overwrites "
+                "the agent factory wholesale; it cannot run on a model that already "
+                f"has agents ({len(self._soma_ids)} somas, {len(self._synapse_ids)} "
+                "synapses). load_from_file() and create_soma/create_synapse are "
+                "mutually exclusive — use one construction path per model. (This also "
+                "prevents calling load_from_file() more than once.)"
+            )
         data = self._read_partition_file(partition_file)
 
         nodes = data['nodes']
@@ -1144,8 +1161,6 @@ class NeuromorphicModel(Model):
             self._soma_ids.add(nid)
             self.agentid2config[nid] = config
             self.agentid2overrides[nid] = overrides
-            for label in node.get('metadata', []):
-                self._metadata[label].add(nid)
 
         # --- Synapses from local edges ---
         for edge in local_edges:
@@ -1184,11 +1199,6 @@ class NeuromorphicModel(Model):
             self.agentid2learning_rule[syn_id] = (learning_rule, learning_rule_config) if learning_rule else None
             if pre_id != -1:
                 self._soma_outgoing_synapses[pre_id].add(syn_id)
-            edge_metadata = list(edge.get('metadata', []))
-            if pre_id == -1:
-                edge_metadata.append("input_synapse")
-            for label in edge_metadata:
-                self._metadata[label].add(syn_id)
 
         # --- Ghost edges: local post-soma reads remote synapse ---
         # The synapse agent lives on the source's rank. The local post-soma
@@ -1201,6 +1211,7 @@ class NeuromorphicModel(Model):
 
         # --- Bulk build via SAGESim ---
         self.build_from_local_data(agents, connections, remote_agent_ranks, directed=True)
+        self._built_from_file = True
 
     def add_spike(self, synapse_id: int, tick: int, value: float) -> None:
         """

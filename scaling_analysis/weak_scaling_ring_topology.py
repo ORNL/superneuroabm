@@ -147,7 +147,15 @@ def main():
         print(f"    GPU setup in {gpu_setup_time:.2f}s")
 
     # Add input spikes
-    input_synapses = list(model.get_agents_with_label("input_synapse"))
+    # NOTE (temporary, reference-only): the label-based input-synapse lookup
+    # (model.get_agents_with_label("input_synapse")) was removed — labels are an
+    # application concern, not framework state. In the future, input synapses
+    # should be specified EXPLICITLY during synthetic data generation
+    # (synthetic_networks.py) and tracked by the caller, rather than derived
+    # here. This connectivity-based derivation (pre == -1) is a stopgap so the
+    # reference script still runs.
+    input_synapses = [sid for sid in model._synapse_ids
+                      if model.get_synapse_connectivity(sid)[0] == -1]
     if rank == 0:
         print(f"\n    Adding spikes to {len(input_synapses)} input synapses...")
 

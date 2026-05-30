@@ -6,6 +6,13 @@ optimized for METIS partitioning, ensuring:
 1. Balanced agent distribution across workers
 2. Minimal cross-worker communication
 3. Similar computational load per worker
+
+NOTE: the ``metadata=[...]`` graph attributes set below (e.g. ``"input_synapse"``,
+``"cluster_<n>"``) are application-side annotations and are NO LONGER consumed by
+superneuroabm — the framework no longer tracks labels (it is a pure id->property
+store). TODO: input synapses (pre == -1) should be specified EXPLICITLY by this
+generator and surfaced to the caller (e.g. returned as an id list) instead of
+relying on a framework label lookup.
 """
 
 from collections import defaultdict
