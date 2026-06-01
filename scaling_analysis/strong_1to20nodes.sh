@@ -1,10 +1,12 @@
 #!/bin/bash
 #SBATCH -A lrn088
-#SBATCH -J weak_1to2_test
-#SBATCH -o /lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/scaling_analysis/outputs/weak_1to2_test_%j.out
-#SBATCH -t 00:30:00
+#SBATCH -J strong_1to20_seq
+#SBATCH -o /lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/scaling_analysis/outputs/strong_1to20_seq_%j.out
+#SBATCH -t 02:00:00
 #SBATCH -q debug
-#SBATCH -N 2
+#SBATCH -N 20
+
+# Strong scaling test (Brunel): fixed total neurons, 1-20 nodes sequential.
 
 unset SLURM_EXPORT_ENV
 
@@ -18,7 +20,6 @@ source activate /lustre/orion/proj-shared/lrn088/objective3/envs/superneuroabm_e
 
 export LD_LIBRARY_PATH=$CRAY_LD_LIBRARY_PATH:$LD_LIBRARY_PATH
 
-# CuPy and profiling output — keep side by side
 WORK_DIR=/lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/scaling_analysis
 export CUPY_CACHE_DIR=${WORK_DIR}/outputs/cupy-cache
 export CUPY_CACHE_SAVE_CUDA_SOURCE=1
@@ -27,7 +28,12 @@ export ROCPROF_OUTPUT_DIR=${WORK_DIR}/outputs/rocprof_${SLURM_JOB_ID}
 cd ${WORK_DIR}
 mkdir -p outputs outputs/cupy-cache
 
-NEURONS_PER_WORKER=5000
+# Configuration (Brunel balanced network)
+# Total neurons is held CONSTANT; only the worker count grows.
+# Must be divisible by every worker count tested (1..160 GPUs => use a highly
+# divisible N). 80640 = 2^7 * 3^2 * 5 * 7 * 2 is divisible by all of 1..20 nodes
+# (8..160 GPUs) for the counts that matter; adjust if you change the node range.
+TOTAL_NEURONS=80640
 TICKS=50
 UPDATE_TICKS=1
 IN_DEGREE=1000      # fixed in-degree K per neuron (Brunel)
@@ -36,26 +42,35 @@ J_E=14.0            # excitatory weight; J_I = -G*J_E
 DELAY=1.5           # synaptic delay (ms)
 FIRING_RATE=10.0    # external Poisson drive (Hz)
 
-SHARED_CSV="outputs/weak_1to2_test_${SLURM_JOB_ID}.csv"
+SHARED_CSV="outputs/strong_1to20_seq_${SLURM_JOB_ID}.csv"
 
 echo "======================================================================"
-echo "Quick Test - 1 and 2 Nodes"
+echo "Strong Scaling Test (Brunel) - 1 to 20 Nodes Sequential"
+echo "======================================================================"
+echo "Job ID: $SLURM_JOB_ID"
+echo "Total neurons (fixed): $TOTAL_NEURONS"
+echo "In-degree K: $IN_DEGREE"
+echo "Results file: $SHARED_CSV"
 echo "======================================================================"
 
-for NNODES in 1 2; do
+for NNODES in {1..20}; do
     NWORKERS=$((NNODES * 8))
-    TOTAL_NEURONS=$((NWORKERS * NEURONS_PER_WORKER))
+
+    if (( TOTAL_NEURONS % NWORKERS != 0 )); then
+        echo "SKIP: $NWORKERS GPUs does not evenly divide $TOTAL_NEURONS neurons"
+        continue
+    fi
 
     echo ""
     echo "======================================================================"
-    echo "Testing: $NNODES nodes, $NWORKERS GPUs, $TOTAL_NEURONS neurons"
+    echo "Testing: $NNODES nodes, $NWORKERS GPUs | $((TOTAL_NEURONS / NWORKERS)) neurons/GPU"
     echo "======================================================================"
     echo "Starting at: $(date)"
 
     set +e
     OUTPUT=$(srun -N$NNODES -n$NWORKERS -c7 --ntasks-per-gpu=1 --gpu-bind=closest \
-        python weak_scaling.py \
-        --neurons-per-worker $NEURONS_PER_WORKER \
+        python strong_scaling.py \
+        --total-neurons $TOTAL_NEURONS \
         --ticks $TICKS \
         --update-ticks $UPDATE_TICKS \
         --in-degree $IN_DEGREE \
@@ -74,13 +89,13 @@ for NNODES in 1 2; do
         continue
     fi
 
-    echo "$OUTPUT" | grep -E "(WEAK SCALING|Network Size|Simulation time|SUCCESS|ERROR|TIMING|Total)"
+    echo "$OUTPUT" | grep -E "(STRONG SCALING|Total neurons|Neurons per worker|Simulation time|SUCCESS|ERROR|TIMING|Rank|Metric|Straggler|MPI Traffic)"
     echo "Completed: $NNODES nodes"
 done
 
 echo ""
 echo "======================================================================"
-echo "TEST COMPLETED"
+echo "ALL STRONG SCALING TESTS COMPLETED (1-20 nodes)!"
 echo "======================================================================"
-echo "Results: $SHARED_CSV"
+echo "Results file: $SHARED_CSV"
 cat $SHARED_CSV

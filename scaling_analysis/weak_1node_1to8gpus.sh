@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH -A lrn088
-#SBATCH -J weak_1to20_seq
-#SBATCH -o /lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/scaling_analysis/outputs/weak_1to20_seq_%j.out
+#SBATCH -J weak_1node_1to8gpus
+#SBATCH -o /lustre/orion/lrn088/proj-shared/objective3/xxz/superneuroabm/scaling_analysis/outputs/weak_1node_1to8gpus_%j.out
 #SBATCH -t 02:00:00
 #SBATCH -q debug
-#SBATCH -N 20
+#SBATCH -N 1
 
-# Weak scaling test: 1-20 nodes sequential
-# This single job tests all configurations from 1 to 20 nodes
+# Weak scaling test: 1 node, 1-8 GPUs sequential
+# This single job tests all configurations from 1 to 8 GPUs
 
 unset SLURM_EXPORT_ENV
 
@@ -30,60 +30,61 @@ export ROCPROF_OUTPUT_DIR=${WORK_DIR}/outputs/rocprof_${SLURM_JOB_ID}
 cd ${WORK_DIR}
 mkdir -p outputs outputs/cupy-cache
 
-# Configuration
+# Configuration (Brunel balanced network)
 NEURONS_PER_WORKER=5000
 TICKS=50
 UPDATE_TICKS=1
-INTRA_DEGREE=10
-NUM_NEIGHBOR_CLUSTERS=1
-CROSS_CLUSTER_EDGES_ARRAY=(5000)  # Test only highest edge density for production runs
+G=5.0               # |J_I|/J_E (inhibition-dominated)
+J_E=14.0            # excitatory weight; J_I = -G*J_E
+DELAY=1.5           # synaptic delay (ms)
+FIRING_RATE=10.0    # external Poisson drive (Hz)
+IN_DEGREE_ARRAY=(1000)  # fixed in-degree K per neuron; add values to sweep
 
 # Create shared CSV file for all timing results (will be appended to by Python script)
-SHARED_CSV="outputs/weak_1to20_seq_${SLURM_JOB_ID}.csv"
+SHARED_CSV="outputs/weak_1node_1to8gpus_${SLURM_JOB_ID}.csv"
 
 echo "======================================================================"
-echo "Weak Scaling Test - 1 to 20 Nodes Sequential"
+echo "Weak Scaling Test (Brunel) - 1 Node, 1 to 8 GPUs Sequential"
 echo "======================================================================"
 echo "Job ID: $SLURM_JOB_ID"
-echo "Allocated nodes: 20"
-echo "Testing: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 nodes"
-echo "Cross-cluster edges to test: ${CROSS_CLUSTER_EDGES_ARRAY[@]}"
+echo "Allocated nodes: 1"
+echo "Testing: 1, 2, 3, 4, 5, 6, 7, 8 GPUs"
+echo "In-degree K to test: ${IN_DEGREE_ARRAY[@]}"
 echo "Results file: $SHARED_CSV"
 echo "======================================================================"
 
-# Loop through cross-cluster edge densities
-for CROSS_CLUSTER_EDGES in "${CROSS_CLUSTER_EDGES_ARRAY[@]}"; do
-    # Calculate cross-cluster percentage
-    TOTAL_EDGES_PER_WORKER=$((NEURONS_PER_WORKER * INTRA_DEGREE + CROSS_CLUSTER_EDGES))
-    CROSS_PERCENT=$(echo "scale=2; 100 * $CROSS_CLUSTER_EDGES / $TOTAL_EDGES_PER_WORKER" | bc)
-
+# Loop through in-degree values
+for IN_DEGREE in "${IN_DEGREE_ARRAY[@]}"; do
     echo ""
     echo "##################################################################"
-    echo "## TESTING: CROSS_CLUSTER_EDGES = $CROSS_CLUSTER_EDGES (~${CROSS_PERCENT}% of edges)"
+    echo "## TESTING: IN_DEGREE K = $IN_DEGREE"
     echo "##################################################################"
     echo ""
 
-    # Loop through node counts from 1 to 20
-    for NNODES in {1..20}; do
-        NWORKERS=$((NNODES * 8))
+    # Loop through GPU counts from 1 to 8
+    for NGPUS in {1..8}; do
+        NNODES=1
+        NWORKERS=$NGPUS
         TOTAL_NEURONS=$((NWORKERS * NEURONS_PER_WORKER))
 
         echo ""
         echo "======================================================================"
-        echo "Testing: $NNODES nodes, $NWORKERS GPUs, $TOTAL_NEURONS neurons | Cross-edges: $CROSS_CLUSTER_EDGES"
+        echo "Testing: $NNODES node, $NWORKERS GPUs, $TOTAL_NEURONS neurons | K: $IN_DEGREE"
         echo "======================================================================"
         echo "Starting at: $(date)"
 
         # Run test - Python script will append to shared CSV
         set +e
         OUTPUT=$(srun -N$NNODES -n$NWORKERS -c7 --ntasks-per-gpu=1 --gpu-bind=closest \
-            python weak_scaling_ring_topology.py \
+            python weak_scaling.py \
             --neurons-per-worker $NEURONS_PER_WORKER \
             --ticks $TICKS \
             --update-ticks $UPDATE_TICKS \
-            --intra-cluster-degree $INTRA_DEGREE \
-            --cross-cluster-edges $CROSS_CLUSTER_EDGES \
-            --num-neighbor-clusters $NUM_NEIGHBOR_CLUSTERS \
+            --in-degree $IN_DEGREE \
+            --g $G \
+            --J-E $J_E \
+            --delay $DELAY \
+            --firing-rate $FIRING_RATE \
             --csv $SHARED_CSV \
             2>&1)
         EXIT_CODE=$?
@@ -92,7 +93,7 @@ for CROSS_CLUSTER_EDGES in "${CROSS_CLUSTER_EDGES_ARRAY[@]}"; do
         # Check if test failed
         if [ $EXIT_CODE -ne 0 ]; then
             echo "=========================================="
-            echo "ERROR: Test failed for $NNODES nodes, $CROSS_CLUSTER_EDGES edges"
+            echo "ERROR: Test failed for $NWORKERS GPUs, K=$IN_DEGREE"
             echo "Exit code: $EXIT_CODE"
             echo "=========================================="
             echo ""
@@ -106,20 +107,20 @@ for CROSS_CLUSTER_EDGES in "${CROSS_CLUSTER_EDGES_ARRAY[@]}"; do
         fi
 
         # Display filtered output (including verbose timing)
-        echo "$OUTPUT" | grep -E "(WEAK SCALING|Network Size|Simulation time|SUCCESS|ERROR|Edge cut|agents \(|TIMING|Rank|Metric|Straggler|MPI Traffic|Grid Barriers)"
+        echo "$OUTPUT" | grep -E "(WEAK SCALING|Total neurons|Simulation time|SUCCESS|ERROR|agents \(|TIMING|Rank|Metric|Straggler|MPI Traffic|Grid Barriers)"
 
-        echo "Completed: $NNODES nodes, $CROSS_CLUSTER_EDGES edges"
+        echo "Completed: $NWORKERS GPUs, K=$IN_DEGREE"
         echo ""
     done
 
     echo ""
-    echo "## Completed: CROSS_CLUSTER_EDGES = $CROSS_CLUSTER_EDGES"
+    echo "## Completed: IN_DEGREE K = $IN_DEGREE"
     echo ""
 done
 
 echo ""
 echo "======================================================================"
-echo "ALL TESTS COMPLETED (1-20 nodes)!"
+echo "ALL TESTS COMPLETED (1-8 GPUs)!"
 echo "======================================================================"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Results file: $SHARED_CSV"
