@@ -753,7 +753,6 @@ class NeuromorphicModel(Model):
         learning_rule_config: str = "default",
         overrides: Dict[str, Dict[str, float]] = None,
         agent_id: int = None,
-        skip_post_connection: bool = False,
     ) -> int:
         """
         Creates and adds a Synapse agent.
@@ -769,9 +768,6 @@ class NeuromorphicModel(Model):
                 {"hyperparameters": {"weight": 0.5}, "learning_hyperparameters": {"a_exp_pre": 0.01}}
             agent_id (int, optional): Explicit global agent ID; must be unique
                 (a collision with an existing agent raises). Used for partition-based loading.
-            skip_post_connection (bool): If True, skip the reverse connection from
-                post_soma to synapse. Used when post_soma is on a remote rank —
-                the remote rank handles its own ghost connection.
 
         Returns:
             int: SAGESim agent ID of the created synapse.
@@ -859,11 +855,12 @@ class NeuromorphicModel(Model):
             # For external input, manually add -1 to locations to maintain [pre, post] order
             network_space.get_location(synapse_id).append(-1)
 
-        # Second connection: post_soma (if exists)
+        # Second connection: post_soma (if exists). Under post-owns, an
+        # incrementally created synapse's post-soma is always local, so the
+        # reverse connection (post reads synapse, for STDP) is always made.
         if post_soma_id != -1:
             network_space.connect_agents(synapse_id, post_soma_id, directed=True)
-            if not skip_post_connection:
-                network_space.connect_agents(post_soma_id, synapse_id, directed=True)  # Bidirectional for STDP
+            network_space.connect_agents(post_soma_id, synapse_id, directed=True)
         else:
             # For external output (rare), manually add -1
             network_space.get_location(synapse_id).append(-1)
@@ -955,32 +952,24 @@ class NeuromorphicModel(Model):
 
     @staticmethod
     def _normalize_snn_partition(data: dict) -> dict:
-        """Map the SNN-native file schema to the internal representation.
+        """Validate and return the SNN-native file schema verbatim.
 
-        Input (canonical): {'somas': [...], 'synapses': [...], 'remote_ranks': {...}}
+        Canonical schema: {'somas': [...], 'synapses': [...], 'remote_ranks': {...}}
           - soma:    {'id', 'breed', 'config', 'overrides'}
           - synapse: {'id', 'pre', 'post', 'breed', 'config', 'learning_rule',
                       'learning_rule_config', 'overrides'}  (pre = -1 → input)
         Any legacy 'metadata' key on a soma/synapse is ignored — labels are an
         application concern, not framework state.
-        Output (internal): {'nodes': [...], 'edges': [...], 'remote_nodes': {...}}
-          where each edge has 'source'/'target'/'synapse_id'.
 
-        Raises on the legacy graph-centric schema (nodes/edges/source/target) so old
-        files fail loudly instead of silently dropping unmatched override keys.
+        The loader consumes 'somas'/'synapses' directly, so no translation is
+        done here. Raises on the legacy graph-centric schema (nodes/edges) so old
+        files fail loudly instead of silently mis-loading.
         """
         if 'somas' in data or 'synapses' in data:
-            edges = []
-            for syn in data.get('synapses', []):
-                edge = {k: v for k, v in syn.items() if k not in ('id', 'pre', 'post')}
-                edge['synapse_id'] = syn['id']
-                edge['source'] = syn['pre']
-                edge['target'] = syn['post']
-                edges.append(edge)
             return {
-                'nodes': list(data.get('somas', [])),
-                'edges': edges,
-                'remote_nodes': data.get('remote_ranks', data.get('remote_nodes', {})),
+                'somas': list(data.get('somas', [])),
+                'synapses': list(data.get('synapses', [])),
+                'remote_ranks': dict(data.get('remote_ranks', {})),
             }
         if 'nodes' in data or 'edges' in data:
             raise ValueError(
@@ -996,17 +985,14 @@ class NeuromorphicModel(Model):
 
     @staticmethod
     def _read_partition_file(partition_file: str) -> dict:
-        """Read a per-rank partition file, auto-detecting format from extension.
+        """Read a per-rank partition file (pickle) into the canonical schema.
 
-        Normalizes all formats to the same internal dict structure:
-            {'nodes': [...], 'edges': [...], 'remote_nodes': {...}}
+        Returns {'somas': [...], 'synapses': [...], 'remote_ranks': {...}}.
 
-        Supported formats: .pkl/.pickle, .graphml, .json
+        Only pickle (.pkl/.pickle) is supported; it is the format every in-repo
+        producer emits (build_snn_from_data.py, synthetic_networks.py).
         """
-        import json as json_mod
-
-        fpath = Path(partition_file)
-        ext = fpath.suffix.lower()
+        ext = Path(partition_file).suffix.lower()
 
         if ext in ('.pkl', '.pickle'):
             import pickle
@@ -1014,58 +1000,10 @@ class NeuromorphicModel(Model):
                 data = pickle.load(f)
             return NeuromorphicModel._normalize_snn_partition(data)
 
-        elif ext == '.graphml':
-            import networkx as nx
-            graph = nx.read_graphml(partition_file)
-
-            def _try_parse(val):
-                """Deserialize JSON-string attributes from GraphML."""
-                if isinstance(val, str):
-                    stripped = val.strip()
-                    if (stripped.startswith('{') and stripped.endswith('}')) or \
-                       (stripped.startswith('[') and stripped.endswith(']')):
-                        try:
-                            return json_mod.loads(stripped)
-                        except (json_mod.JSONDecodeError, ValueError):
-                            pass
-                return val
-
-            nodes = []
-            for node_id, attrs in graph.nodes(data=True):
-                node = {'id': int(node_id)}
-                for k, v in attrs.items():
-                    node[k] = _try_parse(v)
-                nodes.append(node)
-
-            edges = []
-            remote_nodes = {}
-            for u, v, attrs in graph.edges(data=True):
-                edge = {'source': int(u), 'target': int(v)}
-                for k, val in attrs.items():
-                    edge[k] = _try_parse(val)
-                edges.append(edge)
-
-            # Extract remote_nodes from graph-level attribute if present
-            if 'remote_nodes' in graph.graph:
-                remote_nodes = _try_parse(graph.graph['remote_nodes'])
-                if isinstance(remote_nodes, dict):
-                    remote_nodes = {int(k): int(v) for k, v in remote_nodes.items()}
-
-            return {'nodes': nodes, 'edges': edges, 'remote_nodes': remote_nodes}
-
-        elif ext == '.json':
-            with open(partition_file, 'r') as f:
-                data = json_mod.load(f)
-            # JSON keys are always strings — convert node IDs and remote_nodes keys to int
-            if 'remote_nodes' in data:
-                data['remote_nodes'] = {int(k): int(v) for k, v in data['remote_nodes'].items()}
-            return data
-
-        else:
-            raise ValueError(
-                f"Unsupported partition file format: {ext}. "
-                f"Supported: .pkl, .pickle, .graphml, .json"
-            )
+        raise ValueError(
+            f"Unsupported partition file format: {ext}. Only .pkl/.pickle is "
+            "supported (the format emitted by the in-repo partition producers)."
+        )
 
     def load_from_file(self, partition_file: str,
                        soma_breed: str = "lif_soma",
@@ -1083,13 +1021,20 @@ class NeuromorphicModel(Model):
         Call it exactly once, on a fresh model, and do not mix the two paths
         (doing so raises RuntimeError).
 
+        Ownership convention (post-owns / NEST): every synapse in this rank's
+        "synapses" list is OWNED and created here — its post-soma is local. A
+        synapse's pre-soma may be remote; if so it is named in "remote_ranks".
+        The loader READS this ownership, it does not infer it: each listed
+        synapse is created unconditionally, with no pre-locality filter and no
+        ghost split. A synapse appears in exactly one rank's list.
+
         Canonical file schema (a dict with 2 required keys + 1 optional):
             {
               "somas":    [{"id", "breed", "config", "overrides"}, ...],
               "synapses": [{"id", "pre", "post", "breed", "config",
                             "learning_rule", "learning_rule_config",
                             "overrides"}, ...],   # pre = -1 → external input
-              "remote_ranks": {agent_id: rank}   # optional; only for multi-GPU
+              "remote_ranks": {agent_id: rank}   # optional; remote pre-somas
             }
         A legacy "metadata" key on any soma/synapse is ignored (labels are an
         application concern, not framework state).
@@ -1115,40 +1060,31 @@ class NeuromorphicModel(Model):
             )
         data = self._read_partition_file(partition_file)
 
-        nodes = data['nodes']
-        graph_edges = data['edges']
-        # remote_agents maps ALL remote agent IDs (somas + synapses) to ranks
-        remote_agents = data.get('remote_agents', data.get('remote_nodes', {}))
-        local_node_ids = set(n['id'] for n in nodes)
-
-        # Separate local edges (source local → create synapse agent) from
-        # ghost edges (source remote → just a connection for STDP reads)
-        local_edges = [e for e in graph_edges
-                       if e['source'] in local_node_ids or e['source'] == -1]
-        ghost_edges = [e for e in graph_edges
-                       if e['source'] not in local_node_ids and e['source'] != -1]
-
-        # Validate that all edges have synapse_id
-        for edge in local_edges:
-            if 'synapse_id' not in edge:
-                raise ValueError(
-                    f"Edge from {edge['source']} to {edge['target']} missing "
-                    f"required 'synapse_id'. Assign synapse IDs before saving."
-                )
+        somas = data['somas']
+        synapses = data['synapses']
+        # remote_ranks maps every non-local neighbor (a remote pre-soma) to its
+        # owner rank. The synapse's owner rank is rank(post): every synapse
+        # listed here is OWNED here (post is local). The pre-soma MAY be remote.
+        remote_agent_ranks = dict(data['remote_ranks'])
 
         agents = []
-        connections = []
-        remote_agent_ranks = dict(remote_agents)
+        # Adjacency map handed straight to SAGESim's dict fast-path: each local
+        # agent -> its finished, ordered neighbor list. Built directly here (no
+        # intermediate (a, b) tuple list), so build_from_local_data skips the
+        # tuple->dict normalization. Keys are always local (a synapse, or a local
+        # post-soma); a remote pre-soma only ever appears as a value.
+        from collections import defaultdict
+        adjacency = defaultdict(list)
 
-        # --- Somas from nodes ---
-        for node in nodes:
-            breed = node.get('breed', soma_breed)
-            config = node.get('config', soma_config)
-            overrides = node.get('overrides', {})
+        # --- Create every soma listed for this rank ---
+        for soma in somas:
+            breed = soma.get('breed', soma_breed)
+            config = soma.get('config', soma_config)
+            overrides = soma.get('overrides', {})
             hp, is_state = self._get_soma_properties(breed, config, overrides)
 
             agents.append({
-                'id': node['id'],
+                'id': soma['id'],
                 'breed': self._soma_breeds[breed],
                 'properties': {
                     'hyperparameters': hp,
@@ -1157,21 +1093,23 @@ class NeuromorphicModel(Model):
                 },
             })
 
-            nid = node['id']
-            self._soma_ids.add(nid)
-            self.agentid2config[nid] = config
-            self.agentid2overrides[nid] = overrides
+            sid = soma['id']
+            self._soma_ids.add(sid)
+            self.agentid2config[sid] = config
+            self.agentid2overrides[sid] = overrides
 
-        # --- Synapses from local edges ---
-        for edge in local_edges:
-            syn_id = edge['synapse_id']
-            pre_id = edge['source']
-            post_id = edge['target']
-            breed = edge.get('breed', synapse_breed)
-            config = edge.get('config', synapse_config)
-            overrides = edge.get('overrides', {})
-            learning_rule = edge.get('learning_rule', None)
-            learning_rule_config = edge.get('learning_rule_config', 'default')
+        # --- Create every synapse listed for this rank (read, don't infer) ---
+        # Each listed synapse is owned here (post is local). pre may be remote;
+        # if so it is named in remote_ranks. No locality filter, no ghost split.
+        for syn in synapses:
+            syn_id = syn['id']
+            pre_id = syn['pre']
+            post_id = syn['post']
+            breed = syn.get('breed', synapse_breed)
+            config = syn.get('config', synapse_config)
+            overrides = syn.get('overrides', {})
+            learning_rule = syn.get('learning_rule', None)
+            learning_rule_config = syn.get('learning_rule_config', 'default')
 
             props, hp, lhp, is_state, ils = self._get_synapse_properties(
                 breed, config, overrides, learning_rule, learning_rule_config)
@@ -1182,35 +1120,33 @@ class NeuromorphicModel(Model):
                 'properties': props,
             })
 
-            # Connections: synapse reads pre_soma and post_soma;
-            # post_soma reads synapse (for STDP) only if post_soma is local.
-            # For input synapses (pre_id == -1), we still add (syn_id, -1)
-            # so that -1 occupies index 0 in the locations list.
-            connections.append((syn_id, pre_id))
+            # The synapse's own neighbor list, in fixed slot order:
+            #   slot 0 = pre-soma (always read, for the incoming spike),
+            #   slot 1 = post-soma (read for STDP).
+            # For an input synapse (pre_id == -1), -1 occupies slot 0. This is
+            # the list-of-2 given directly to SAGESim (no per-slot tuple).
+            adjacency[syn_id] = [pre_id]
             if post_id != -1:
-                connections.append((syn_id, post_id))
-            if post_id != -1 and post_id in local_node_ids:
-                connections.append((post_id, syn_id))
+                adjacency[syn_id].append(post_id)
+                # Post-soma claims its incoming synapse. post is local on this
+                # (the owner) rank, so this is always a local write — no guard.
+                # Gather all incoming synapses into the post-soma's neighbor
+                # list (one list per soma, not one tuple per synapse).
+                adjacency[post_id].append(syn_id)
 
-            # Bookkeeping
+            # Bookkeeping (only what has real readers: config/overrides feed
+            # reset() property recompute; learning_rule feeds STDP setup).
             self._synapse_ids.add(syn_id)
             self.agentid2config[syn_id] = config
             self.agentid2overrides[syn_id] = overrides
             self.agentid2learning_rule[syn_id] = (learning_rule, learning_rule_config) if learning_rule else None
-            if pre_id != -1:
-                self._soma_outgoing_synapses[pre_id].add(syn_id)
-
-        # --- Ghost edges: local post-soma reads remote synapse ---
-        # The synapse agent lives on the source's rank. The local post-soma
-        # connects to it as a ghost neighbor. synapse_id and its rank must
-        # be in the file (synapse_id on the edge, rank in remote_agents).
-        for edge in ghost_edges:
-            syn_id = edge['synapse_id']
-            post_id = edge['target']
-            connections.append((post_id, syn_id))
 
         # --- Bulk build via SAGESim ---
-        self.build_from_local_data(agents, connections, remote_agent_ranks, directed=True)
+        # Pass the adjacency dict directly (SAGESim's dict fast-path). It is
+        # already-directed adjacency; directed=True is passed to match that and
+        # suppress the "directed ignored for dict" warning. defaultdict -> dict
+        # so isinstance(connections, dict) dispatch stays unambiguous.
+        self.build_from_local_data(agents, dict(adjacency), remote_agent_ranks, directed=True)
         self._built_from_file = True
 
     def add_spike(self, synapse_id: int, tick: int, value: float) -> None:
@@ -1224,13 +1160,31 @@ class NeuromorphicModel(Model):
             id=synapse_id,
             property_name="input_spikes_tensor",
         )
-        # OPTIMIZED: Store as flattened [tick, value, tick, value, ...] (depth 2) instead of [[tick, value], ...] (depth 3) 
+        # OPTIMIZED: Store as flattened [tick, value, tick, value, ...] (depth 2) instead of [[tick, value], ...] (depth 3)
         spikes.append(tick)
         spikes.append(value)
         self.set_agent_property_value(
             synapse_id, "input_spikes_tensor", spikes
         )
-    
+
+    def add_local_spike(self, synapse_id: int, tick: int, value: float) -> None:
+        """Schedule an input spike on a LOCALLY-OWNED synapse — non-collective.
+
+        Local counterpart of add_spike: reads and writes only on the rank that owns
+        ``synapse_id`` (no MPI). Use on the scalable distributed path, where each rank
+        injects spikes only for the synapses it owns (caller resolves ownership from
+        app-level metadata). Calling this for a non-local synapse raises KeyError.
+        """
+        spikes = self.get_local_agent_property_value(
+            id=synapse_id,
+            property_name="input_spikes_tensor",
+        )
+        spikes.append(tick)
+        spikes.append(value)
+        self.set_local_agent_property_value(
+            synapse_id, "input_spikes_tensor", spikes
+        )
+
     def add_spike_list(self, synapse_id: int, spike_list):
         """
         Schedules a list of external input spikes to this synapse.

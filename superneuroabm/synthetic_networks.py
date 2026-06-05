@@ -78,10 +78,14 @@ def generate_and_save_local_partition(
         external syn   = N + N*K + t         (external drive for target t)
 
     .. note::
-        Sources are drawn with ``np.random.Generator.integers`` -- multapses
-        (repeated source for the same target) and autapses (self-connections)
-        are allowed, matching NEST's default benchmark draw. Resample only if an
-        application later requires exactly ``K`` distinct sources.
+        Sources are drawn with ``np.random.Generator.integers``. Multapses
+        (repeated source for the same target) are allowed, matching NEST's
+        default benchmark draw. Autapses (self-connections, ``pre == post``)
+        are resampled away: a synapse stores its endpoints in a positional
+        2-slot neighbor list ``[pre, post]`` that SAGESim deduplicates, so
+        ``pre == post`` would collapse to one slot and lose the post endpoint.
+        They are irrelevant to a static-weight scaling benchmark (no STDP), so
+        excluding them keeps the draw faithful while staying loadable.
 
     :param output_dir: Directory to write ``partition_{my_rank}.pkl``.
     :param my_rank: This rank's id in ``[0, num_partitions)``.
@@ -128,6 +132,16 @@ def generate_and_save_local_partition(
     # --- Recurrent synapses: K random presynaptic sources per local target ---
     # pre[t, j] = uniform source in [0, N); synapse for (target t, in-edge j).
     pre = rng.integers(0, N, size=(npp, K), dtype=np.int64)          # (npp, K)
+    # Forbid autapses (pre == post == this target). Self-loops are valid in the
+    # NEST/Brunel statistical draw, but our synapse stores its endpoints in a
+    # positional 2-slot neighbor list [pre, post] and SAGESim deduplicates
+    # neighbors, so pre == post would collapse to one slot and drop the post
+    # endpoint. They contribute nothing to a static-weight scaling benchmark
+    # (no STDP), so resample any target-self draw to a different source.
+    self_mask = pre == local_ids[:, None]                            # (npp, K)
+    while self_mask.any():
+        pre[self_mask] = rng.integers(0, N, size=int(self_mask.sum()), dtype=np.int64)
+        self_mask = pre == local_ids[:, None]
     post = np.repeat(local_ids, K)                                    # (npp*K,)
     j_idx = np.tile(np.arange(K, dtype=np.int64), npp)                # (npp*K,)
     pre_flat = pre.ravel()                                            # (npp*K,)
