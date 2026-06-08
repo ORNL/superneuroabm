@@ -104,7 +104,8 @@ class NeuromorphicModel(Model):
             If False, disables tracking to reduce memory usage and improve
             performance. Default is True for backward compatibility.
         """
-        super().__init__(space=NetworkSpace(ordered=True))
+        super().__init__(space=NetworkSpace(ordered=True),
+                         agent_slack_factor=1.0, csr_slack_factor=1.0)
 
         if soma_breed_info is None:
             soma_breed_info = _default_soma_breeds()
