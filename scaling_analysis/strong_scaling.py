@@ -9,7 +9,7 @@ population); cross-rank communication emerges from the partition.
 
 Phases:
   [1/4] Each rank generates its own partition file (Brunel, local-only).
-  [2/4] Each rank loads its partition via model.load_from_file().
+  [2/4] Each rank loads its partition via model.load_post_owned().
   [3/4] GPU setup.
   [4/4] Inject Poisson external drive + simulate.
 """
@@ -148,7 +148,7 @@ def main():
 
     t0 = time.time()
     model = NeuromorphicModel(enable_internal_states_tracking=False)
-    model.load_from_file(partition_file)
+    model.load_post_owned(partition_file)
     model._verbose_timing = True
     model_creation_time = time.time() - t0
     if rank == 0:

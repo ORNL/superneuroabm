@@ -4,7 +4,7 @@ Synthetic network generation for distributed SNN scaling tests.
 Generates a **Brunel balanced random network** (the standard SNN scaling
 benchmark, following NEST's ``hpc_benchmark``) one MPI rank at a time, writing
 each rank's partition directly to a file in the schema consumed by
-``NeuromorphicModel.load_from_file()``::
+``NeuromorphicModel.load_post_owned()``::
 
     {
       "somas":    [{"id", "breed", "config", "overrides"}, ...],
@@ -58,7 +58,7 @@ def generate_and_save_local_partition(
 
     Builds the connectivity for this rank's local neurons only (no global graph
     materialization) and writes ``partition_{my_rank}.pkl`` in the SNN-native
-    schema consumed by ``NeuromorphicModel.load_from_file()``. Each rank can call
+    schema consumed by ``NeuromorphicModel.load_post_owned()``. Each rank can call
     this independently -- no MPI / communication is needed during generation.
 
     Each local neuron is a postsynaptic target that receives exactly ``in_degree``

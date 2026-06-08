@@ -215,9 +215,10 @@ class NeuromorphicModel(Model):
         self._next_learning_rule_id = len(self._learning_rules)
         self._setup_called = False
         # Construction-mode lock: a model is built EITHER incrementally via
-        # create_soma/create_synapse OR in one shot via load_from_file — never
-        # both. load_from_file overwrites the agent factory wholesale, so the two
-        # paths cannot be combined. Set True by load_from_file().
+        # create_soma/create_synapse OR in one shot via a loader
+        # (load_post_owned / load_from_adjacency) — never both. A loader
+        # overwrites the agent factory wholesale, so the two paths cannot be
+        # combined. Set True by either loader.
         self._built_from_file = False
 
     def get_agent_config_name(self, agent_id: int) -> Dict[str, any]:
@@ -704,10 +705,10 @@ class NeuromorphicModel(Model):
         """
         if self._built_from_file:
             raise RuntimeError(
-                "Cannot create_soma() on a model built via load_from_file(). "
-                "load_from_file() builds the entire model in one shot and is "
-                "mutually exclusive with incremental create_soma/create_synapse — "
-                "use one construction path per model."
+                "Cannot create_soma() on a model built via load_post_owned()/"
+                "load_from_adjacency(). A loader builds the entire model in one "
+                "shot and is mutually exclusive with incremental "
+                "create_soma/create_synapse — use one construction path per model."
             )
         overrides = overrides or {}
 
@@ -774,10 +775,10 @@ class NeuromorphicModel(Model):
         """
         if self._built_from_file:
             raise RuntimeError(
-                "Cannot create_synapse() on a model built via load_from_file(). "
-                "load_from_file() builds the entire model in one shot and is "
-                "mutually exclusive with incremental create_soma/create_synapse — "
-                "use one construction path per model."
+                "Cannot create_synapse() on a model built via load_post_owned()/"
+                "load_from_adjacency(). A loader builds the entire model in one "
+                "shot and is mutually exclusive with incremental "
+                "create_soma/create_synapse — use one construction path per model."
             )
         overrides = overrides or {}
 
@@ -1005,75 +1006,115 @@ class NeuromorphicModel(Model):
             "supported (the format emitted by the in-repo partition producers)."
         )
 
-    def load_from_file(self, partition_file: str,
-                       soma_breed: str = "lif_soma",
-                       soma_config: str = "config_0",
-                       synapse_breed: str = "single_exp_synapse",
-                       synapse_config: str = "config_0") -> None:
-        """Load a network definition file and build the neuromorphic model.
+    @staticmethod
+    def _normalize_neighbor_partition(data: dict) -> dict:
+        """Validate and return the explicit-neighbors (load_from_adjacency) schema.
 
-        Reads an SNN-native network file (pkl), computes property values from
-        breed configs, builds connections, and calls SAGESim's
-        build_from_local_data() for bulk creation.
+        Schema: {'somas': [...], 'synapses': [...], 'remote_ranks': {...}}
+          - soma:    {'id', 'breed', 'config', 'overrides',
+                      'neighbors': [incoming_syn_id, ...]}
+          - synapse: {'id', 'breed', 'config', 'learning_rule',
+                      'learning_rule_config', 'overrides',
+                      'neighbors': [pre[, post]]}
+        Synapse 'neighbors' is POSITIONAL ([pre] or [pre, post]); soma 'neighbors'
+        is order-free. Returned verbatim — neighbor lists are NEVER reordered here.
 
-        This is a one-shot, whole-model builder: it overwrites the agent factory
-        and is MUTUALLY EXCLUSIVE with incremental create_soma/create_synapse.
-        Call it exactly once, on a fresh model, and do not mix the two paths
-        (doing so raises RuntimeError).
+        Rejects the legacy graph-centric schema (nodes/edges) AND a Method-1
+        pre/post file (no 'neighbors') so the wrong file fails loudly instead of
+        loading with empty neighbor lists.
+        """
+        if 'nodes' in data or 'edges' in data:
+            raise ValueError(
+                "Legacy graph-centric network format detected (found "
+                f"{sorted(k for k in ('nodes', 'edges') if k in data)}). "
+                "load_from_adjacency() expects the explicit-neighbors schema: "
+                "'somas'/'synapses', each entry carrying a 'neighbors' list."
+            )
+        if 'somas' not in data and 'synapses' not in data:
+            raise ValueError(
+                "Unrecognized network file: expected top-level 'somas' and "
+                "'synapses' keys for load_from_adjacency()."
+            )
 
-        Ownership convention (post-owns / NEST): every synapse in this rank's
-        "synapses" list is OWNED and created here — its post-soma is local. A
-        synapse's pre-soma may be remote; if so it is named in "remote_ranks".
-        The loader READS this ownership, it does not infer it: each listed
-        synapse is created unconditionally, with no pre-locality filter and no
-        ghost split. A synapse appears in exactly one rank's list.
+        somas = list(data.get('somas', []))
+        synapses = list(data.get('synapses', []))
 
-        Canonical file schema (a dict with 2 required keys + 1 optional):
-            {
-              "somas":    [{"id", "breed", "config", "overrides"}, ...],
-              "synapses": [{"id", "pre", "post", "breed", "config",
-                            "learning_rule", "learning_rule_config",
-                            "overrides"}, ...],   # pre = -1 → external input
-              "remote_ranks": {agent_id: rank}   # optional; remote pre-somas
-            }
-        A legacy "metadata" key on any soma/synapse is ignored (labels are an
-        application concern, not framework state).
-        `overrides` is grouped: "hyperparameters", "internal_states",
-        "learning_hyperparameters", "learning_internal_states". Legacy
-        graph-centric files (nodes/edges/source/target) are rejected with a
-        clear error — regenerate them with the updated producer.
+        # Every entry must carry 'neighbors'. A Method-1 (pre/post) file lacks it
+        # and fails here rather than silently loading empty lists.
+        for kind, entries in (('soma', somas), ('synapse', synapses)):
+            for e in entries:
+                if 'neighbors' not in e:
+                    raise ValueError(
+                        f"load_from_adjacency(): {kind} id={e.get('id')} has no "
+                        "'neighbors' list. This looks like a load_post_owned() "
+                        "(pre/post) partition — use load_post_owned() for those, "
+                        "or regenerate with an explicit-neighbors producer."
+                    )
 
-        :param partition_file: Path to network file (.pkl)
-        :param soma_breed: Default soma breed name
-        :param soma_config: Default soma config name
-        :param synapse_breed: Default synapse breed name
-        :param synapse_config: Default synapse config name
+        return {
+            'somas': somas,
+            'synapses': synapses,
+            'remote_ranks': dict(data.get('remote_ranks', {})),
+        }
+
+    @staticmethod
+    def _read_neighbor_partition_file(partition_file: str) -> dict:
+        """Read an explicit-neighbors partition file (pickle).
+
+        Returns {'somas': [...], 'synapses': [...], 'remote_ranks': {...}} where
+        each soma/synapse carries its own 'neighbors' list. Only pickle is
+        supported, matching _read_partition_file().
+        """
+        ext = Path(partition_file).suffix.lower()
+        if ext in ('.pkl', '.pickle'):
+            import pickle
+            with open(partition_file, 'rb') as f:
+                data = pickle.load(f)
+            return NeuromorphicModel._normalize_neighbor_partition(data)
+        raise ValueError(
+            f"Unsupported partition file format: {ext}. Only .pkl/.pickle is "
+            "supported (the format emitted by the in-repo partition producers)."
+        )
+
+    def _assert_unbuilt(self, who: str) -> None:
+        """Guard the one-shot, whole-model construction contract for the loaders.
+
+        Raises if the model already has agents — either from a prior loader call
+        or from incremental create_soma/create_synapse. ``who`` names the calling
+        loader in the error message.
         """
         if self._soma_ids or self._synapse_ids:
             raise RuntimeError(
-                "load_from_file() builds the entire model in one shot and overwrites "
-                "the agent factory wholesale; it cannot run on a model that already "
-                f"has agents ({len(self._soma_ids)} somas, {len(self._synapse_ids)} "
-                "synapses). load_from_file() and create_soma/create_synapse are "
-                "mutually exclusive — use one construction path per model. (This also "
-                "prevents calling load_from_file() more than once.)"
+                f"{who}() builds the entire model in one shot and overwrites the "
+                "agent factory wholesale; it cannot run on a model that already "
+                f"has agents ({len(self._soma_ids)} somas, "
+                f"{len(self._synapse_ids)} synapses). load_post_owned(), "
+                "load_from_adjacency(), and create_soma/create_synapse are "
+                "mutually exclusive — use one construction path per model. (This "
+                f"also prevents calling {who}() more than once.)"
             )
-        data = self._read_partition_file(partition_file)
 
-        somas = data['somas']
-        synapses = data['synapses']
-        # remote_ranks maps every non-local neighbor (a remote pre-soma) to its
-        # owner rank. The synapse's owner rank is rank(post): every synapse
-        # listed here is OWNED here (post is local). The pre-soma MAY be remote.
-        remote_agent_ranks = dict(data['remote_ranks'])
+    def _build_from_partition(self, somas, synapses, remote_agent_ranks,
+                              soma_breed, soma_config, synapse_breed, synapse_config,
+                              soma_adjacency, synapse_adjacency) -> None:
+        """Shared whole-model build for both loaders.
+
+        Computes property tensors and bookkeeping identically for every soma and
+        synapse; the ONLY variable part is how each agent's neighbor list is
+        populated, supplied as two callbacks:
+          soma_adjacency(adjacency, soma_entry)    -> mutate adjacency for a soma
+          synapse_adjacency(adjacency, syn_entry)  -> mutate adjacency for a synapse
+        The soma loop runs fully before the synapse loop, so self._soma_ids is
+        complete (all local somas known) by the time synapse_adjacency runs.
+
+        The finished adjacency dict (each local agent -> its ordered neighbor
+        list) is handed to SAGESim's dict fast-path. Keys are always local
+        agents; a remote neighbor only ever appears as a value (named in
+        remote_agent_ranks).
+        """
+        from collections import defaultdict
 
         agents = []
-        # Adjacency map handed straight to SAGESim's dict fast-path: each local
-        # agent -> its finished, ordered neighbor list. Built directly here (no
-        # intermediate (a, b) tuple list), so build_from_local_data skips the
-        # tuple->dict normalization. Keys are always local (a synapse, or a local
-        # post-soma); a remote pre-soma only ever appears as a value.
-        from collections import defaultdict
         adjacency = defaultdict(list)
 
         # --- Create every soma listed for this rank ---
@@ -1098,13 +1139,11 @@ class NeuromorphicModel(Model):
             self.agentid2config[sid] = config
             self.agentid2overrides[sid] = overrides
 
-        # --- Create every synapse listed for this rank (read, don't infer) ---
-        # Each listed synapse is owned here (post is local). pre may be remote;
-        # if so it is named in remote_ranks. No locality filter, no ghost split.
+            soma_adjacency(adjacency, soma)
+
+        # --- Create every synapse listed for this rank ---
         for syn in synapses:
             syn_id = syn['id']
-            pre_id = syn['pre']
-            post_id = syn['post']
             breed = syn.get('breed', synapse_breed)
             config = syn.get('config', synapse_config)
             overrides = syn.get('overrides', {})
@@ -1120,19 +1159,7 @@ class NeuromorphicModel(Model):
                 'properties': props,
             })
 
-            # The synapse's own neighbor list, in fixed slot order:
-            #   slot 0 = pre-soma (always read, for the incoming spike),
-            #   slot 1 = post-soma (read for STDP).
-            # For an input synapse (pre_id == -1), -1 occupies slot 0. This is
-            # the list-of-2 given directly to SAGESim (no per-slot tuple).
-            adjacency[syn_id] = [pre_id]
-            if post_id != -1:
-                adjacency[syn_id].append(post_id)
-                # Post-soma claims its incoming synapse. post is local on this
-                # (the owner) rank, so this is always a local write — no guard.
-                # Gather all incoming synapses into the post-soma's neighbor
-                # list (one list per soma, not one tuple per synapse).
-                adjacency[post_id].append(syn_id)
+            synapse_adjacency(adjacency, syn)
 
             # Bookkeeping (only what has real readers: config/overrides feed
             # reset() property recompute; learning_rule feeds STDP setup).
@@ -1148,6 +1175,173 @@ class NeuromorphicModel(Model):
         # so isinstance(connections, dict) dispatch stays unambiguous.
         self.build_from_local_data(agents, dict(adjacency), remote_agent_ranks, directed=True)
         self._built_from_file = True
+
+    def load_post_owned(self, partition_file: str,
+                        soma_breed: str = "lif_soma",
+                        soma_config: str = "config_0",
+                        synapse_breed: str = "single_exp_synapse",
+                       synapse_config: str = "config_0") -> None:
+        """Load a POST-OWNED network file (Method 1) and build the model.
+
+        The producer lists each synapse by its ``pre``/``post`` endpoints; this
+        loader DERIVES all connectivity, including each post-soma's incoming-
+        synapse list. The method name carries its CONSTRAINT: every synapse's
+        post-soma must be local on the synapse's rank (post-owns / NEST). This is
+        required because a post-soma builds its incoming list by scanning the
+        synapses in its OWN file — so it can only discover incoming synapses that
+        are listed locally. There is no way to name a *remote* incoming synapse in
+        this schema; if you need that, use ``load_from_adjacency()`` instead.
+
+        The constraint is ENFORCED here: a synapse whose ``post`` is not a local
+        soma raises (it would otherwise be silently miswired).
+
+        One-shot, whole-model builder: overwrites the agent factory and is
+        MUTUALLY EXCLUSIVE with incremental create_soma/create_synapse and with
+        ``load_from_adjacency()``. Call exactly once on a fresh model.
+
+        File schema (a dict with 2 required keys + 1 optional):
+            {
+              "somas":    [{"id", "breed", "config", "overrides"}, ...],
+              "synapses": [{"id", "pre", "post", "breed", "config",
+                            "learning_rule", "learning_rule_config",
+                            "overrides"}, ...],   # pre = -1 → external input
+              "remote_ranks": {agent_id: rank}   # optional; remote pre-somas
+            }
+        `overrides` is grouped: "hyperparameters", "internal_states",
+        "learning_hyperparameters", "learning_internal_states". Legacy
+        graph-centric files (nodes/edges/source/target) are rejected.
+
+        :param partition_file: Path to network file (.pkl)
+        :param soma_breed: Default soma breed name
+        :param soma_config: Default soma config name
+        :param synapse_breed: Default synapse breed name
+        :param synapse_config: Default synapse config name
+        """
+        self._assert_unbuilt("load_post_owned")
+        data = self._read_partition_file(partition_file)
+
+        def soma_adj(adjacency, soma):
+            # M1 derives the soma's incoming list as a side effect of the synapse
+            # loop (below), so nothing to do per-soma here.
+            pass
+
+        def synapse_adj(adjacency, syn):
+            # The synapse's own neighbor list, in fixed slot order:
+            #   slot 0 = pre-soma (always read, for the incoming spike),
+            #   slot 1 = post-soma (read for STDP).
+            # For an input synapse (pre == -1), -1 occupies slot 0.
+            pre_id = syn['pre']
+            post_id = syn['post']
+            adjacency[syn['id']] = [pre_id]
+            if post_id != -1:
+                # POST-OWNS ENFORCEMENT: the name promises every incoming synapse
+                # is co-located with its post-soma. self._soma_ids is complete by
+                # now (soma loop ran first), so a non-local post is a broken
+                # partition — fail loud instead of silently dropping the edge.
+                if post_id not in self._soma_ids:
+                    raise ValueError(
+                        f"load_post_owned(): synapse {syn['id']} has post-soma "
+                        f"{post_id}, which is not a local soma on this rank. "
+                        "load_post_owned() requires every incoming synapse to be "
+                        "co-located with its post-soma. Use load_from_adjacency() "
+                        "to lift this constraint."
+                    )
+                adjacency[syn['id']].append(post_id)
+                # Post-soma claims its incoming synapse (gather all incoming
+                # synapses into the post-soma's neighbor list).
+                adjacency[post_id].append(syn['id'])
+
+        self._build_from_partition(
+            data['somas'], data['synapses'], dict(data['remote_ranks']),
+            soma_breed, soma_config, synapse_breed, synapse_config,
+            soma_adj, synapse_adj)
+
+    def load_from_adjacency(self, partition_file: str,
+                            soma_breed: str = "lif_soma",
+                            soma_config: str = "config_0",
+                            synapse_breed: str = "single_exp_synapse",
+                            synapse_config: str = "config_0") -> None:
+        """Load an EXPLICIT-NEIGHBORS network file (Method 2) and build the model.
+
+        The producer supplies each agent's neighbor list DIRECTLY — soma AND
+        synapse — and this loader reads them verbatim. This RELEASES the post-owns
+        constraint of ``load_post_owned()``: because a post-soma's incoming
+        synapses are named explicitly in its ``neighbors`` (not derived by
+        scanning local synapses), an incoming synapse may live on another rank.
+        Declare any such cross-rank neighbor in ``remote_ranks`` and SAGESim's
+        ghost exchange delivers its ``internal_states`` each tick — the same
+        machinery that already serves a synapse's remote pre-soma.
+
+        Neighbor-list slot order is preserved VERBATIM (never sorted/deduped):
+          - synapse ``neighbors`` is POSITIONAL: ``[pre]`` or ``[pre, post]``
+            (slot 0 = pre, read for the incoming spike; slot 1 = post, for STDP);
+            ``pre = -1`` occupies slot 0 for an external-input synapse.
+          - soma ``neighbors`` is its incoming synapse ids, order-free.
+
+        One-shot, whole-model builder; MUTUALLY EXCLUSIVE with create_soma/
+        create_synapse and with ``load_post_owned()``.
+
+        File schema (a dict with 2 required keys + 1 optional):
+            {
+              "somas":    [{"id", "breed", "config", "overrides",
+                            "neighbors": [incoming_syn_id, ...]}, ...],
+              "synapses": [{"id", "breed", "config", "learning_rule",
+                            "learning_rule_config", "overrides",
+                            "neighbors": [pre[, post]]}, ...],
+              "remote_ranks": {agent_id: rank}   # optional; any cross-rank id
+            }
+
+        :param partition_file: Path to network file (.pkl)
+        :param soma_breed: Default soma breed name
+        :param soma_config: Default soma config name
+        :param synapse_breed: Default synapse breed name
+        :param synapse_config: Default synapse config name
+        """
+        self._assert_unbuilt("load_from_adjacency")
+        data = self._read_neighbor_partition_file(partition_file)
+
+        # Validate the partition BEFORE building anything (cheap, local). These are
+        # the "Bug A" guards PARTITION_LOADING.md §3.3 endorses; completeness
+        # (Bug B — a soma missing some incoming synapse) is impossible to see
+        # locally and remains the producer's job.
+        remote_ids = data['remote_ranks']
+        local_ids = ({s['id'] for s in data['somas']}
+                     | {s['id'] for s in data['synapses']})
+        for syn in data['synapses']:
+            nbrs = syn['neighbors']
+            if not 1 <= len(nbrs) <= 2:
+                raise ValueError(
+                    f"load_from_adjacency(): synapse {syn['id']} has "
+                    f"{len(nbrs)} neighbors {list(nbrs)}; a synapse must have "
+                    "exactly [pre] (external input) or [pre, post]."
+                )
+        # Every neighbor id must be the external-input sentinel -1, a local agent,
+        # or declared remote. A ref that is none of these would be silently skipped
+        # by the kernels (e.g. lif.py guards synapse_index >= 0).
+        for entry in (*data['somas'], *data['synapses']):
+            for nb in entry['neighbors']:
+                if nb == -1 or nb in local_ids or nb in remote_ids:
+                    continue
+                raise ValueError(
+                    f"load_from_adjacency(): agent {entry['id']} references "
+                    f"neighbor {nb}, which is neither a local agent nor named in "
+                    "remote_ranks. The producer must list every cross-rank "
+                    "neighbor in remote_ranks."
+                )
+
+        # Read each agent's neighbor list verbatim. POSITIONAL slot order is
+        # load-bearing for synapses (slot0=pre, slot1=post) — copy as-is, never
+        # sort/dedup. Soma lists are order-free but copied the same way.
+        def soma_adj(adjacency, soma):
+            adjacency[soma['id']] = list(soma['neighbors'])
+
+        def synapse_adj(adjacency, syn):
+            adjacency[syn['id']] = list(syn['neighbors'])
+
+        self._build_from_partition(
+            data['somas'], data['synapses'], dict(remote_ids),
+            soma_breed, soma_config, synapse_breed, synapse_config,
+            soma_adj, synapse_adj)
 
     def add_spike(self, synapse_id: int, tick: int, value: float) -> None:
         """
