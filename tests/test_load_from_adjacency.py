@@ -180,6 +180,40 @@ class TestLoadFromAdjacency(unittest.TestCase):
             got = model.get_spike_times(B)
         self.assertEqual(sorted(got), sorted(_reference_spike_times()))
 
+    def test_create_from_lists_matches_reference(self):
+        """create_from_lists (in-memory bulk) reproduces the create_* reference.
+
+        Single-rank; no MPI, no file. Builds the A->B topology by handing the
+        soma/synapse lists straight to create_from_lists and checks B's spike
+        train matches the agent-by-agent create_soma/create_synapse build.
+        """
+        comm, rank, size = _get_mpi()
+        if size > 1:
+            self.skipTest("create_from_lists is a single-GPU 1-rank API")
+        model = NeuromorphicModel(enable_internal_states_tracking=False)
+        model.create_from_lists(
+            somas=[{"id": A}, {"id": B}],
+            synapses=[
+                {"id": S_EXT, "pre": -1, "post": A},   # external input -> A
+                {"id": S, "pre": A, "post": B},        # A -> B
+            ],
+        )
+        model.setup(use_gpu=True)
+        model.add_spike(synapse_id=S_EXT, tick=INPUT_TICK, value=1)
+        model.simulate(ticks=SIM_TICKS, update_data_ticks=1)
+        got = model.get_spike_times(B)
+        self.assertEqual(sorted(got), sorted(_reference_spike_times()))
+
+    def test_create_from_lists_rejects_nonlocal_post(self):
+        """create_from_lists rejects a synapse whose post-soma was not created."""
+        model = NeuromorphicModel(enable_internal_states_tracking=False)
+        with self.assertRaises(ValueError):
+            # S has post=B, but B is not in the somas list.
+            model.create_from_lists(
+                somas=[{"id": A}],
+                synapses=[{"id": S, "pre": A, "post": B}],
+            )
+
     def test_post_owned_rejects_nonlocal_post(self):
         """load_post_owned enforces its name: a non-local post-soma raises."""
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -6,7 +6,7 @@ pattern that keeps building large networks cheap.
 
 This is the *framework* contract — dataset-agnostic. For a concrete end-to-end example
 (the Cora citation SNN, built with METIS), see
-[`../superneuroabm_sgnn/SGNN_CORA.md`](../superneuroabm_sgnn/SGNN_CORA.md).
+[`../../superneuroabm_sgnn/SGNN_CORA.md`](../../superneuroabm_sgnn/SGNN_CORA.md).
 
 ## Two loaders — pick by how you describe connectivity
 
@@ -240,20 +240,31 @@ model.simulate(ticks=100)                        # GPU kernels + MPI ghost excha
   before the synapse kernel reads it; no per-read communication.
 - The number of `partition_{r}.pkl` files **must** equal the launched rank count.
 
-### Reading results: collective vs local
+### Injecting input and reading results: collective vs local
 
-Two ways to read an agent property after simulation:
+Both the input you inject and the results you read come in two flavours — a
+**collective** form (every rank calls with the same id; convenient) and a **local**
+form (only the owning rank acts; scalable):
 
 | | Collective | Local |
 |---|------------|-------|
-| call | `get_agent_property_value(id, prop)` | `get_local_agent_property_value(id, prop)` |
-| who can read | **any** rank reads **any** agent (owner supplies via `comm.allgather`) | only the **owning** rank; `KeyError` otherwise; no MPI |
+| inject input | `add_spike(id, tick, value)` — **every** rank calls with the same id; one allgather under the hood, owner stores the spike | `add_local_spike(id, tick, value)` — only the **owning** rank calls; `KeyError` on a non-local id; no MPI |
+| read property | `get_agent_property_value(id, prop)` (and `get_spike_times`) — **any** rank reads **any** agent (owner supplies via `comm.allgather`) | `get_local_agent_property_value(id, prop)` — only the **owning** rank; `KeyError` otherwise; no MPI |
 | cost | one allgather per call | zero communication |
-| use | convenient for small runs / any-rank reads | the scalable path — caller knows the agent is local |
+| use | convenient for small runs / any-rank access | the scalable path — caller knows the agent is local |
 
-`simulate`/`reset` are collective regardless. Choosing local reads + a single final
-`comm.gather` (instead of per-read allgathers) is what scales to large rank counts —
-the caller resolves ownership from its own app metadata and reads only what it owns.
+`simulate`/`reset` are collective regardless. Choosing local inject + local reads + a
+single final `comm.gather` (instead of per-call allgathers) is what scales to large rank
+counts — the caller resolves ownership from its own app metadata and touches only what
+it owns.
+
+> **Worked example.** The SGNN runners show both styles on the *same* partitions:
+> `run_sgnn_sna.py` uses the collective accessors (`add_spike` /
+> `get_agent_property_value` / `get_spike_times` — every rank calls with the same id),
+> while `run_sgnn_sna_mpi_local.py` uses the local accessors (`add_local_spike` /
+> `get_local_agent_property_value`) and assembles results with one final
+> `comm.gather(root=0)`. Same model, same result; the local variant drops the per-call
+> allgather and is the one to reach for as rank counts grow.
 
 ---
 

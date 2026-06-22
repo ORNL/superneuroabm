@@ -70,7 +70,7 @@ tests/baselines/
 *.csv
 
 # Documentation builds
-docs/
+# docs/
 
 # Generated data and networks
 **/network_run_*.json

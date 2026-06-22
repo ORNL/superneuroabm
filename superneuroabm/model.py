@@ -1220,10 +1220,76 @@ class NeuromorphicModel(Model):
         """
         self._assert_unbuilt("load_post_owned")
         data = self._read_partition_file(partition_file)
+        self._build_post_owned(
+            data['somas'], data['synapses'], data['remote_ranks'],
+            soma_breed, soma_config, synapse_breed, synapse_config)
 
+    def create_from_lists(self, somas: list, synapses: list,
+                          soma_breed: str = "lif_soma",
+                          soma_config: str = "config_0",
+                          synapse_breed: str = "single_exp_synapse",
+                          synapse_config: str = "config_0") -> None:
+        """Bulk-create the whole network from in-memory soma/synapse lists.
+
+        Single-GPU bulk alternative to calling ``create_soma()`` /
+        ``create_synapse()`` one at a time: hand over every soma and synapse as
+        a list and the entire model is built in one shot. No file, no rank/remote
+        concept — every soma is local on the single device.
+
+        ::
+
+            # one-by-one (incremental):
+            a = model.create_soma(breed="lif_soma", config_name="config_0")
+            b = model.create_soma(breed="lif_soma", config_name="config_0")
+            model.create_synapse(pre_soma_id=-1, post_soma_id=a, ...)
+            model.create_synapse(pre_soma_id=a,  post_soma_id=b, ...)
+
+            # in bulk (equivalent network, one call):
+            model.create_from_lists(
+                somas=[{"id": 0}, {"id": 1}],
+                synapses=[{"id": 10, "pre": -1, "post": 0},
+                          {"id": 11, "pre": 0,  "post": 1}],
+            )
+
+        One-shot, whole-model builder: MUTUALLY EXCLUSIVE with the incremental
+        ``create_soma``/``create_synapse`` and with the file loaders. Call
+        exactly once on a fresh model.
+
+        Entry-dict schema (the caller assigns every ``id``):
+            somas:    [{"id", "breed"?, "config"?, "overrides"?}, ...]
+            synapses: [{"id", "pre", "post", "breed"?, "config"?, "overrides"?,
+                        "learning_rule"?, "learning_rule_config"?}, ...]
+        ``pre = -1`` marks an external-input synapse (no pre-synaptic soma).
+        Omitted ``breed``/``config`` fall back to the method defaults below.
+        ``overrides`` is grouped by property type: "hyperparameters",
+        "internal_states", "learning_hyperparameters", "learning_internal_states".
+
+        :param somas: List of soma entry dicts.
+        :param synapses: List of synapse entry dicts.
+        :param soma_breed: Default soma breed (per-entry "breed" overrides it).
+        :param soma_config: Default soma config name.
+        :param synapse_breed: Default synapse breed name.
+        :param synapse_config: Default synapse config name.
+        """
+        self._assert_unbuilt("create_from_lists")
+        self._build_post_owned(
+            list(somas), list(synapses), {},
+            soma_breed, soma_config, synapse_breed, synapse_config)
+
+    def _build_post_owned(self, somas: list, synapses: list, remote_ranks: dict,
+                          soma_breed: str, soma_config: str,
+                          synapse_breed: str, synapse_config: str) -> None:
+        """Derive post-owned adjacency from pre/post synapse lists, then build.
+
+        Shared core of ``load_post_owned`` (from a file) and ``create_from_lists``
+        (from in-memory lists): synapses are listed by ``pre``/``post`` and each
+        post-soma's incoming-synapse list is DERIVED here as a side effect of the
+        synapse loop. Callers differ only in where the lists come from and whether
+        any neighbor is remote (``remote_ranks``).
+        """
         def soma_adj(adjacency, soma):
-            # M1 derives the soma's incoming list as a side effect of the synapse
-            # loop (below), so nothing to do per-soma here.
+            # Post-owned derives the soma's incoming list as a side effect of the
+            # synapse loop (below), so nothing to do per-soma here.
             pass
 
         def synapse_adj(adjacency, syn):
@@ -1235,17 +1301,15 @@ class NeuromorphicModel(Model):
             post_id = syn['post']
             adjacency[syn['id']] = [pre_id]
             if post_id != -1:
-                # POST-OWNS ENFORCEMENT: the name promises every incoming synapse
-                # is co-located with its post-soma. self._soma_ids is complete by
-                # now (soma loop ran first), so a non-local post is a broken
-                # partition — fail loud instead of silently dropping the edge.
+                # The post-soma must be local: self._soma_ids is complete by now
+                # (soma loop ran first), so a non-local post is a broken network —
+                # fail loud instead of silently dropping the edge.
                 if post_id not in self._soma_ids:
                     raise ValueError(
-                        f"load_post_owned(): synapse {syn['id']} has post-soma "
-                        f"{post_id}, which is not a local soma on this rank. "
-                        "load_post_owned() requires every incoming synapse to be "
-                        "co-located with its post-soma. Use load_from_adjacency() "
-                        "to lift this constraint."
+                        f"synapse {syn['id']} has post-soma {post_id}, which is "
+                        "not a local soma. Every synapse's post-soma must be "
+                        "co-located with the synapse (created in the same build). "
+                        "Use load_from_adjacency() to lift this constraint."
                     )
                 adjacency[syn['id']].append(post_id)
                 # Post-soma claims its incoming synapse (gather all incoming
@@ -1253,7 +1317,7 @@ class NeuromorphicModel(Model):
                 adjacency[post_id].append(syn['id'])
 
         self._build_from_partition(
-            data['somas'], data['synapses'], dict(data['remote_ranks']),
+            somas, synapses, dict(remote_ranks),
             soma_breed, soma_config, synapse_breed, synapse_config,
             soma_adj, synapse_adj)
 
@@ -1302,7 +1366,7 @@ class NeuromorphicModel(Model):
         data = self._read_neighbor_partition_file(partition_file)
 
         # Validate the partition BEFORE building anything (cheap, local). These are
-        # the "Bug A" guards PARTITION_LOADING.md §3.3 endorses; completeness
+        # the "Bug A" guards docs/PARTITION_LOADING.md §3.3 endorses; completeness
         # (Bug B — a soma missing some incoming synapse) is impossible to see
         # locally and remains the producer's job.
         remote_ids = data['remote_ranks']
