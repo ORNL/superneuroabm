@@ -20,9 +20,9 @@ soma:
     # Input layer LIF neurons (one per pixel)
     digits_input_config:
       hyperparameters:
-        C: 10e-9
+        C: 1e-15 #10e-9
         R: 1e6
-        vthr: -45
+        vthr: -59
         tref: 5e-3
         vrest: -60
         vreset: -60
@@ -37,9 +37,9 @@ soma:
     # Output layer LIF neurons (one per class)
     digits_output_config:
       hyperparameters:
-        C: 10e-9
+        C: 1e-15 #10e-9
         R: 1e6
-        vthr: -45
+        vthr: -59
         tref: 5e-3
         vrest: -60
         vreset: -60
@@ -62,10 +62,10 @@ synapse:
     # External -> input somas (no learning)
     digits_input_synapse_config:
       hyperparameters:
-        weight: 20.0
+        weight: 1.0
         synaptic_delay: 1.0
         scale: 1.0
-        tau_fall: 3e-3
+        tau_fall: 1e-3
         tau_rise: 0
       internal_states:
         I_synapse: 0.0
@@ -73,10 +73,10 @@ synapse:
     # Input -> output somas (bounded STDP; learning rule attached at creation)
     digits_learning_synapse_config:
       hyperparameters:
-        weight: 5.0
+        weight: 1.0
         synaptic_delay: 1.0
         scale: 1.0
-        tau_fall: 1e-2
+        tau_fall: 1e-3
         tau_rise: 0
       internal_states:
         I_synapse: 0.0
@@ -84,7 +84,7 @@ synapse:
     # External -> output somas (target/supervision spikes, no learning)
     digits_target_synapse_config:
       hyperparameters:
-        weight: 20.0
+        weight: 1.0
         synaptic_delay: 1.0
         scale: 1.0
         tau_fall: 1e-3
@@ -106,13 +106,13 @@ learning_rule:
     digits_learning:
       learning_hyperparameters:
         stdp_type: 2.0
-        tau_pre_stdp: 10e-3
-        tau_post_stdp: 10e-3
-        a_exp_pre: 0.01
-        a_exp_post: 0.025
+        tau_pre_stdp: 2e-3 #10e-3
+        tau_post_stdp: 2e-3 #10e-3
+        a_exp_pre: 0.2 #0.01
+        a_exp_post: 0.005 #0.025
         stdp_history_length: 100
-        wmin: 0.0
-        wmax: 20.0
+        wmin: -100
+        wmax: 100
       learning_internal_states:
         pre_trace: 0
         post_trace: 0
