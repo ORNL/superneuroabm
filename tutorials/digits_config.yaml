@@ -1,0 +1,119 @@
+# ==============================================================================
+# SuperNeuroABM Tutorial 02: Handwritten Digits Classifier Configuration
+# ==============================================================================
+#
+# Three top-level sections (soma / synapse / learning_rule), same schema as
+# tutorial_00_config.yaml. Soma and synapse configs hold only `hyperparameters`
+# and `internal_states`; learning rules live under `learning_rule:` and are
+# attached to a synapse at create_synapse() time via
+# learning_rule=/learning_rule_config=.
+# ==============================================================================
+
+
+# ==============================================================================
+# SOMA CONFIGURATIONS
+# ==============================================================================
+
+soma:
+  lif_soma:
+
+    # Input layer LIF neurons (one per pixel)
+    digits_input_config:
+      hyperparameters:
+        C: 10e-9
+        R: 1e6
+        vthr: -45
+        tref: 5e-3
+        vrest: -60
+        vreset: -60
+        tref_allows_integration: 0
+        I_in: 0
+        scaling_factor: 1e-5
+      internal_states:
+        v: -60.0
+        tcount: 0.0
+        tlast: 0.0
+
+    # Output layer LIF neurons (one per class)
+    digits_output_config:
+      hyperparameters:
+        C: 10e-9
+        R: 1e6
+        vthr: -45
+        tref: 5e-3
+        vrest: -60
+        vreset: -60
+        tref_allows_integration: 0
+        I_in: 0
+        scaling_factor: 1e-5
+      internal_states:
+        v: -60.0
+        tcount: 0.0
+        tlast: 0.0
+
+
+# ==============================================================================
+# SYNAPSE CONFIGURATIONS
+# ==============================================================================
+
+synapse:
+  single_exp_synapse:
+
+    # External -> input somas (no learning)
+    digits_input_synapse_config:
+      hyperparameters:
+        weight: 20.0
+        synaptic_delay: 1.0
+        scale: 1.0
+        tau_fall: 3e-3
+        tau_rise: 0
+      internal_states:
+        I_synapse: 0.0
+
+    # Input -> output somas (bounded STDP; learning rule attached at creation)
+    digits_learning_synapse_config:
+      hyperparameters:
+        weight: 5.0
+        synaptic_delay: 1.0
+        scale: 1.0
+        tau_fall: 1e-2
+        tau_rise: 0
+      internal_states:
+        I_synapse: 0.0
+
+    # External -> output somas (target/supervision spikes, no learning)
+    digits_target_synapse_config:
+      hyperparameters:
+        weight: 20.0
+        synaptic_delay: 1.0
+        scale: 1.0
+        tau_fall: 1e-3
+        tau_rise: 0
+      internal_states:
+        I_synapse: 0.0
+
+
+# ==============================================================================
+# LEARNING RULE CONFIGURATIONS
+# ==============================================================================
+# Bounded exponential pair-wise STDP (stdp_type=2): hard-clamped to [wmin, wmax].
+# LTD amplitude (a_exp_post) slightly exceeds LTP (a_exp_pre) so common pixels
+# stay near zero while class-specific pixels accumulate net LTP.
+# ==============================================================================
+
+learning_rule:
+  exp_pair_wise_stdp_bounded:
+    digits_learning:
+      learning_hyperparameters:
+        stdp_type: 2.0
+        tau_pre_stdp: 10e-3
+        tau_post_stdp: 10e-3
+        a_exp_pre: 0.01
+        a_exp_post: 0.025
+        stdp_history_length: 100
+        wmin: 0.0
+        wmax: 20.0
+      learning_internal_states:
+        pre_trace: 0
+        post_trace: 0
+        dW: 0
