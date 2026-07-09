@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import numpy as np
 
-from superneuroabm.synthetic_networks import generate_and_save_local_partition
+from superneuroabm.brunel import save_brunel_partition
 from superneuroabm.model import NeuromorphicModel
 
 try:
@@ -39,14 +39,22 @@ except ImportError:
 
 
 def inject_poisson_drive(model, input_synapses, rate_hz, ticks, dt_ms, seed):
-    """Schedule a Poisson spike train on each external (pre == -1) input synapse."""
+    """Schedule a Poisson spike train on each external (pre == -1) input synapse.
+
+    Uses add_local_spike_list (non-collective, batched): every synapse in
+    ``input_synapses`` is owned by this rank, so no MPI is needed, and each synapse's
+    whole spike train is written in a single round-trip. The collective
+    add_spike/add_spike_list would deadlock here because each rank injects a DIFFERENT
+    set of local synapses (and a different number of spikes) — collective calls require
+    every rank to call in lockstep with the same id.
+    """
     rng = np.random.default_rng(np.random.SeedSequence([seed, rank, 7]))
     p_spike = rate_hz * dt_ms / 1000.0
     for syn_id in input_synapses:
         fires = rng.random(ticks) < p_spike
         spike_ticks = np.nonzero(fires)[0] + 1  # ticks are 1-indexed
         if spike_ticks.size:
-            model.add_spike_list(syn_id, [[int(t), 1.0] for t in spike_ticks])
+            model.add_local_spike_list(syn_id, [[int(t), 1.0] for t in spike_ticks])
 
 
 def main():
@@ -126,16 +134,20 @@ def main():
         if rank == 0:
             print(f"    Partition files found in {partition_dir}, skipping generation.")
     else:
-        generate_and_save_local_partition(
+        # Map the driver's single in-degree K onto the two-pool Brunel split
+        # (excitatory 4:1). C_E + C_I = K holds per soma.
+        C_E = round(0.8 * K)
+        C_I = K - C_E
+        save_brunel_partition(
             output_dir=partition_dir,
-            my_rank=rank,
+            somas_per_rank=neurons_per_worker,
             num_partitions=size,
-            neurons_per_partition=neurons_per_worker,
-            in_degree=K,
-            g=args.g,
-            J_E=args.J_E,
-            delay=args.delay,
-            external_rate_hz=args.firing_rate,
+            partition_rank=rank,
+            excitatory_in_degree=C_E,
+            inhibitory_in_degree=C_I,
+            inhibitory_weight_ratio=args.g,
+            excitatory_weight=args.J_E,
+            synaptic_delay_ms=args.delay,
             seed=SEED,
         )
     generation_time = time.time() - t0

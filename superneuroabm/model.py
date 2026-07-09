@@ -992,7 +992,7 @@ class NeuromorphicModel(Model):
         Returns {'somas': [...], 'synapses': [...], 'remote_ranks': {...}}.
 
         Only pickle (.pkl/.pickle) is supported; it is the format every in-repo
-        producer emits (build_snn_from_data.py, synthetic_networks.py).
+        producer emits (build_snn_from_data.py, brunel.py).
         """
         ext = Path(partition_file).suffix.lower()
 
@@ -1459,6 +1459,31 @@ class NeuromorphicModel(Model):
             spikes.append(spike_pair[0])  # tick
             spikes.append(spike_pair[1])  # value
         self.set_agent_property_value(
+            synapse_id, "input_spikes_tensor", spikes
+        )
+
+    def add_local_spike_list(self, synapse_id: int, spike_list):
+        """Schedule a list of input spikes on a LOCALLY-OWNED synapse — non-collective.
+
+        Local, batched counterpart of add_spike_list: one get_local/set_local
+        round-trip appends the whole list (no per-spike read-modify-write), and it
+        reads/writes only on the rank that owns ``synapse_id`` (no MPI). Use on the
+        scalable distributed path where each rank injects spikes only for its own
+        synapses — the collective add_spike_list would deadlock there because ranks
+        loop over DIFFERENT local ids and cannot call in lockstep. Calling this for a
+        non-local synapse raises KeyError.
+
+        :param spike_list: List of [tick, value] pairs
+        """
+        spikes = self.get_local_agent_property_value(
+            id=synapse_id,
+            property_name="input_spikes_tensor",
+        )
+        # Flatten [[tick, value], ...] to [tick, value, tick, value, ...]
+        for spike_pair in spike_list:
+            spikes.append(spike_pair[0])  # tick
+            spikes.append(spike_pair[1])  # value
+        self.set_local_agent_property_value(
             synapse_id, "input_spikes_tensor", spikes
         )
 
