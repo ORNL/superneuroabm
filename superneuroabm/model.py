@@ -1287,6 +1287,26 @@ class NeuromorphicModel(Model):
         synapse loop. Callers differ only in where the lists come from and whether
         any neighbor is remote (``remote_ranks``).
         """
+        # Somas and synapses share one agent id namespace. A collision silently
+        # overwrites an agent and only surfaces later as a GPU device-side assert
+        # on mismatched property widths, so reject it at the boundary.
+        seen = set()
+        dupes = set()
+        for entry in somas:
+            (dupes if entry['id'] in seen else seen).add(entry['id'])
+        for entry in synapses:
+            (dupes if entry['id'] in seen else seen).add(entry['id'])
+        if dupes:
+            listed = sorted(dupes)
+            shown = ", ".join(str(i) for i in listed[:10])
+            if len(listed) > 10:
+                shown += f", ... ({len(listed)} total)"
+            raise ValueError(
+                "soma and synapse ids share one namespace and must be unique "
+                f"across both lists; duplicate ids: {shown}. Somas typically own "
+                "[0, len(somas)) and synapse ids start at len(somas)."
+            )
+
         def soma_adj(adjacency, soma):
             # Post-owned derives the soma's incoming list as a side effect of the
             # synapse loop (below), so nothing to do per-soma here.
