@@ -57,7 +57,7 @@ class TestModelResetWithSTDP(unittest.TestCase):
         )
 
         # Setup the model
-        self.model.setup(use_gpu=True)
+        self.model.setup()
 
         # Get the initial weight (should be 14.0 from config)
         initial_hyperparameters = self.model.get_agent_property_value(
@@ -127,7 +127,7 @@ class TestModelResetWithSTDP(unittest.TestCase):
         )
 
         # Setup and run first simulation with STDP learning
-        self.model.setup(use_gpu=True)
+        self.model.setup()
 
         # Inject spikes for STDP
         spike_times = [10, 30, 50, 70, 90]
@@ -219,7 +219,7 @@ class TestModelResetWithSTDP(unittest.TestCase):
         )
 
         # Setup and run first simulation with STDP learning
-        self.model.setup(use_gpu=True)
+        self.model.setup()
 
         # Store default weight
         default_weight = 14.0
@@ -324,7 +324,7 @@ class TestModelResetWithSTDP(unittest.TestCase):
         spike_times = [10, 30, 50, 70, 90]
 
         # First learning cycle
-        self.model.setup(use_gpu=True)
+        self.model.setup()
         for tick in spike_times:
             self.model.add_spike(synapse_id=synapse_input, tick=tick, value=1.0)
         self.model.simulate(ticks=simulation_ticks, update_data_ticks=simulation_ticks)

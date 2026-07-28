@@ -31,7 +31,7 @@ from superneuroabm.model import NeuromorphicModel
 from tests.util import vizualize_responses
 
 
-def test_lif_soma_mixed_synapses(enable_internal_states_tracking=True, use_gpu=True):
+def test_lif_soma_mixed_synapses(enable_internal_states_tracking=True):
     """
     Tests multi-synapse integration with a two-soma network.
 
@@ -42,7 +42,6 @@ def test_lif_soma_mixed_synapses(enable_internal_states_tracking=True, use_gpu=T
 
     Args:
         enable_internal_states_tracking: Whether to track internal states
-        use_gpu: Whether to use GPU acceleration
 
     Returns:
         NeuromorphicModel instance after simulation
@@ -106,7 +105,7 @@ def test_lif_soma_mixed_synapses(enable_internal_states_tracking=True, use_gpu=T
     )
 
     # Initialize the simulation environment
-    model.setup(use_gpu=use_gpu)
+    model.setup()
 
     # Inject spikes into synapse_2 (external -> soma_0)
     for spike in spike_times[0]:
@@ -142,8 +141,7 @@ class TestInternalStatesTracking(unittest.TestCase):
         print("\n[1/2] Running with enable_internal_states_tracking=True")
         print("-" * 70)
         model_with_tracking = test_lif_soma_mixed_synapses(
-            enable_internal_states_tracking=True,
-            use_gpu=True
+            enable_internal_states_tracking=True
         )
 
         # Generate visualization
@@ -158,8 +156,7 @@ class TestInternalStatesTracking(unittest.TestCase):
         print("\n[2/2] Running with enable_internal_states_tracking=False")
         print("-" * 70)
         model_without_tracking = test_lif_soma_mixed_synapses(
-            enable_internal_states_tracking=False,
-            use_gpu=True
+            enable_internal_states_tracking=False
         )
 
         # Print spike times (no visualization when tracking disabled)

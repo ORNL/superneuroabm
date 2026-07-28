@@ -168,8 +168,8 @@ def section_5_simulate(somas, synapses):
 
     model = NeuromorphicModel(enable_internal_states_tracking=False)
     model.create_from_lists(somas, synapses)     # the (somas, synapses) from section 1
-    model.setup(use_gpu=True)
-    print("  setup(use_gpu=True) OK")
+    model.setup()
+    print("  setup() OK")
 
     # Drive the external (pre == -1) input synapses with a Poisson spike train.
     ticks, rate_hz, dt_ms = 10, 10.0, 1.0
