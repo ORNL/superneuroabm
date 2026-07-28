@@ -228,7 +228,7 @@ rank = MPI.COMM_WORLD.Get_rank()
 
 model = NeuromorphicModel()
 model.load_post_owned(f"partition_{rank}.pkl")   # rank-local somas + synapses
-model.setup(use_gpu=True)                        # GPU buffers + ghost topology discovery
+model.setup()                                    # GPU buffers + ghost topology discovery
 model.simulate(ticks=100)                        # GPU kernels + MPI ghost exchange / tick
 ```
 

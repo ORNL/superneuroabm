@@ -37,7 +37,7 @@ class TestSpikeMask(unittest.TestCase):
             config_name="config_0",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         # Only record soma_1
         model.set_recorded_somas([soma_1])
@@ -82,7 +82,7 @@ class TestSpikeMask(unittest.TestCase):
             config_name="config_0",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
         # No set_recorded_somas call — should record all
         model.add_spike(synapse_id=syn_ext, tick=2, value=1)
         model.simulate(ticks=200, update_data_ticks=1)
@@ -118,7 +118,7 @@ class TestSpikeMask(unittest.TestCase):
             config_name="config_0",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
         model.add_spike(synapse_id=syn_ext, tick=2, value=1)
         model.simulate(ticks=200, update_data_ticks=1)
 

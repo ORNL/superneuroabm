@@ -178,7 +178,7 @@ def record_potential_windows(spike_trains, snap_times, snap_weights,
             )
             synapses.append(syn)
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         # Set weights
         for i, syn_id in enumerate(synapses):

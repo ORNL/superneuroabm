@@ -120,7 +120,7 @@ def _reference_spike_times():
                                post_soma_id=a, config_name="config_0")
     model.create_synapse(breed="single_exp_synapse", pre_soma_id=a,
                          post_soma_id=b, config_name="config_0")
-    model.setup(use_gpu=True)
+    model.setup()
     model.add_spike(synapse_id=ext, tick=INPUT_TICK, value=1)
     model.simulate(ticks=SIM_TICKS, update_data_ticks=1)
     return model.get_spike_times(b)
@@ -145,7 +145,7 @@ class TestLoadFromAdjacency(unittest.TestCase):
 
             model = NeuromorphicModel(enable_internal_states_tracking=False)
             model.load_from_adjacency(my_file)
-            model.setup(use_gpu=True)
+            model.setup()
 
             # The external input synapse S_EXT is owned by rank 0 (it feeds A, on rank 0).
             # add_spike is collective; non-owners no-op, so every rank may call it.
@@ -174,7 +174,7 @@ class TestLoadFromAdjacency(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             model = NeuromorphicModel(enable_internal_states_tracking=False)
             model.load_post_owned(_post_owned_file(tmpdir))
-            model.setup(use_gpu=True)
+            model.setup()
             model.add_spike(synapse_id=S_EXT, tick=INPUT_TICK, value=1)
             model.simulate(ticks=SIM_TICKS, update_data_ticks=1)
             got = model.get_spike_times(B)
@@ -198,7 +198,7 @@ class TestLoadFromAdjacency(unittest.TestCase):
                 {"id": S, "pre": A, "post": B},        # A -> B
             ],
         )
-        model.setup(use_gpu=True)
+        model.setup()
         model.add_spike(synapse_id=S_EXT, tick=INPUT_TICK, value=1)
         model.simulate(ticks=SIM_TICKS, update_data_ticks=1)
         got = model.get_spike_times(B)

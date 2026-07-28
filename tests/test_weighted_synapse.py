@@ -39,7 +39,7 @@ class TestWeightedSynapse(unittest.TestCase):
             config_name="config_0",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
         model.add_spike(synapse_id=synapse0, tick=2, value=1)
         model.simulate(ticks=10, update_data_ticks=1)
 
@@ -113,7 +113,7 @@ class TestWeightedSynapseExpPairWiseSTDP(unittest.TestCase):
             learning_rule="exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         initial_weight = model.get_agent_property_value(
             id=synapse_stdp, property_name="hyperparameters"
@@ -192,7 +192,7 @@ class TestWeightedSynapseBoundedSTDP(unittest.TestCase):
             learning_rule="exp_pair_wise_stdp_bounded",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         initial_weight = model.get_agent_property_value(
             id=synapse_stdp, property_name="hyperparameters"
@@ -236,7 +236,7 @@ class TestWeightedSynapseBoundedSTDP(unittest.TestCase):
             learning_rule="exp_pair_wise_stdp_bounded",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         for tick in range(5, 500, 5):
             model.add_spike(synapse_id=synapse_input, tick=tick, value=1.0)
@@ -312,7 +312,7 @@ class TestWeightedSynapseThreeBitSTDP(unittest.TestCase):
             learning_rule="three_bit_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         initial_weight = model.get_agent_property_value(
             id=synapse_stdp, property_name="hyperparameters"
@@ -356,7 +356,7 @@ class TestWeightedSynapseThreeBitSTDP(unittest.TestCase):
             learning_rule="three_bit_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         for tick in [10, 30, 50, 70, 90]:
             model.add_spike(synapse_id=synapse_input, tick=tick, value=1.0)
@@ -404,7 +404,7 @@ class TestWeightedSynapseThreeBitSTDP(unittest.TestCase):
             learning_rule="three_bit_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         for tick in range(5, 500, 5):
             model.add_spike(synapse_id=synapse_input, tick=tick, value=1.0)
@@ -480,7 +480,7 @@ class TestWeightedSynapseMemristiveSTDP(unittest.TestCase):
             learning_rule="memristive_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         initial_weight = model.get_agent_property_value(
             id=synapse_stdp, property_name="hyperparameters"
@@ -524,7 +524,7 @@ class TestWeightedSynapseMemristiveSTDP(unittest.TestCase):
             learning_rule="memristive_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         for tick in range(5, 500, 5):
             model.add_spike(synapse_id=synapse_input, tick=tick, value=1.0)

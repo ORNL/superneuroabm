@@ -40,7 +40,7 @@ n2 = model.create_neuron()
 model.create_synapse(n1, n2, weight=1.0)
 
 # Setup and run
-model.setup(use_gpu=True)
+model.setup()
 model.simulate(ticks=100)
 ```
 

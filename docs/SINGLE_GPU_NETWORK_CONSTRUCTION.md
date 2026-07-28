@@ -65,7 +65,7 @@ model.create_synapse(
 )
 
 # --- Run ---
-model.setup(use_gpu=True)                    # compile kernels, allocate memory
+model.setup()  # compile kernels, allocate memory
 model.add_spike(synapse_id=input_synapse, tick=10, value=1.0)
 model.simulate(ticks=100, update_data_ticks=1)
 
@@ -108,7 +108,7 @@ for pre in input_layer:
             overrides={"hyperparameters": {"weight": float(np.random.uniform(5, 15))}},
         )
 
-model.setup(use_gpu=True)
+model.setup()
 ```
 
 **Good for:** incremental construction, algorithmic patterns (grids, layers,
@@ -168,7 +168,7 @@ model.create_from_lists(
     ],
 )
 
-model.setup(use_gpu=True)
+model.setup()
 model.add_spike(synapse_id=100, tick=10, value=1.0)   # inject on external synapse
 model.simulate(ticks=100, update_data_ticks=1)
 
@@ -201,7 +201,7 @@ for pre in range(N_IN):
 
 model = NeuromorphicModel(enable_internal_states_tracking=False)
 model.create_from_lists(somas=somas, synapses=synapses)
-model.setup(use_gpu=True)
+model.setup()
 ```
 
 **Good for:** networks you already hold as data; building the whole model in one

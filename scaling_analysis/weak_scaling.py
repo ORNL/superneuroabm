@@ -168,7 +168,7 @@ def main():
         print("\n[3/4] Setting up GPUs...")
 
     t0 = time.time()
-    model.setup(use_gpu=True)
+    model.setup()
     gpu_setup_time = time.time() - t0
     if rank == 0:
         print(f"    GPU setup in {gpu_setup_time:.2f}s")

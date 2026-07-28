@@ -54,7 +54,7 @@ class TestRegistrationAPI(unittest.TestCase):
             config_name="config_0",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
         model.add_spike(synapse_id=synapse, tick=2, value=1)
         model.simulate(ticks=20, update_data_ticks=1)
 
@@ -104,7 +104,7 @@ class TestRegistrationAPI(unittest.TestCase):
             overrides={"learning_hyperparameters": {"stdp_type": float(rule_id)}},
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         initial_weight = model.get_agent_property_value(
             id=synapse_stdp, property_name="hyperparameters"
@@ -140,7 +140,7 @@ class TestRegistrationAPI(unittest.TestCase):
             post_soma_id=soma,
             config_name="config_0",
         )
-        model.setup(use_gpu=True)
+        model.setup()
 
         dummy_path = Path(__file__)
 

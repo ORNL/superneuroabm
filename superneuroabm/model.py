@@ -91,8 +91,6 @@ class NeuromorphicModel(Model):
         Creates an SNN Model and provides methods to create, simulate,
         and monitor soma and synapses.
 
-        :param use_gpu: True if the system supports CUDA GPU
-            acceleration.
         :param soma_breed_info: Dict of breed name to
             (step_func, step_func_path) tuple. If specified, will override
             the default soma breeds.
@@ -574,10 +572,7 @@ class NeuromorphicModel(Model):
         self._spikes_need_gather = False
         # self._agent_factory._prev_agent_data.clear()
         
-    def setup(
-        self,
-        use_gpu: bool = True,
-    ) -> None:
+    def setup(self) -> None:
         """
         One-time heavy initialization: code gen, JIT, priority analysis.
         Always resets to default state. Call once before simulation loop.
@@ -608,7 +603,7 @@ class NeuromorphicModel(Model):
         self._spike_mask_gpu = None  # rebuild mask on next prepare
         self._spikes_need_gather = False
         self.set_property_neighbor_visible("breed", False)  # no step func reads neighbor breeds
-        super().setup(use_gpu=use_gpu, skip_priority_barriers={100})
+        super().setup(skip_priority_barriers={100})
 
         if not self.enable_internal_states_tracking:
             af = self._agent_factory
@@ -1008,6 +1003,27 @@ class NeuromorphicModel(Model):
         )
 
     @staticmethod
+    def _read_columnar_partition_file(partition_file: str) -> dict:
+        """Read a columnar (.npz) post-owned partition into an array dict.
+
+        Memory-maps the file (``mmap_mode='r'``) so nothing is eagerly copied into
+        host RAM; the columnar build reads each array with vectorized numpy and
+        only the derived structures (property columns, CSR) are materialized. The
+        on-disk schema is the one ``brunel_partition(output_format='columns')``
+        writes (see its docstring).
+        """
+        import numpy as np
+        data = np.load(partition_file, mmap_mode='r', allow_pickle=True)
+        arrays = {k: data[k] for k in data.files}
+        schema = str(arrays.get('schema', ''))
+        if schema != 'columnar_post_owned_v1':
+            raise ValueError(
+                f"Unrecognized columnar partition schema {schema!r}; expected "
+                "'columnar_post_owned_v1' (regenerate with "
+                "brunel_partition(output_format='columns')).")
+        return arrays
+
+    @staticmethod
     def _normalize_neighbor_partition(data: dict) -> dict:
         """Validate and return the explicit-neighbors (load_from_adjacency) schema.
 
@@ -1219,6 +1235,13 @@ class NeuromorphicModel(Model):
         :param synapse_config: Default synapse config name
         """
         self._assert_unbuilt("load_post_owned")
+        # Columnar encoding of the SAME post-owned network: same semantics, an
+        # array file instead of a list-of-dicts. Auto-dispatch on the on-disk
+        # schema so the call site is unchanged apart from the extension.
+        if Path(partition_file).suffix.lower() == '.npz':
+            arrays = self._read_columnar_partition_file(partition_file)
+            self._build_post_owned_columnar(arrays)
+            return
         data = self._read_partition_file(partition_file)
         self._build_post_owned(
             data['somas'], data['synapses'], data['remote_ranks'],
@@ -1341,6 +1364,171 @@ class NeuromorphicModel(Model):
             soma_breed, soma_config, synapse_breed, synapse_config,
             soma_adj, synapse_adj)
 
+    def _build_post_owned_columnar(self, arrays: dict) -> None:
+        """Build a post-owned model from a columnar array dict (no per-agent objects).
+
+        The array-native twin of ``_build_post_owned``. Where that path iterates
+        50M synapse dicts (each spawning a property dict + neighbor list + dedup
+        set), this path builds the SAGESim property columns and the neighbor CSR
+        with vectorized numpy and shared property templates, then hands them to
+        ``build_from_local_columns``. Result is identical to the record path
+        (same property values, same CSR) at a fraction of the host-RAM footprint.
+
+        Local agent order is [somas..., synapses...] (each group already one
+        breed), so setup's breed sort is a verified no-op and the CSR stays
+        row-aligned. Post-owns semantics are unchanged: every synapse's post-soma
+        must be local (enforced here).
+        """
+        import numpy as np
+
+        def _scalar(name):
+            return np.asarray(arrays[name]).item()
+
+        soma_ids = np.ascontiguousarray(arrays['soma_ids'], dtype=np.int64)
+        synapse_ids = np.ascontiguousarray(arrays['synapse_ids'], dtype=np.int64)
+        pre = np.ascontiguousarray(arrays['pre'], dtype=np.int64)
+        post = np.ascontiguousarray(arrays['post'], dtype=np.int64)
+        soma_breed = _scalar('soma_breed')
+        soma_config = _scalar('soma_config')
+        synapse_breed = _scalar('synapse_breed')
+        synapse_config = _scalar('synapse_config')
+        lr_name = _scalar('learning_rule')
+        learning_rule = None if lr_name == '' else lr_name
+        learning_rule_config = _scalar('learning_rule_config')
+        hp_keys = [str(k) for k in np.asarray(arrays['syn_hp_keys'])]
+        hp_vals = np.ascontiguousarray(arrays['syn_hp_vals'], dtype=np.float64)
+        remote_ids = np.asarray(arrays.get('remote_ids', np.empty(0, np.int64)))
+        remote_rank_of = np.asarray(arrays.get('remote_rank_of', np.empty(0, np.int64)))
+
+        N, M = len(soma_ids), len(synapse_ids)
+
+        # --- Breeds. Local order is somas-then-synapses; that must be
+        # non-decreasing breed order (build_from_local_columns / sort_by_breed
+        # contract). A general (per-agent, multi-breed) producer would sort the
+        # columns first; the uniform Brunel producer only needs this guard. ---
+        soma_breedidx = self._soma_breeds[soma_breed]._breedidx
+        synapse_breedidx = self._synapse_breeds[synapse_breed]._breedidx
+        if soma_breedidx >= synapse_breedidx:
+            raise RuntimeError(
+                f"columnar loader lays out somas (breed {soma_breedidx}) before "
+                f"synapses (breed {synapse_breedidx}); it requires soma breed to "
+                "sort first. Reorder the breed registration or extend the loader "
+                "to sort columns by breed index.")
+
+        # --- Post-owns constraint + soma-incoming grouping (vectorized).
+        # Every synapse's post must be a local soma (post != -1). Map each post to
+        # its local soma index via searchsorted on the sorted soma ids. ---
+        order = np.argsort(soma_ids, kind='stable')
+        sorted_soma = soma_ids[order]
+        has_post = post >= 0
+        sp = np.searchsorted(sorted_soma, post)
+        sp_clipped = np.clip(sp, 0, max(N - 1, 0))
+        found = (sp < N) & (sorted_soma[sp_clipped] == post)
+        if not np.all(found | ~has_post):
+            bad = synapse_ids[has_post & ~found]
+            raise ValueError(
+                f"{bad.size} synapse(s) have a post-soma that is not local (e.g. "
+                f"synapse {int(bad[0])} post {int(post[has_post & ~found][0])}); "
+                "every synapse's post-soma must be co-located (post-owns). Use "
+                "load_from_adjacency() to lift this constraint.")
+        post_local = order[sp_clipped]  # local soma index (0..N-1) per synapse
+
+        # --- Property columns via shared templates. Somas are uniform (no
+        # overrides in this producer); synapses dedup on their hyperparameter
+        # override row, so identical synapses share the SAME list objects. ---
+        hp_soma, is_soma = self._get_soma_properties(soma_breed, soma_config, {})
+        default = self._agent_factory._property_name_2_defaults
+
+        unique_ov, inverse = np.unique(hp_vals, axis=0, return_inverse=True) \
+            if M else (np.empty((0, len(hp_keys))), np.empty(0, dtype=np.intp))
+        combo_props = []
+        for row in unique_ov:
+            overrides = {"hyperparameters": {k: float(v) for k, v in zip(hp_keys, row)}}
+            props, _hp, _lhp, _is, _ils = self._get_synapse_properties(
+                synapse_breed, synapse_config, overrides,
+                learning_rule, learning_rule_config)
+            combo_props.append(props)
+        inverse = inverse.tolist()
+
+        def _syn_col(prop_name):
+            # One shared object per distinct override combo; if the property does
+            # not vary across combos (common — only 'hyperparameters'/delay do),
+            # collapse to a single shared object for all M synapses.
+            vals = [cp[prop_name] for cp in combo_props]
+            if not vals:
+                return []
+            if all(v == vals[0] for v in vals):
+                return [vals[0]] * M
+            return [vals[inv] for inv in inverse]
+
+        # Full columns (length N + M): soma rows then synapse rows. Only properties
+        # that either group sets to a non-default value need an explicit column;
+        # anything else build_from_local_columns fills with its registered default.
+        property_columns = {
+            "hyperparameters": [hp_soma] * N + _syn_col("hyperparameters"),
+            "internal_states": [is_soma] * N + _syn_col("internal_states"),
+            "output_spikes_tensor":
+                [[0.0, 0.0]] * N + [default["output_spikes_tensor"]] * M,
+            "learning_hyperparameters":
+                [default["learning_hyperparameters"]] * N + _syn_col("learning_hyperparameters"),
+            "learning_internal_states":
+                [default["learning_internal_states"]] * N + _syn_col("learning_internal_states"),
+            "synapse_delay_reg":
+                [default["synapse_delay_reg"]] * N + _syn_col("synapse_delay_reg"),
+            "input_spikes_tensor":
+                [default["input_spikes_tensor"]] * N + _syn_col("input_spikes_tensor"),
+        }
+
+        # --- Neighbor CSR (global ids), vectorized. Row layout matches the agent
+        # order [somas..., synapses...]. Soma i's neighbors = incoming synapse ids
+        # (post==i), in synapse-array order (stable). Synapse j's neighbors =
+        # [pre] then [post] when post != -1 (positional slot 0=pre, 1=post). ---
+        counts_soma = np.bincount(post_local[has_post], minlength=N)
+        soma_offsets = np.empty(N + 1, dtype=np.int64)
+        soma_offsets[0] = 0
+        np.cumsum(counts_soma, out=soma_offsets[1:])
+        grp = np.argsort(post_local[has_post], kind='stable')
+        soma_values = synapse_ids[has_post][grp]
+
+        syn_counts = 1 + has_post.astype(np.int64)
+        syn_offsets = np.empty(M + 1, dtype=np.int64)
+        syn_offsets[0] = 0
+        np.cumsum(syn_counts, out=syn_offsets[1:])
+        syn_values = np.empty(int(syn_offsets[-1]), dtype=np.int64)
+        syn_values[syn_offsets[:-1]] = pre
+        syn_values[syn_offsets[:-1][has_post] + 1] = post[has_post]
+
+        neighbor_offsets = np.concatenate([
+            soma_offsets, int(soma_offsets[-1]) + syn_offsets[1:]]).astype(np.int32)
+        neighbor_values_ids = np.concatenate([soma_values, syn_values]).astype(np.int64)
+
+        # --- Assemble and hand off ---
+        agent_ids = np.concatenate([soma_ids, synapse_ids])
+        breed_indices = np.concatenate([
+            np.full(N, soma_breedidx, dtype=np.int64),
+            np.full(M, synapse_breedidx, dtype=np.int64)])
+        remote_agent_ranks = {int(i): int(r)
+                              for i, r in zip(remote_ids, remote_rank_of)}
+
+        self.build_from_local_columns(
+            agent_ids, breed_indices, property_columns,
+            neighbor_offsets, neighbor_values_ids, remote_agent_ranks)
+
+        # --- SuperNeuroABM bookkeeping (deliberately minimal). Per-soma config is
+        # cheap (N entries) and kept; per-synapse config/overrides dicts are the
+        # very 50M-entry structures this path exists to avoid, so they are NOT
+        # populated (reset() property-recompute and get_agent_config_diff on a
+        # columnar-loaded synapse are unsupported — the scaling run uses neither).
+        # Input-synapse ids and the synapse count are exposed vectorized so callers
+        # never have to scan a 50M-element id set. ---
+        self._soma_ids = set(int(s) for s in soma_ids)
+        for sid in soma_ids:
+            self.agentid2config[int(sid)] = soma_config
+            self.agentid2overrides[int(sid)] = {}
+        self._input_synapse_ids = synapse_ids[pre < 0].astype(np.int64)
+        self._num_synapses = int(M)
+        self._built_from_file = True
+
     def load_from_adjacency(self, partition_file: str,
                             soma_breed: str = "lif_soma",
                             soma_config: str = "config_0",
@@ -1435,10 +1623,14 @@ class NeuromorphicModel(Model):
         :param tick: tick at which spike should be triggered
         :param value: spike value
         """
-        spikes = self.get_agent_property_value(
+        # Copy-on-write: the columnar builder shares ONE list object across all
+        # synapses of a breed (dedup), so appending in place would grow every
+        # synapse's input-spike column at once and explode the padded tensor at
+        # first tick. Copy before mutating so only this synapse's row changes.
+        spikes = list(self.get_agent_property_value(
             id=synapse_id,
             property_name="input_spikes_tensor",
-        )
+        ))
         # OPTIMIZED: Store as flattened [tick, value, tick, value, ...] (depth 2) instead of [[tick, value], ...] (depth 3)
         spikes.append(tick)
         spikes.append(value)
@@ -1454,10 +1646,12 @@ class NeuromorphicModel(Model):
         injects spikes only for the synapses it owns (caller resolves ownership from
         app-level metadata). Calling this for a non-local synapse raises KeyError.
         """
-        spikes = self.get_local_agent_property_value(
+        # Copy-on-write (see add_spike): never mutate a shared columnar column
+        # object in place — copy this synapse's row first.
+        spikes = list(self.get_local_agent_property_value(
             id=synapse_id,
             property_name="input_spikes_tensor",
-        )
+        ))
         spikes.append(tick)
         spikes.append(value)
         self.set_local_agent_property_value(
@@ -1470,10 +1664,12 @@ class NeuromorphicModel(Model):
 
         :param spike_list: List of [tick, value] pairs
         """
-        spikes = self.get_agent_property_value(
+        # Copy-on-write (see add_spike): never mutate a shared columnar column
+        # object in place — copy this synapse's row first.
+        spikes = list(self.get_agent_property_value(
             id=synapse_id,
             property_name="input_spikes_tensor",
-        )
+        ))
         # OPTIMIZED: Flatten [[tick, value], ...] to [tick, value, tick, value, ...]
         for spike_pair in spike_list:
             spikes.append(spike_pair[0])  # tick
@@ -1495,10 +1691,12 @@ class NeuromorphicModel(Model):
 
         :param spike_list: List of [tick, value] pairs
         """
-        spikes = self.get_local_agent_property_value(
+        # Copy-on-write (see add_spike): never mutate a shared columnar column
+        # object in place — copy this synapse's row first.
+        spikes = list(self.get_local_agent_property_value(
             id=synapse_id,
             property_name="input_spikes_tensor",
-        )
+        ))
         # Flatten [[tick, value], ...] to [tick, value, tick, value, ...]
         for spike_pair in spike_list:
             spikes.append(spike_pair[0])  # tick

@@ -53,8 +53,6 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         super().__init__(methodName)
         # Create NeuromorphicModel instance for testing
         self._model = NeuromorphicModel(enable_internal_states_tracking=enable_internal_states_tracking)
-        # Set to use CPU for base test (GPU variant in separate class)
-        self._use_gpu = True
 
         # Initialize baseline comparator
         self._baseline_comparator = BaselineComparator()
@@ -155,7 +153,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         )
 
         # Initialize the simulation environment
-        self._model.setup(use_gpu=self._use_gpu)
+        self._model.setup()
 
         # Inject spikes
         for spike in self._spike_times[0]:  # [(2, 1)]
@@ -231,7 +229,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         )
 
         # Initialize the simulation environment
-        self._model.setup(use_gpu=self._use_gpu)
+        self._model.setup()
 
         # Inject spike to synapse_0 at tick 2
         for spike in self._spike_times[0]:  # [(2, 1)]
@@ -328,7 +326,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
 
 
         # Initialize the simulation environment
-        self._model.setup(use_gpu=self._use_gpu)
+        self._model.setup()
 
         # Inject spikes into synapse_0 (external -> soma_0)
         for spike in self._spike_times[0]:
@@ -385,7 +383,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         )
 
         # Initialize the simulation environment
-        self._model.setup(use_gpu=self._use_gpu)
+        self._model.setup()
 
         # Inject spike pattern into the external synapse
         for spike in self._spike_times[0]:

@@ -142,7 +142,7 @@ def record_window(cfg, spike_trains, snap_times, snap_weights,
         synapses.append(syn)
 
     t0 = time.time()
-    model.setup(use_gpu=True)  # Once — heavy init (code gen + JIT)
+    model.setup()  # Once — heavy init (code gen + JIT)
 
     # Set weights before first simulation
     for i, syn_id in enumerate(synapses):

@@ -95,7 +95,7 @@ def main():
         overrides={"learning_hyperparameters": {"stdp_type": float(bounded_id)}},
     )
 
-    model.setup(use_gpu=True)
+    model.setup()
 
     # ── Read initial weight ───────────────────────────────────────────
     initial_weight = model.get_agent_property_value(

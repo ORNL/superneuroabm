@@ -160,7 +160,7 @@ def run():
     all_spike_times = []
     weight_snapshots = []
 
-    model.setup(use_gpu=True)  # Once — heavy init (code gen + JIT)
+    model.setup()  # Once — heavy init (code gen + JIT)
 
     for chunk_idx, chunk_start in enumerate(range(0, TOTAL_TICKS, CHUNK_TICKS)):
         chunk_t0 = time.time()
