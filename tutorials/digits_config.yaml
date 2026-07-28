@@ -22,8 +22,8 @@ soma:
       hyperparameters:
         C: 1e-15 #10e-9
         R: 1e6
-        vthr: -59.9
-        tref: 5e-3
+        vthr: -59.5
+        tref: 1e-3
         vrest: -60
         vreset: -60
         tref_allows_integration: 0
@@ -40,7 +40,7 @@ soma:
         C: 1e-15 #10e-9
         R: 1e6
         vthr: -59
-        tref: 5e-3
+        tref: 1e-3
         vrest: -60
         vreset: -60
         tref_allows_integration: 0
@@ -106,11 +106,11 @@ learning_rule:
     digits_learning:
       learning_hyperparameters:
         stdp_type: 2.0
-        tau_pre_stdp: 2e-3 #10e-3
-        tau_post_stdp: 2e-3 #10e-3
-        a_exp_pre: 0.2 #0.01
-        a_exp_post: 0.005 #0.025
-        stdp_history_length: 100
+        tau_pre_stdp: 4e-3 #10e-3
+        tau_post_stdp: 4e-3 #10e-3
+        a_exp_pre: 0.02 #0.01
+        a_exp_post: 0.05 #0.025
+        stdp_history_length: 1
         wmin: -100
         wmax: 100
       learning_internal_states:
