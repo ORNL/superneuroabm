@@ -20,36 +20,36 @@ soma:
     # Input layer LIF neurons (one per pixel)
     digits_input_config:
       hyperparameters:
-        C: 1e-15 #10e-9
+        C: 1e-9 #10e-9
         R: 1e6
         vthr: -59.5
-        tref: 1e-3
+        tref: 2e-3
         vrest: -60
         vreset: -60
         tref_allows_integration: 0
         I_in: 0
-        scaling_factor: 1e-5
+        scaling_factor: 1e-6
       internal_states:
         v: -60.0
         tcount: 0.0
-        tlast: 0.0
+        tlast: -.inf
 
     # Output layer LIF neurons (one per class)
     digits_output_config:
       hyperparameters:
-        C: 1e-15 #10e-9
+        C: 1e-9 #10e-9
         R: 1e6
-        vthr: -59
-        tref: 1e-3
+        vthr: -41
+        tref: 2e-3
         vrest: -60
         vreset: -60
         tref_allows_integration: 0
         I_in: 0
-        scaling_factor: 1e-5
+        scaling_factor: 1e-6
       internal_states:
         v: -60.0
         tcount: 0.0
-        tlast: 0.0
+        tlast: -.inf
 
 
 # ==============================================================================
@@ -106,13 +106,13 @@ learning_rule:
     digits_learning:
       learning_hyperparameters:
         stdp_type: 2.0
-        tau_pre_stdp: 4e-3 #10e-3
-        tau_post_stdp: 4e-3 #10e-3
-        a_exp_pre: 0.02 #0.01
-        a_exp_post: 0.05 #0.025
+        tau_pre_stdp: 3e-3 #10e-3
+        tau_post_stdp: 2e-3 #10e-3
+        a_exp_pre: 0.01 #0.01
+        a_exp_post: 0.0 #0.025
         stdp_history_length: 1
-        wmin: -100
-        wmax: 100
+        wmin: 0
+        wmax: 1
       learning_internal_states:
         pre_trace: 0
         post_trace: 0
