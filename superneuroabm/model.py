@@ -201,6 +201,10 @@ class NeuromorphicModel(Model):
         self._spike_mask_gpu = None      # CuPy float32 bitmask, built lazily
         self._spikes_need_gather = False
 
+        # Learning mode (see eval()/train()). True = plasticity active.
+        self._learning_enabled = True
+        self._saved_stdp_type = {}       # synapse_id -> stdp_type saved while disabled
+
         self._soma_outgoing_synapses = defaultdict(set)  # soma_id -> set(synapse_ids)
         self.agentid2overrides = {}  # agent_id -> overrides dict
 
@@ -502,6 +506,144 @@ class NeuromorphicModel(Model):
         self._recorded_soma_ids = soma_ids
         self._spike_mask_gpu = None  # force rebuild on next prepare
 
+    # ------------------------------------------------------------------
+    # Learning mode (plasticity on/off)
+    # ------------------------------------------------------------------
+
+    @property
+    def learning_enabled(self) -> bool:
+        """Whether plasticity is currently active. See eval() / train()."""
+        return self._learning_enabled
+
+    def _plastic_synapse_ids(self) -> list:
+        """Synapses that actually carry a learning rule.
+
+        Synapses created without one already default to stdp_type = -1, so they
+        must be left alone: writing the sentinel would be a no-op but restoring
+        it later could resurrect a rule that was never there.
+        """
+        return [
+            sid for sid in self._synapse_ids
+            if self.agentid2learning_rule.get(sid) is not None
+        ]
+
+    def _buffers_live(self) -> bool:
+        return (
+            getattr(self, "_setup_called", False)
+            and hasattr(self, "_gpu_buffers")
+            and self._gpu_buffers.is_initialized
+        )
+
+    def _read_stdp_type(self, synapse_ids: list) -> dict:
+        """Read stdp_type (learning_hyperparameters[0]) for locally-owned synapses."""
+        af = self._agent_factory
+        prop_idx = af._property_name_2_index["learning_hyperparameters"]
+        out = {}
+        if self._buffers_live():
+            buf = self._gpu_buffers
+            tensor = buf.property_tensors[prop_idx]
+            idxs, ids = [], []
+            for sid in synapse_ids:
+                i = buf.agent_id_to_index.get(sid, -1)
+                if 0 <= i < buf.num_local_agents:
+                    idxs.append(i)
+                    ids.append(sid)
+            if idxs:
+                vals = tensor[cp.asarray(idxs), 0].get().tolist()
+                out = dict(zip(ids, vals))
+        else:
+            rank = MPI.COMM_WORLD.Get_rank()
+            local_agent_map = af._rank2agentid2agentidx.get(rank, {})
+            data = af._property_name_2_agent_data_tensor["learning_hyperparameters"]
+            for sid in synapse_ids:
+                idx = local_agent_map.get(sid)
+                if idx is not None:
+                    out[sid] = float(data[idx][0])
+        return out
+
+    def _write_stdp_type(self, id2value: dict) -> None:
+        """Batch-write stdp_type for locally-owned synapses.
+
+        Writes the CPU-side AgentFactory, which is the durable copy, then
+        invalidates the GPU buffers once so the next simulate() picks the change
+        up when it rebuilds them. Same semantics as set_agent_property_value, but
+        without one MPI-collective read and one invalidation per synapse.
+
+        Writing the GPU tensor instead would be faster but wrong: the two copies
+        would diverge, and any later property write triggers a rebuild that
+        repopulates the GPU from the AgentFactory, silently reverting this.
+        """
+        if not id2value:
+            return
+        af = self._agent_factory
+        rank = MPI.COMM_WORLD.Get_rank()
+        local_agent_map = af._rank2agentid2agentidx.get(rank, {})
+        data = af._property_name_2_agent_data_tensor["learning_hyperparameters"]
+
+        touched = False
+        for sid, value in id2value.items():
+            idx = local_agent_map.get(sid)
+            if idx is not None:
+                data[idx][0] = float(value)
+                touched = True
+
+        # _generate_agent_data_tensors() hands out references to these same
+        # lists, so the write above is already visible model-side; no
+        # _regenerate_data_tensors() needed. Only the GPU copy is now stale.
+        if touched and self._buffers_live():
+            self._gpu_buffers.is_initialized = False
+            self._cached_all_args = None
+
+    def set_learning_enabled(self, enabled: bool, synapse_ids: list = None) -> None:
+        """
+        Enable or disable plasticity by flipping stdp_type, which is element 0 of
+        each synapse's ``learning_hyperparameters``.
+
+        Disabling snapshots the current stdp_type and writes -1.0, the sentinel the
+        generated learning-rule selector treats as "no rule". Enabling restores the
+        snapshot. Weights are never touched, so disabling freezes them in place.
+
+        :param enabled: True to restore plasticity, False to freeze it.
+        :param synapse_ids: Synapses to affect. Defaults to every synapse that was
+            created with a learning rule.
+        """
+        targets = self._plastic_synapse_ids() if synapse_ids is None else list(synapse_ids)
+        if not enabled:
+            # Snapshot only what we have not already saved, so repeated eval()
+            # calls cannot overwrite the real values with the sentinel.
+            unsaved = [sid for sid in targets if sid not in self._saved_stdp_type]
+            self._saved_stdp_type.update(self._read_stdp_type(unsaved))
+            self._write_stdp_type({sid: -1.0 for sid in targets})
+        else:
+            restore = {
+                sid: self._saved_stdp_type.pop(sid)
+                for sid in targets
+                if sid in self._saved_stdp_type
+            }
+            self._write_stdp_type(restore)
+        if synapse_ids is None:
+            self._learning_enabled = enabled
+
+    def eval(self):
+        """Switch to inference mode: freeze plasticity on all learning synapses.
+
+        A pure mode flip, like PyTorch's -- it does not clear membrane voltage or
+        synaptic current. Call ``reset()`` separately for that. The mode survives
+        ``reset()`` in either order.
+
+        :return: self, so calls can be chained.
+        """
+        self.set_learning_enabled(False)
+        return self
+
+    def train(self):
+        """Switch back to training mode: restore plasticity.
+
+        :return: self, so calls can be chained.
+        """
+        self.set_learning_enabled(True)
+        return self
+
     def _reset_agents(self, retain_parameters: bool = True) -> None:
         """
         Internal method to reset all soma and synapse agents to their initial states.
@@ -560,6 +702,15 @@ class NeuromorphicModel(Model):
 
         # Step 2: Reset agent states on AgentFactory (keeps hyperparameters if retain=True)
         self._reset_agents(retain_parameters=retain_parameters)
+
+        # Step 2b: Learning mode is sticky. With retain_parameters=False the step
+        # above restores learning_hyperparameters from config, which would silently
+        # re-enable plasticity after eval(); re-apply the sentinel here.
+        if not self._learning_enabled:
+            targets = self._plastic_synapse_ids()
+            unsaved = [sid for sid in targets if sid not in self._saved_stdp_type]
+            self._saved_stdp_type.update(self._read_stdp_type(unsaved))
+            self._write_stdp_type({sid: -1.0 for sid in targets})
 
         # Step 3: Regenerate data tensors to reflect the reset states
         super()._regenerate_data_tensors()
