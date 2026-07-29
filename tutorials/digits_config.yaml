@@ -102,6 +102,35 @@ synapse:
 # ==============================================================================
 
 learning_rule:
+
+  # Tutorial-owned rule, defined in user_customized_stdp.py and registered in the
+  # notebook via model.register_learning_rule(). Currently a verbatim copy of the
+  # built-in bounded rule below, so results are unchanged; edit the kernel to change
+  # the learning behaviour.
+  #
+  # stdp_type MUST be the first key: learning_hyperparameters is packed positionally
+  # in YAML key order, the generated selector dispatches on slot 0, and each rule
+  # kernel reads its own parameters from slot 1 onward. -1.0 is only a placeholder
+  # reserving that slot -- the real id is supplied at create_synapse() time from
+  # register_learning_rule()'s return value, so this file never goes stale. If that
+  # override is ever forgotten, -1.0 means "no rule" and learning is simply off,
+  # which is visible in the weight matrix rather than silently wrong.
+  user_customized_stdp:
+    digits_learning:
+      learning_hyperparameters:
+        stdp_type: -1.0
+        tau_pre_stdp: 4e-3
+        tau_post_stdp: 4e-3
+        a_exp_pre: 0.02
+        a_exp_post: 0.05
+        stdp_history_length: 1
+        wmin: -100
+        wmax: 100
+      learning_internal_states:
+        pre_trace: 0
+        post_trace: 0
+        dW: 0
+
   exp_pair_wise_stdp_bounded:
     digits_learning:
       learning_hyperparameters:
