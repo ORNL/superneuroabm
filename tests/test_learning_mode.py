@@ -243,6 +243,107 @@ class TestLearningMode(unittest.TestCase):
             "plasticity resumed after a buffer rebuild despite eval()",
         )
 
+    def test_hyperparameter_write_after_reset(self):
+        """The pattern tutorial 02 uses to switch operating point for inference.
+
+        Changing a soma parameter on a trained model has to happen after reset(), the
+        only point that syncs GPU state back to the AgentFactory. Done in that order the
+        write must take effect, must not disturb the learned weight, and must survive the
+        per-sample reset(retain_parameters=True) an inference loop does between samples.
+        """
+        self.model.setup()
+        self._run()
+        learned = self._weight()
+        self.assertNotEqual(learned, 14.0, "sanity: STDP should have run")
+
+        self.model.reset(retain_parameters=True)    # sync GPU -> AgentFactory first
+        original_vthr = self.model.get_hyperparameters(self.soma_post)["vthr"]
+        self.model.set_hyperparameters(self.soma_post, {"vthr": original_vthr + 5.0})
+
+        self.assertEqual(
+            self._weight(), learned,
+            "the learned weight was lost when a property was written after reset()",
+        )
+
+        # A rebuild from the AgentFactory must carry both the new parameter and the
+        # learned weight up to the GPU.
+        self.model.eval()
+        self._run()
+        self.assertEqual(
+            self.model.get_hyperparameters(self.soma_post)["vthr"],
+            original_vthr + 5.0,
+            "the parameter write did not reach the kernel's view of the model",
+        )
+        self.assertEqual(self._weight(), learned, "eval() should have frozen the weight")
+
+        # retain_parameters=True recomputes internal states but must leave
+        # hyperparameters alone, so the override rides through an inference loop.
+        self.model.reset(retain_parameters=True)
+        self.assertEqual(
+            self.model.get_hyperparameters(self.soma_post)["vthr"],
+            original_vthr + 5.0,
+            "reset(retain_parameters=True) discarded a hyperparameter override",
+        )
+        self.assertEqual(self._weight(), learned)
+
+    def test_per_sample_inference_loop_preserves_state(self):
+        """The shape of tutorial 02's infer_single(): the loop must not erode anything.
+
+        Each iteration injects spikes, simulates, then reset(retain_parameters=True).
+        Both the learned weights and any inference-time parameter override have to
+        survive every iteration, or accuracy silently drifts across the test set.
+        """
+        self.model.setup()
+        self._run()
+        learned = self._weight()
+
+        self.model.reset(retain_parameters=True)
+        self.model.eval()
+        self.model.set_hyperparameters(self.soma_post, {"vthr": -33.0, "tref": 0.0})
+
+        for _ in range(3):
+            self.model.add_spike(synapse_id=self.synapse_input, tick=1, value=1.0)
+            self.model.simulate(ticks=10)
+            self.model.reset(retain_parameters=True)
+
+            hp = self.model.get_hyperparameters(self.soma_post)
+            self.assertAlmostEqual(hp["vthr"], -33.0, places=4)
+            self.assertAlmostEqual(hp["tref"], 0.0, places=6)
+            self.assertEqual(self._weight(), learned, "weights eroded across the loop")
+
+    @unittest.expectedFailure
+    def test_raw_setter_after_simulate_loses_learned_weights(self):
+        """Documents the CPU/GPU staleness hazard on the raw, unguarded API.
+
+        set_agent_property_value writes the CPU copy and only marks the GPU stale,
+        while the kernel's results live on the GPU until reset() syncs them back. So
+        a write straight after simulate() makes the next simulate() re-upload the
+        pre-training CPU array, discarding everything STDP learned.
+
+        This is expectedFailure on purpose: it passes while the bug exists, and
+        reports UNEXPECTED SUCCESS the moment the sync layer starts tracking device
+        staleness -- which is the signal to revisit this file and
+        docs/CPU_GPU_DATA_FLOW.md. set_hyperparameters() refuses this sequence
+        outright; see test_named_parameter_api.py.
+        """
+        self.model.setup()
+        self._run()
+        learned = self._weight()
+        self.assertNotEqual(learned, 14.0, "sanity: STDP should have run")
+
+        # No reset() -- the GPU still holds the learned weight, the CPU does not.
+        hp = self.model.get_agent_property_value(
+            id=self.soma_post, property_name="hyperparameters"
+        )
+        self.model.set_agent_property_value(self.soma_post, "hyperparameters", hp)
+
+        self.model.eval()
+        self._run()
+        self.assertEqual(
+            self._weight(), learned,
+            "learned weight survived a write with no intervening reset()",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
