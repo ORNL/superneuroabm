@@ -201,6 +201,10 @@ class NeuromorphicModel(Model):
         self._spike_mask_gpu = None      # CuPy float32 bitmask, built lazily
         self._spikes_need_gather = False
 
+        # Learning mode (see eval()/train()). True = plasticity active.
+        self._learning_enabled = True
+        self._saved_stdp_type = {}       # synapse_id -> stdp_type saved while disabled
+
         self._soma_outgoing_synapses = defaultdict(set)  # soma_id -> set(synapse_ids)
         self.agentid2overrides = {}  # agent_id -> overrides dict
 
@@ -292,6 +296,187 @@ class NeuromorphicModel(Model):
                 }
 
         return overrides
+
+    # ------------------------------------------------------------------
+    # Named parameter access
+    # ------------------------------------------------------------------
+    # Properties are stored as flat float vectors whose element order is the key
+    # order of the agent's YAML block. These methods let callers work in parameter
+    # names instead of positions, so a config reordering cannot silently change
+    # which parameter a write lands on.
+
+    # A few positions are contract rather than convention, because device code reads
+    # them directly and cannot consult the config: every synapse step func reads
+    # synapse_params[agent_index][0] and [1] for weight and synaptic_delay (see
+    # step_functions/synapse/*.py), and the generated learning-rule selector reads
+    # learning_params[agent_index][0] for stdp_type. Resolving these by name would
+    # imply a flexibility that does not exist and would let a reordered config
+    # mis-dispatch silently on the GPU, so they are named here and *validated* at
+    # config-load time instead.
+    _WEIGHT_INDEX = 0
+    _SYNAPTIC_DELAY_INDEX = 1
+    _STDP_TYPE_INDEX = 0
+
+    @staticmethod
+    def _assert_kernel_pinned_order(keys: list, name: str, index: int, where: str) -> None:
+        """Fail loudly if a config puts a kernel-pinned parameter at the wrong position."""
+        if len(keys) <= index or keys[index] != name:
+            found = keys[index] if len(keys) > index else "<missing>"
+            raise ValueError(
+                f"{where}: {name!r} must be key #{index} because device code reads it "
+                f"positionally, but found {found!r}. Key order is {keys}. Reorder the "
+                f"config so {name!r} comes {'first' if index == 0 else f'at position {index}'}."
+            )
+
+    #: Hyperparameters that are consumed at creation time and cannot be changed on a
+    #: live agent. Maps name -> the explanation raised to the caller.
+    _CREATION_ONLY_HYPERPARAMETERS = {
+        "synaptic_delay": (
+            "synaptic_delay is fixed at create_synapse() time: the delay register is "
+            "sized from it and rebuilt from config on every reset(), so writing it on "
+            "a live agent has no effect. Change it in the component config and "
+            "rebuild the model instead."
+        ),
+    }
+
+    @staticmethod
+    def _as_id_list(ids) -> tuple:
+        """Normalize an id or iterable of ids to ``(list, was_scalar)``."""
+        if isinstance(ids, (int, np.integer)):
+            return [int(ids)], True
+        return [int(i) for i in ids], False
+
+    def _hp_key_index(self, agent_id: int, property_name: str) -> Dict[str, int]:
+        """Map parameter name -> index into ``agent_id``'s ``property_name`` vector.
+
+        The index is the key's position in the agent's YAML block, which is exactly
+        how _get_soma_properties / _get_synapse_properties build the vector, so it is
+        derived here rather than hard-coded. Reuses _config_list_cache.
+        """
+        if property_name == "hyperparameters":
+            component_class = "soma" if agent_id in self._soma_ids else "synapse"
+            breed_name = self.get_agent_breed(agent_id)
+            config_name = self.get_agent_config_name(agent_id)
+            cache_key = (component_class, breed_name, config_name)
+            if cache_key not in self._config_list_cache:
+                config = self._component_configurations[component_class][breed_name][config_name]
+                self._config_list_cache[cache_key] = (
+                    list(config["hyperparameters"].keys()),
+                    [float(v) for v in config["hyperparameters"].values()],
+                    list(config["internal_states"].keys()),
+                    [float(v) for v in config["internal_states"].values()],
+                )
+            keys = self._config_list_cache[cache_key][0]
+        elif property_name == "learning_hyperparameters":
+            lr_info = self.agentid2learning_rule.get(agent_id)
+            if lr_info is None:
+                # Synapses created without a rule carry the synthetic single-element
+                # vector create_synapse() gives them.
+                keys = ["stdp_type"]
+            else:
+                lr_breed, lr_config_name = lr_info
+                cache_key = ("learning_rule", lr_breed, lr_config_name)
+                if cache_key not in self._config_list_cache:
+                    lr_config = self._learning_rule_configurations[lr_breed][lr_config_name]
+                    self._config_list_cache[cache_key] = (
+                        list(lr_config["learning_hyperparameters"].keys()),
+                        [float(v) for v in lr_config["learning_hyperparameters"].values()],
+                        list(lr_config.get("learning_internal_states", {}).keys()),
+                        [float(v) for v in lr_config.get("learning_internal_states", {}).values()],
+                    )
+                keys = self._config_list_cache[cache_key][0]
+        else:
+            raise ValueError(
+                f"No name mapping for {property_name!r}; expected 'hyperparameters' "
+                f"or 'learning_hyperparameters'."
+            )
+        return {name: i for i, name in enumerate(keys)}
+
+    def _get_named_properties(self, ids, property_name: str):
+        id_list, scalar = self._as_id_list(ids)
+        out = []
+        for agent_id in id_list:
+            index = self._hp_key_index(agent_id, property_name)
+            values = self.get_agent_property_value(id=agent_id, property_name=property_name)
+            out.append({name: values[i] for name, i in index.items()})
+        return out[0] if scalar else out
+
+    def _set_named_properties(self, ids, updates: dict, property_name: str) -> None:
+        if not updates:
+            return
+        id_list, _ = self._as_id_list(ids)
+        if not id_list:
+            return
+
+        if property_name == "hyperparameters":
+            for name in updates:
+                if name in self._CREATION_ONLY_HYPERPARAMETERS:
+                    raise ValueError(self._CREATION_ONLY_HYPERPARAMETERS[name])
+
+        # Writes land on the CPU-side AgentFactory, but after a simulate() the GPU
+        # holds values the CPU has never seen (STDP weights, membrane state). The
+        # next simulate() rebuilds the GPU from the CPU copy, so writing here would
+        # silently discard everything the kernel learned. reset() is currently the
+        # only GPU->CPU sync, so require it rather than corrupting the model.
+        # See docs/CPU_GPU_DATA_FLOW.md; this guard goes away once the sync layer
+        # tracks staleness directly.
+        if self._buffers_live():
+            raise RuntimeError(
+                f"set_{property_name}() cannot run while GPU buffers hold unsynced "
+                f"state: the write would land on the CPU copy and the next simulate() "
+                f"would re-upload it, discarding GPU-learned values such as STDP "
+                f"weights. Call reset(retain_parameters=True) first -- it syncs the "
+                f"GPU back to the CPU and keeps learned parameters. "
+                f"See docs/CPU_GPU_DATA_FLOW.md."
+            )
+
+        for agent_id in id_list:
+            index = self._hp_key_index(agent_id, property_name)
+            unknown = [name for name in updates if name not in index]
+            if unknown:
+                raise KeyError(
+                    f"Unknown {property_name} {unknown} for agent {agent_id}; "
+                    f"valid names are {list(index)}."
+                )
+            values = self.get_agent_property_value(id=agent_id, property_name=property_name)
+            for name, value in updates.items():
+                values[index[name]] = float(value)
+            self.set_agent_property_value(agent_id, property_name, values)
+
+    def get_hyperparameters(self, ids):
+        """Read hyperparameters by name.
+
+        :param ids: One agent id, or an iterable of them.
+        :return: ``{name: value}`` for a single id, or a list of such dicts, in the
+            order the ids were given.
+        """
+        return self._get_named_properties(ids, "hyperparameters")
+
+    def set_hyperparameters(self, ids, updates: dict) -> None:
+        """Update hyperparameters by name, leaving unnamed ones untouched.
+
+        Must be called before the first simulate(), or after a
+        ``reset(retain_parameters=True)`` -- see docs/CPU_GPU_DATA_FLOW.md.
+
+        :param ids: One agent id, or an iterable of them.
+        :param updates: ``{name: value}``; an empty dict is a no-op.
+        :raises KeyError: a name is not a hyperparameter of that agent's breed/config.
+        :raises ValueError: the name can only be set at creation time.
+        :raises RuntimeError: GPU buffers hold unsynced state; reset() first.
+        """
+        self._set_named_properties(ids, updates, "hyperparameters")
+
+    def get_learning_hyperparameters(self, ids):
+        """Read learning-rule hyperparameters by name. See get_hyperparameters."""
+        return self._get_named_properties(ids, "learning_hyperparameters")
+
+    def set_learning_hyperparameters(self, ids, updates: dict) -> None:
+        """Update learning-rule hyperparameters by name. See set_hyperparameters.
+
+        Note that plasticity is better switched with eval() / train(), which
+        snapshot and restore stdp_type for you.
+        """
+        self._set_named_properties(ids, updates, "learning_hyperparameters")
 
     def _make_soma_breed(self, name: str, step_func, step_func_path: Path) -> Breed:
         breed = Breed(name)
@@ -502,6 +687,144 @@ class NeuromorphicModel(Model):
         self._recorded_soma_ids = soma_ids
         self._spike_mask_gpu = None  # force rebuild on next prepare
 
+    # ------------------------------------------------------------------
+    # Learning mode (plasticity on/off)
+    # ------------------------------------------------------------------
+
+    @property
+    def learning_enabled(self) -> bool:
+        """Whether plasticity is currently active. See eval() / train()."""
+        return self._learning_enabled
+
+    def _plastic_synapse_ids(self) -> list:
+        """Synapses that actually carry a learning rule.
+
+        Synapses created without one already default to stdp_type = -1, so they
+        must be left alone: writing the sentinel would be a no-op but restoring
+        it later could resurrect a rule that was never there.
+        """
+        return [
+            sid for sid in self._synapse_ids
+            if self.agentid2learning_rule.get(sid) is not None
+        ]
+
+    def _buffers_live(self) -> bool:
+        return (
+            getattr(self, "_setup_called", False)
+            and hasattr(self, "_gpu_buffers")
+            and self._gpu_buffers.is_initialized
+        )
+
+    def _read_stdp_type(self, synapse_ids: list) -> dict:
+        """Read stdp_type (learning_hyperparameters[0]) for locally-owned synapses."""
+        af = self._agent_factory
+        prop_idx = af._property_name_2_index["learning_hyperparameters"]
+        out = {}
+        if self._buffers_live():
+            buf = self._gpu_buffers
+            tensor = buf.property_tensors[prop_idx]
+            idxs, ids = [], []
+            for sid in synapse_ids:
+                i = buf.agent_id_to_index.get(sid, -1)
+                if 0 <= i < buf.num_local_agents:
+                    idxs.append(i)
+                    ids.append(sid)
+            if idxs:
+                vals = tensor[cp.asarray(idxs), self._STDP_TYPE_INDEX].get().tolist()
+                out = dict(zip(ids, vals))
+        else:
+            rank = MPI.COMM_WORLD.Get_rank()
+            local_agent_map = af._rank2agentid2agentidx.get(rank, {})
+            data = af._property_name_2_agent_data_tensor["learning_hyperparameters"]
+            for sid in synapse_ids:
+                idx = local_agent_map.get(sid)
+                if idx is not None:
+                    out[sid] = float(data[idx][self._STDP_TYPE_INDEX])
+        return out
+
+    def _write_stdp_type(self, id2value: dict) -> None:
+        """Batch-write stdp_type for locally-owned synapses.
+
+        Writes the CPU-side AgentFactory, which is the durable copy, then
+        invalidates the GPU buffers once so the next simulate() picks the change
+        up when it rebuilds them. Same semantics as set_agent_property_value, but
+        without one MPI-collective read and one invalidation per synapse.
+
+        Writing the GPU tensor instead would be faster but wrong: the two copies
+        would diverge, and any later property write triggers a rebuild that
+        repopulates the GPU from the AgentFactory, silently reverting this.
+        """
+        if not id2value:
+            return
+        af = self._agent_factory
+        rank = MPI.COMM_WORLD.Get_rank()
+        local_agent_map = af._rank2agentid2agentidx.get(rank, {})
+        data = af._property_name_2_agent_data_tensor["learning_hyperparameters"]
+
+        touched = False
+        for sid, value in id2value.items():
+            idx = local_agent_map.get(sid)
+            if idx is not None:
+                data[idx][self._STDP_TYPE_INDEX] = float(value)
+                touched = True
+
+        # _generate_agent_data_tensors() hands out references to these same
+        # lists, so the write above is already visible model-side; no
+        # _regenerate_data_tensors() needed. Only the GPU copy is now stale.
+        if touched and self._buffers_live():
+            self._gpu_buffers.is_initialized = False
+            self._cached_all_args = None
+
+    def set_learning_enabled(self, enabled: bool, synapse_ids: list = None) -> None:
+        """
+        Enable or disable plasticity by flipping stdp_type, which is element 0 of
+        each synapse's ``learning_hyperparameters``.
+
+        Disabling snapshots the current stdp_type and writes -1.0, the sentinel the
+        generated learning-rule selector treats as "no rule". Enabling restores the
+        snapshot. Weights are never touched, so disabling freezes them in place.
+
+        :param enabled: True to restore plasticity, False to freeze it.
+        :param synapse_ids: Synapses to affect. Defaults to every synapse that was
+            created with a learning rule.
+        """
+        targets = self._plastic_synapse_ids() if synapse_ids is None else list(synapse_ids)
+        if not enabled:
+            # Snapshot only what we have not already saved, so repeated eval()
+            # calls cannot overwrite the real values with the sentinel.
+            unsaved = [sid for sid in targets if sid not in self._saved_stdp_type]
+            self._saved_stdp_type.update(self._read_stdp_type(unsaved))
+            self._write_stdp_type({sid: -1.0 for sid in targets})
+        else:
+            restore = {
+                sid: self._saved_stdp_type.pop(sid)
+                for sid in targets
+                if sid in self._saved_stdp_type
+            }
+            self._write_stdp_type(restore)
+        if synapse_ids is None:
+            self._learning_enabled = enabled
+
+    def eval(self):
+        """Switch to inference mode: freeze plasticity on all learning synapses.
+
+        A pure mode flip, like PyTorch's -- it does not clear membrane voltage or
+        synaptic current. Call ``reset()`` separately for that. The mode survives
+        ``reset()`` in either order.
+
+        :return: self, so calls can be chained.
+        """
+        self.set_learning_enabled(False)
+        return self
+
+    def train(self):
+        """Switch back to training mode: restore plasticity.
+
+        :return: self, so calls can be chained.
+        """
+        self.set_learning_enabled(True)
+        return self
+
     def _reset_agents(self, retain_parameters: bool = True) -> None:
         """
         Internal method to reset all soma and synapse agents to their initial states.
@@ -530,7 +853,7 @@ class NeuromorphicModel(Model):
                     breed_name, config_name, overrides, lr_breed, lr_config)
 
                 data["input_spikes_tensor"][idx] = [-1, 0.0]
-                data["synapse_delay_reg"][idx] = [0] * int(hp[1])
+                data["synapse_delay_reg"][idx] = [0] * int(hp[self._SYNAPTIC_DELAY_INDEX])
                 data["internal_states"][idx] = is_state
                 data["learning_internal_states"][idx] = ils
                 if not retain_parameters:
@@ -560,6 +883,15 @@ class NeuromorphicModel(Model):
 
         # Step 2: Reset agent states on AgentFactory (keeps hyperparameters if retain=True)
         self._reset_agents(retain_parameters=retain_parameters)
+
+        # Step 2b: Learning mode is sticky. With retain_parameters=False the step
+        # above restores learning_hyperparameters from config, which would silently
+        # re-enable plasticity after eval(); re-apply the sentinel here.
+        if not self._learning_enabled:
+            targets = self._plastic_synapse_ids()
+            unsaved = [sid for sid in targets if sid not in self._saved_stdp_type]
+            self._saved_stdp_type.update(self._read_stdp_type(unsaved))
+            self._write_stdp_type({sid: -1.0 for sid in targets})
 
         # Step 3: Regenerate data tensors to reflect the reset states
         super()._regenerate_data_tensors()
@@ -786,6 +1118,11 @@ class NeuromorphicModel(Model):
             hp_vals = [float(v) for v in config["hyperparameters"].values()]
             is_keys = list(config["internal_states"].keys())
             is_vals = [float(v) for v in config["internal_states"].values()]
+            self._assert_kernel_pinned_order(
+                hp_keys, "weight", self._WEIGHT_INDEX, f"synapse config {breed}/{config_name}")
+            self._assert_kernel_pinned_order(
+                hp_keys, "synaptic_delay", self._SYNAPTIC_DELAY_INDEX,
+                f"synapse config {breed}/{config_name}")
             self._config_list_cache[cache_key] = (hp_keys, hp_vals, is_keys, is_vals)
         hp_keys, hp_defaults, is_keys, is_defaults = self._config_list_cache[cache_key]
 
@@ -798,6 +1135,9 @@ class NeuromorphicModel(Model):
                 lhp_vals = [float(v) for v in lr_config["learning_hyperparameters"].values()]
                 ils_keys = list(lr_config.get("learning_internal_states", {}).keys())
                 ils_vals = [float(v) for v in lr_config.get("learning_internal_states", {}).values()]
+                self._assert_kernel_pinned_order(
+                    lhp_keys, "stdp_type", self._STDP_TYPE_INDEX,
+                    f"learning rule config {learning_rule}/{learning_rule_config}")
                 self._config_list_cache[lr_cache_key] = (lhp_keys, lhp_vals, ils_keys, ils_vals)
             lhp_keys, lhp_defaults, ils_keys, ils_defaults = self._config_list_cache[lr_cache_key]
         else:
@@ -820,7 +1160,7 @@ class NeuromorphicModel(Model):
         for k, v in overrides.get("learning_internal_states", {}).items():
             default_learning_internal_states[ils_keys.index(k)] = float(v)
 
-        synaptic_delay = int(hyperparameters[1])
+        synaptic_delay = int(hyperparameters[self._SYNAPTIC_DELAY_INDEX])
         delay_reg = [0 for _ in range(synaptic_delay)]
         synapse_id = self.create_agent_of_breed(
             breed=self._synapse_breeds[breed],
@@ -905,6 +1245,11 @@ class NeuromorphicModel(Model):
             hp_vals = [float(v) for v in config["hyperparameters"].values()]
             is_keys = list(config["internal_states"].keys())
             is_vals = [float(v) for v in config["internal_states"].values()]
+            self._assert_kernel_pinned_order(
+                hp_keys, "weight", self._WEIGHT_INDEX, f"synapse config {breed}/{config_name}")
+            self._assert_kernel_pinned_order(
+                hp_keys, "synaptic_delay", self._SYNAPTIC_DELAY_INDEX,
+                f"synapse config {breed}/{config_name}")
             self._config_list_cache[cache_key] = (hp_keys, hp_vals, is_keys, is_vals)
         hp_keys, hp_defaults, is_keys, is_defaults = self._config_list_cache[cache_key]
 
@@ -916,6 +1261,9 @@ class NeuromorphicModel(Model):
                 lhp_vals = [float(v) for v in lr_config["learning_hyperparameters"].values()]
                 ils_keys = list(lr_config.get("learning_internal_states", {}).keys())
                 ils_vals = [float(v) for v in lr_config.get("learning_internal_states", {}).values()]
+                self._assert_kernel_pinned_order(
+                    lhp_keys, "stdp_type", self._STDP_TYPE_INDEX,
+                    f"learning rule config {learning_rule}/{learning_rule_config}")
                 self._config_list_cache[lr_cache_key] = (lhp_keys, lhp_vals, ils_keys, ils_vals)
             lhp_keys, lhp_defaults, ils_keys, ils_defaults = self._config_list_cache[lr_cache_key]
         else:
@@ -935,7 +1283,7 @@ class NeuromorphicModel(Model):
         for k, v in overrides.get("learning_internal_states", {}).items():
             ils[ils_keys.index(k)] = float(v)
 
-        synaptic_delay = int(hp[1])
+        synaptic_delay = int(hp[self._SYNAPTIC_DELAY_INDEX])
         delay_reg = [0 for _ in range(synaptic_delay)]
 
         return {
