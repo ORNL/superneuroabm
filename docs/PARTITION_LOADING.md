@@ -192,11 +192,13 @@ For a network too large to hold globally, the scaling principle is:
 > of the problem — never materializing the global network anywhere.
 
 A synthetic example ships with the framework:
-`superneuroabm/synthetic_networks.py::generate_and_save_local_partition` builds a
+`superneuroabm/brunel.py::save_brunel_partition` (built on `brunel_partition`) writes a
 Brunel balanced random network **one rank at a time** — each rank draws only the
-in-edges of *its* neurons (so generation is `O(neurons_per_rank × in_degree)`, never
+in-edges of *its* neurons (so generation is `O(somas_per_rank × in_degree)`, never
 `O(N_global)`), and writes its own `partition_{r}.pkl`. No MPI is needed during
-generation; ranks are independent.
+generation; ranks are independent. `brunel.py::build_brunel_network` returns the same
+network in memory (`(somas, synapses)`) for a single-process build via
+`create_from_lists`.
 
 Everything after "produce local data" is **post-processing, and the user's choice**:
 

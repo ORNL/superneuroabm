@@ -92,6 +92,18 @@ scaling_analysis/networks/
 scaling_analysis/outputs/
 scaling_analysis/partitions/
 
+# Scaling analysis: superseded campaigns, generated figures
+scaling_analysis/archive/
+scaling_analysis/figures/
+scaling_analysis/paper_figures/figs/
+
+# Job logs and crash dumps
+*.log
+*.out
+*.err
+core
+core.*
+
 # examples
 examples/__pycache__/
 examples/*.pyc
