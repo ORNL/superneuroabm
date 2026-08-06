@@ -2,11 +2,14 @@
 # SuperNeuroABM Tutorial 01: Handwritten Digits Classifier Configuration
 # ==============================================================================
 #
-# Three top-level sections (soma / synapse / learning_rule), same schema as
-# tutorial_00_config.yaml. Soma and synapse configs hold only `hyperparameters`
-# and `internal_states`; learning rules live under `learning_rule:` and are
-# attached to a synapse at create_synapse() time via
-# learning_rule=/learning_rule_config=.
+# Three top-level sections (soma / synapse / learning_rule), same schema as the
+# packaged superneuroabm/component_base_config.yaml that tutorial 00 runs on.
+# Soma and synapse configs hold only `hyperparameters` and `internal_states`;
+# learning rules live under `learning_rule:` and are attached to a synapse at
+# create_synapse() time via learning_rule=/learning_rule_config=.
+#
+# Passing this file as user_config= REPLACES the packaged defaults -- it does not
+# merge with them -- so every breed and config this notebook uses is declared here.
 #
 # The soma breed below is not a built-in: its kernel lives in
 # user_customized_lif.py next to this file and is registered on the model at
