@@ -116,7 +116,7 @@ def run():
     # Build HG-LIF model
     # ------------------------------------------------------------------
     print("Building HG-LIF model ...")
-    model = NeuromorphicModel(user_config=CONFIG_DIR / "masquelier_config.yaml", enable_internal_state_tracking=False)
+    model = NeuromorphicModel(user_config=CONFIG_DIR / "masquelier_config.yaml", enable_internal_states_tracking=False)
     stdp_id = model.register_learning_rule(
         exp_pair_wise_stdp_bounded_nn,
         CONFIG_DIR / "exp_pair_wise_stdp_bounded_nn.py",
@@ -160,7 +160,7 @@ def run():
     all_spike_times = []
     weight_snapshots = []
 
-    model.setup(use_gpu=True)  # Once — heavy init (code gen + JIT)
+    model.setup()  # Once — heavy init (code gen + JIT)
 
     for chunk_idx, chunk_start in enumerate(range(0, TOTAL_TICKS, CHUNK_TICKS)):
         chunk_t0 = time.time()

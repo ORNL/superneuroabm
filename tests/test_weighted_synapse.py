@@ -17,7 +17,7 @@ class TestWeightedSynapse(unittest.TestCase):
 
 
     def _make_model(self):
-        return NeuromorphicModel(enable_internal_state_tracking=True)
+        return NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_single_spike_response_with_wtd_synaspe(self):
 
@@ -39,7 +39,7 @@ class TestWeightedSynapse(unittest.TestCase):
             config_name="config_0",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
         model.add_spike(synapse_id=synapse0, tick=2, value=1)
         model.simulate(ticks=10, update_data_ticks=1)
 
@@ -61,7 +61,7 @@ class TestWeightedSynapseExpPairWiseSTDP(unittest.TestCase):
     """Tests for weighted synapse with unbounded exponential pair-wise STDP."""
 
     def _make_model(self):
-        return NeuromorphicModel(enable_internal_state_tracking=True)
+        return NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_single_spike_response(self):
         """A single input spike should propagate through the STDP synapse and cause the soma to fire."""
@@ -113,7 +113,7 @@ class TestWeightedSynapseExpPairWiseSTDP(unittest.TestCase):
             learning_rule="exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         initial_weight = model.get_agent_property_value(
             id=synapse_stdp, property_name="hyperparameters"
@@ -140,7 +140,7 @@ class TestWeightedSynapseBoundedSTDP(unittest.TestCase):
     """Tests for weighted synapse with bounded exponential pair-wise STDP."""
 
     def _make_model(self):
-        return NeuromorphicModel(enable_internal_state_tracking=True)
+        return NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_single_spike_response(self):
         """A single input spike should propagate through the bounded STDP synapse and cause the soma to fire."""
@@ -192,7 +192,7 @@ class TestWeightedSynapseBoundedSTDP(unittest.TestCase):
             learning_rule="exp_pair_wise_stdp_bounded",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         initial_weight = model.get_agent_property_value(
             id=synapse_stdp, property_name="hyperparameters"
@@ -236,7 +236,7 @@ class TestWeightedSynapseBoundedSTDP(unittest.TestCase):
             learning_rule="exp_pair_wise_stdp_bounded",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         for tick in range(5, 500, 5):
             model.add_spike(synapse_id=synapse_input, tick=tick, value=1.0)
@@ -260,7 +260,7 @@ class TestWeightedSynapseThreeBitSTDP(unittest.TestCase):
     """Tests for weighted synapse with 3-bit quantized STDP."""
 
     def _make_model(self):
-        return NeuromorphicModel(enable_internal_state_tracking=True)
+        return NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_single_spike_response(self):
         """A single input spike should propagate through the quantized STDP synapse and cause the soma to fire."""
@@ -312,7 +312,7 @@ class TestWeightedSynapseThreeBitSTDP(unittest.TestCase):
             learning_rule="three_bit_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         initial_weight = model.get_agent_property_value(
             id=synapse_stdp, property_name="hyperparameters"
@@ -356,7 +356,7 @@ class TestWeightedSynapseThreeBitSTDP(unittest.TestCase):
             learning_rule="three_bit_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         for tick in [10, 30, 50, 70, 90]:
             model.add_spike(synapse_id=synapse_input, tick=tick, value=1.0)
@@ -404,7 +404,7 @@ class TestWeightedSynapseThreeBitSTDP(unittest.TestCase):
             learning_rule="three_bit_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         for tick in range(5, 500, 5):
             model.add_spike(synapse_id=synapse_input, tick=tick, value=1.0)
@@ -428,7 +428,7 @@ class TestWeightedSynapseMemristiveSTDP(unittest.TestCase):
     """Tests for weighted synapse with memristive exponential pair-wise STDP."""
 
     def _make_model(self):
-        return NeuromorphicModel(enable_internal_state_tracking=True)
+        return NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_single_spike_response(self):
         """A single input spike should propagate through the memristive STDP synapse and cause the soma to fire."""
@@ -480,7 +480,7 @@ class TestWeightedSynapseMemristiveSTDP(unittest.TestCase):
             learning_rule="memristive_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         initial_weight = model.get_agent_property_value(
             id=synapse_stdp, property_name="hyperparameters"
@@ -524,7 +524,7 @@ class TestWeightedSynapseMemristiveSTDP(unittest.TestCase):
             learning_rule="memristive_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         for tick in range(5, 500, 5):
             model.add_spike(synapse_id=synapse_input, tick=tick, value=1.0)

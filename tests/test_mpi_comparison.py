@@ -36,7 +36,7 @@ from tests.util import vizualize_responses
 from tests.baseline_utils import BaselineComparator
 
 
-def test_lif_soma_mixed_synapses_mpi(enable_internal_state_tracking=True, use_gpu=True):
+def test_lif_soma_mixed_synapses_mpi(enable_internal_states_tracking=True):
     """
     Tests multi-synapse integration with a two-soma network for MPI execution.
 
@@ -49,14 +49,13 @@ def test_lif_soma_mixed_synapses_mpi(enable_internal_state_tracking=True, use_gp
     (from soma_0) and an external synapse (synapse_4) simultaneously.
 
     Args:
-        enable_internal_state_tracking: Whether to track internal states
-        use_gpu: Whether to use GPU acceleration
+        enable_internal_states_tracking: Whether to track internal states
 
     Returns:
         NeuromorphicModel instance after simulation
     """
     # Create NeuromorphicModel instance for testing
-    model = NeuromorphicModel(enable_internal_state_tracking=enable_internal_state_tracking)
+    model = NeuromorphicModel(enable_internal_states_tracking=enable_internal_states_tracking)
 
     # Define input spike patterns for synapses
     spike_times = [
@@ -114,7 +113,7 @@ def test_lif_soma_mixed_synapses_mpi(enable_internal_state_tracking=True, use_gp
     )
 
     # Initialize the simulation environment
-    model.setup(use_gpu=use_gpu)
+    model.setup()
 
     # Inject spikes into synapse_2 (external -> soma_0)
     for spike in spike_times[0]:
@@ -180,8 +179,7 @@ class TestMPIComparison(unittest.TestCase):
             print("-" * 70)
 
         model = test_lif_soma_mixed_synapses_mpi(
-            enable_internal_state_tracking=True,
-            use_gpu=True
+            enable_internal_states_tracking=True
         )
 
         # Generate visualization - ALL ranks must call this (vizualize_responses handles rank internally)
@@ -224,8 +222,7 @@ class TestMPIComparison(unittest.TestCase):
 
         # ALL ranks must create the model
         model = test_lif_soma_mixed_synapses_mpi(
-            enable_internal_state_tracking=True,
-            use_gpu=True
+            enable_internal_states_tracking=True
         )
 
         # ALL ranks must call visualization (it handles rank internally)

@@ -14,13 +14,13 @@ def exp_pair_wise_stdp_memristive(
     locations,
     synapse_params,
     learning_params,
-    internal_state,
-    internal_learning_state,
+    internal_states,
+    learning_internal_states,
     synapse_history,
     input_spikes_tensor,
     output_spikes_tensor,
     internal_states_buffer,
-    internal_learning_states_buffer,
+    learning_internal_states_buffer,
 ):
     t_current = int(tick)
     # =========================
@@ -61,9 +61,9 @@ def exp_pair_wise_stdp_memristive(
     # =========================
     # ---- Internal States ----
     # =========================
-    pre_trace  = internal_learning_state[agent_index][0]
-    post_trace = internal_learning_state[agent_index][1]
-    dW         = internal_learning_state[agent_index][2]
+    pre_trace  = learning_internal_states[agent_index][0]
+    post_trace = learning_internal_states[agent_index][1]
+    dW         = learning_internal_states[agent_index][2]
 
     # =========================
     # ---- Connectivity -------
@@ -159,21 +159,21 @@ def exp_pair_wise_stdp_memristive(
     # I_read = read_V * (G_new * 1e-6)
     # E_read = read_V * I_read * read_t
 
-    # internal_state[agent_index][4] += E_write
-    # internal_state[agent_index][5] += E_read
+    # internal_states[agent_index][4] += E_write
+    # internal_states[agent_index][5] += E_read
 
     # =========================
     # ---- Update Learning ----
     # =========================
-    internal_learning_state[agent_index][0] = pre_trace
-    internal_learning_state[agent_index][1] = post_trace
-    internal_learning_state[agent_index][2] = dW
+    learning_internal_states[agent_index][0] = pre_trace
+    learning_internal_states[agent_index][1] = post_trace
+    learning_internal_states[agent_index][2] = dW
 
-    buffer_idx = t_current % len(internal_learning_states_buffer[agent_index])
-    internal_learning_states_buffer[agent_index][buffer_idx][0] = pre_trace
-    internal_learning_states_buffer[agent_index][buffer_idx][1] = post_trace
-    internal_learning_states_buffer[agent_index][buffer_idx][2] = dW
+    buffer_idx = t_current % len(learning_internal_states_buffer[agent_index])
+    learning_internal_states_buffer[agent_index][buffer_idx][0] = pre_trace
+    learning_internal_states_buffer[agent_index][buffer_idx][1] = post_trace
+    learning_internal_states_buffer[agent_index][buffer_idx][2] = dW
 
     # Learning state (pre_trace, post_trace, dW) is tracked exclusively
-    # in internal_learning_states_buffer above — no need to duplicate
-    # into internal_states_buffer or internal_state.
+    # in learning_internal_states_buffer above — no need to duplicate
+    # into internal_states_buffer or internal_states.

@@ -17,7 +17,7 @@ class TestMemristiveSTDP(unittest.TestCase):
     """Tests for memristive exponential pair-wise STDP learning rule."""
 
     def _make_model(self):
-        return NeuromorphicModel(enable_internal_state_tracking=True)
+        return NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_single_spike_response(self):
         """A single input spike should propagate through the memristive STDP synapse and cause the soma to fire."""
@@ -69,7 +69,7 @@ class TestMemristiveSTDP(unittest.TestCase):
             learning_rule="memristive_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         initial_weight = model.get_agent_property_value(
             id=synapse_stdp, property_name="hyperparameters"
@@ -113,7 +113,7 @@ class TestMemristiveSTDP(unittest.TestCase):
             learning_rule="memristive_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         for tick in range(5, 500, 5):
             model.add_spike(synapse_id=synapse_input, tick=tick, value=1.0)

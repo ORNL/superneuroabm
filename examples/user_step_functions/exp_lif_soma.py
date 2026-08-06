@@ -35,13 +35,13 @@ def exp_lif_soma_step_func(
     locations,
     neuron_params,
     learning_params,
-    internal_state,
-    internal_learning_state,
+    internal_states,
+    learning_internal_states,
     synapse_history,
     input_spikes_tensor,
     output_spikes_tensor,
     internal_states_buffer,
-    internal_learning_states_buffer,
+    learning_internal_states_buffer,
 ):
     # Sum synaptic currents from connected synapses
     synapse_indices = locations[agent_index]
@@ -49,7 +49,7 @@ def exp_lif_soma_step_func(
     for i in range(len(synapse_indices)):
         synapse_index = int(synapse_indices[i])
         if synapse_index >= 0 and not cp.isnan(synapse_indices[i]):
-            I_synapse += internal_state[synapse_index][0]
+            I_synapse += internal_states[synapse_index][0]
 
     t_current = int(tick)
 
@@ -63,9 +63,9 @@ def exp_lif_soma_step_func(
     scaling_factor = neuron_params[agent_index][6]
 
     # Read internal state
-    v = internal_state[agent_index][0]
-    tcount = internal_state[agent_index][1]
-    tlast = internal_state[agent_index][2]
+    v = internal_states[agent_index][0]
+    tcount = internal_states[agent_index][1]
+    tlast = internal_states[agent_index][2]
 
     # Exponential decay toward rest + input
     decay = cp.exp(-dt / tau_m)
@@ -84,9 +84,9 @@ def exp_lif_soma_step_func(
     v = v * (1 - s) + vreset * s
 
     # Write back state
-    internal_state[agent_index][0] = v
-    internal_state[agent_index][1] = tcount + 1
-    internal_state[agent_index][2] = tlast
+    internal_states[agent_index][0] = v
+    internal_states[agent_index][1] = tcount + 1
+    internal_states[agent_index][2] = tlast
 
     output_spikes_tensor[agent_index][t_current % 2] = s
 

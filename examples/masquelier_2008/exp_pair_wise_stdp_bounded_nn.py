@@ -38,13 +38,13 @@ def exp_pair_wise_stdp_bounded_nn(
     locations,
     synapse_params,
     learning_params,
-    internal_state,
-    internal_learning_state,
+    internal_states,
+    learning_internal_states,
     synapse_history,
     input_spikes_tensor,
     output_spikes_tensor,
     internal_states_buffer,
-    internal_learning_states_buffer,
+    learning_internal_states_buffer,
 ):
     t_current = int(tick)
 
@@ -57,9 +57,9 @@ def exp_pair_wise_stdp_bounded_nn(
     wmin = learning_params[agent_index][6]
     wmax = learning_params[agent_index][7]
 
-    pre_trace = internal_learning_state[agent_index][0]
-    post_trace = internal_learning_state[agent_index][1]
-    dW = internal_learning_state[agent_index][2]
+    pre_trace = learning_internal_states[agent_index][0]
+    post_trace = learning_internal_states[agent_index][1]
+    dW = learning_internal_states[agent_index][2]
 
     pre_soma_index = locations[agent_index][0]
     post_soma_index = locations[agent_index][1]
@@ -102,23 +102,23 @@ def exp_pair_wise_stdp_bounded_nn(
     weight = weight if weight >= wmin else wmin
     synapse_params[agent_index][0] = weight
 
-    internal_learning_state[agent_index][0] = pre_trace
-    internal_learning_state[agent_index][1] = post_trace
-    internal_learning_state[agent_index][2] = dW
+    learning_internal_states[agent_index][0] = pre_trace
+    learning_internal_states[agent_index][1] = post_trace
+    learning_internal_states[agent_index][2] = dW
 
-    buffer_idx = t_current % len(internal_learning_states_buffer[agent_index])
-    internal_learning_states_buffer[agent_index][buffer_idx][0] = pre_trace
-    internal_learning_states_buffer[agent_index][buffer_idx][1] = post_trace
-    internal_learning_states_buffer[agent_index][buffer_idx][2] = dW
+    buffer_idx = t_current % len(learning_internal_states_buffer[agent_index])
+    learning_internal_states_buffer[agent_index][buffer_idx][0] = pre_trace
+    learning_internal_states_buffer[agent_index][buffer_idx][1] = post_trace
+    learning_internal_states_buffer[agent_index][buffer_idx][2] = dW
 
     # Zero synaptic currents on post-spike (Brian2's x=0 reset).
     # After the output neuron fires, all accumulated PSP is consumed.
     # This runs at priority 101 (after synapse step at 100), so it
     # overwrites the synapse step's I_fast/I_slow with zeroed values.
     # Next tick, the soma sees zero accumulated input and must re-accumulate.
-    internal_state[agent_index][0] *= (1.0 - post_soma_spike)
-    internal_state[agent_index][1] *= (1.0 - post_soma_spike)
+    internal_states[agent_index][0] *= (1.0 - post_soma_spike)
+    internal_states[agent_index][1] *= (1.0 - post_soma_spike)
 
     # Learning state (pre_trace, post_trace, dW) is tracked exclusively
-    # in internal_learning_states_buffer above — no need to duplicate
-    # into internal_states_buffer or internal_state.
+    # in learning_internal_states_buffer above — no need to duplicate
+    # into internal_states_buffer or internal_states.

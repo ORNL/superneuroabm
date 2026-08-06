@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Jupyter
+.ipynb_checkpoints/
+
 # Distribution / packaging
 .Python
 build/
@@ -70,7 +73,7 @@ tests/baselines/
 *.csv
 
 # Documentation builds
-docs/
+# docs/
 
 # Generated data and networks
 **/network_run_*.json
@@ -90,6 +93,19 @@ tests/test_lif_mixed_synapses_stdp_mpi.py
 # Scaling analysis data and outputs
 scaling_analysis/networks/
 scaling_analysis/outputs/
+scaling_analysis/partitions/
+
+# Scaling analysis: superseded campaigns, generated figures
+scaling_analysis/archive/
+scaling_analysis/figures/
+scaling_analysis/paper_figures/figs/
+
+# Job logs and crash dumps
+*.log
+*.out
+*.err
+core
+core.*
 
 # examples
 examples/__pycache__/

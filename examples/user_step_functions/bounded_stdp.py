@@ -40,13 +40,13 @@ def bounded_stdp(
     locations,
     synapse_params,
     learning_params,
-    internal_state,
-    internal_learning_state,
+    internal_states,
+    learning_internal_states,
     synapse_history,
     input_spikes_tensor,
     output_spikes_tensor,
     internal_states_buffer,
-    internal_learning_states_buffer,
+    learning_internal_states_buffer,
 ):
     t_current = int(tick)
 
@@ -64,8 +64,8 @@ def bounded_stdp(
     w_max = 28.0
 
     # Read traces
-    pre_trace = internal_learning_state[agent_index][0]
-    post_trace = internal_learning_state[agent_index][1]
+    pre_trace = learning_internal_states[agent_index][0]
+    post_trace = learning_internal_states[agent_index][1]
 
     # Pre/post soma indices
     pre_soma_index = locations[agent_index][0]
@@ -97,11 +97,11 @@ def bounded_stdp(
     synapse_params[agent_index][0] = weight
 
     # Write learning state
-    internal_learning_state[agent_index][0] = pre_trace
-    internal_learning_state[agent_index][1] = post_trace
-    internal_learning_state[agent_index][2] = dW
+    learning_internal_states[agent_index][0] = pre_trace
+    learning_internal_states[agent_index][1] = post_trace
+    learning_internal_states[agent_index][2] = dW
 
-    buffer_idx = t_current % len(internal_learning_states_buffer[agent_index])
-    internal_learning_states_buffer[agent_index][buffer_idx][0] = pre_trace
-    internal_learning_states_buffer[agent_index][buffer_idx][1] = post_trace
-    internal_learning_states_buffer[agent_index][buffer_idx][2] = dW
+    buffer_idx = t_current % len(learning_internal_states_buffer[agent_index])
+    learning_internal_states_buffer[agent_index][buffer_idx][0] = pre_trace
+    learning_internal_states_buffer[agent_index][buffer_idx][1] = post_trace
+    learning_internal_states_buffer[agent_index][buffer_idx][2] = dW

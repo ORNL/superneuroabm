@@ -18,13 +18,13 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     locations,
     neuron_params,  # k, vth, C, a, b,
     learning_params,
-    internal_state,  # v, u
-    internal_learning_state,
+    internal_states,  # v, u
+    learning_internal_states,
     synapse_history,  # Synapse delay
     input_spikes_tensor,  # input spikes
     output_spikes_tensor,
     internal_states_buffer,
-    internal_learning_states_buffer,
+    learning_internal_states_buffer,
 ):
     synapse_indices = locations[agent_index]  # Now contains local indices instead of IDs
 
@@ -35,7 +35,7 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     for i in range(len(synapse_indices)):
         synapse_index = int(synapse_indices[i])
         if synapse_index >= 0 and not cp.isnan(synapse_indices[i]):
-            I_synapse += internal_state[synapse_index][0]
+            I_synapse += internal_states[synapse_index][0]
 
     # Get the current time step value:
     t_current = int(tick)  # Check if tcount is needed or if we ca use this directly.
@@ -59,13 +59,13 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     # vreset = neuron_params[agent_index][8]
     # I_in = neuron_params[agent_index][9]
 
-    # NOTE: size of internal_state would need to be set as the maximum possible state variables of any spiking neuron
+    # NOTE: size of internal_states would need to be set as the maximum possible state variables of any spiking neuron
     # Internal state variables
-    v = internal_state[agent_index][0]  # membrane potential
-    tcount = internal_state[agent_index][
+    v = internal_states[agent_index][0]  # membrane potential
+    tcount = internal_states[agent_index][
         1
     ]  # time count from the start of the simulation
-    tlast = internal_state[agent_index][2]  # last spike time
+    tlast = internal_states[agent_index][2]  # last spike time
 
     # Calculate the membrane potential update
     dv = (vrest - v) / (R * C) + (I_synapse * scaling_factor + I_bias + I_in) / C
@@ -83,9 +83,9 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     tlast = tlast * (1 - s) + dt * tcount * s
     v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
 
-    internal_state[agent_index][0] = v
-    internal_state[agent_index][1] += 1
-    internal_state[agent_index][2] = tlast
+    internal_states[agent_index][0] = v
+    internal_states[agent_index][1] += 1
+    internal_states[agent_index][2] = tlast
 
     output_spikes_tensor[agent_index][t_current % 2] = s
 
@@ -93,5 +93,5 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
     # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always
     buffer_idx = t_current % len(internal_states_buffer[agent_index])
     internal_states_buffer[agent_index][buffer_idx][0] = v
-    internal_states_buffer[agent_index][buffer_idx][1] = internal_state[agent_index][1] + 1
+    internal_states_buffer[agent_index][buffer_idx][1] = internal_states[agent_index][1] + 1
     internal_states_buffer[agent_index][buffer_idx][2] = tlast

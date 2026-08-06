@@ -162,7 +162,7 @@ def record_potential_windows(spike_trains, snap_times, snap_weights,
               f"(weights from snap {snap_idx}) ...")
 
         cfg = MODEL_CONFIGS[MODEL_VARIANT]
-        model = NeuromorphicModel(user_config=BASE_DIR / "masquelier_config.yaml", enable_internal_state_tracking=True)
+        model = NeuromorphicModel(user_config=BASE_DIR / "masquelier_config.yaml", enable_internal_states_tracking=True)
         model.set_global_property_value("dt", DT_SIM)
 
         soma = model.create_soma(
@@ -178,7 +178,7 @@ def record_potential_windows(spike_trains, snap_times, snap_weights,
             )
             synapses.append(syn)
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         # Set weights
         for i, syn_id in enumerate(synapses):

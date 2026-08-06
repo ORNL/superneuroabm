@@ -21,13 +21,13 @@ def weighted_synapse_step_func(
     locations,
     synapse_params,  # weight, synaptic delay
     learning_params,
-    internal_state,  #
-    internal_learning_state,
+    internal_states,  #
+    learning_internal_states,
     synapse_history,  # delay
     input_spikes_tensor,  # input spikes
     output_spikes_tensor,
     internal_states_buffer,
-    internal_learning_states_buffer,
+    learning_internal_states_buffer,
 ):
     t_current = int(tick)
 
@@ -51,11 +51,11 @@ def weighted_synapse_step_func(
         output_spikes_tensor,
     )
 
-    I_synapse = internal_state[agent_index][0]
+    I_synapse = internal_states[agent_index][0]
 
     I_synapse = spike * weight
 
-    internal_state[agent_index][0] = I_synapse
+    internal_states[agent_index][0] = I_synapse
 
     internal_states_buffer[agent_index][t_current][0] = I_synapse
     internal_states_buffer[agent_index][t_current][1] = spike

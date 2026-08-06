@@ -17,7 +17,7 @@ class TestSpikeMask(unittest.TestCase):
 
         Both somas fire, but only soma_1 spikes should appear in the record.
         """
-        model = NeuromorphicModel(enable_internal_state_tracking=False)
+        model = NeuromorphicModel(enable_internal_states_tracking=False)
 
         soma_0 = model.create_soma(breed="lif_soma", config_name="config_0")
         soma_1 = model.create_soma(breed="lif_soma", config_name="config_0")
@@ -37,7 +37,7 @@ class TestSpikeMask(unittest.TestCase):
             config_name="config_0",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         # Only record soma_1
         model.set_recorded_somas([soma_1])
@@ -64,7 +64,7 @@ class TestSpikeMask(unittest.TestCase):
         """
         Without calling set_recorded_somas, all somas are recorded (backward compat).
         """
-        model = NeuromorphicModel(enable_internal_state_tracking=False)
+        model = NeuromorphicModel(enable_internal_states_tracking=False)
 
         soma_0 = model.create_soma(breed="lif_soma", config_name="config_0")
         soma_1 = model.create_soma(breed="lif_soma", config_name="config_0")
@@ -82,7 +82,7 @@ class TestSpikeMask(unittest.TestCase):
             config_name="config_0",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
         # No set_recorded_somas call — should record all
         model.add_spike(synapse_id=syn_ext, tick=2, value=1)
         model.simulate(ticks=200, update_data_ticks=1)
@@ -100,7 +100,7 @@ class TestSpikeMask(unittest.TestCase):
         """
         Verify get_all_spike_times returns dict keyed by soma ID.
         """
-        model = NeuromorphicModel(enable_internal_state_tracking=False)
+        model = NeuromorphicModel(enable_internal_states_tracking=False)
 
         soma_0 = model.create_soma(breed="lif_soma", config_name="config_0")
         soma_1 = model.create_soma(breed="lif_soma", config_name="config_0")
@@ -118,7 +118,7 @@ class TestSpikeMask(unittest.TestCase):
             config_name="config_0",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
         model.add_spike(synapse_id=syn_ext, tick=2, value=1)
         model.simulate(ticks=200, update_data_ticks=1)
 

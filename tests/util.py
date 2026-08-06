@@ -7,10 +7,8 @@ from superneuroabm.model import NeuromorphicModel
 
 def vizualize_responses(model: NeuromorphicModel, vthr: int, fig_name: str, figsize=None) -> None:
 
-    # Filter out invalid soma IDs (negative values like -1 or NaN used for external inputs)
-    all_soma_ids = model.soma2synapse_map.keys()
-    soma_ids = [sid for sid in all_soma_ids if sid >= 0 and not np.isnan(sid)]
-    synapse_ids = model.synapse2soma_map.keys()
+    soma_ids = sorted(model._soma_ids)
+    synapse_ids = sorted(model._synapse_ids)
 
     # Always print spike times first
     print("\n=== Spike Times ===")
@@ -20,17 +18,17 @@ def vizualize_responses(model: NeuromorphicModel, vthr: int, fig_name: str, figs
     print("===================\n")
 
     # Check if internal state tracking is enabled
-    if not model.enable_internal_state_tracking:
+    if not model.enable_internal_states_tracking:
         # When tracking is disabled, only print spike times (already done above)
         return
 
     # Calculate total number of plots needed
     total_plot_count = len(soma_ids)
     for synapse_id in synapse_ids:
-        internal_learning_state_synapse = np.array(
-            model.get_internal_learning_states_history(agent_id=synapse_id)
+        learning_internal_states_synapse = np.array(
+            model.get_learning_internal_states_history(agent_id=synapse_id)
         )
-        num_plots = 1 if internal_learning_state_synapse.size == 0 else 3
+        num_plots = 1 if learning_internal_states_synapse.size == 0 else 3
         total_plot_count += num_plots
 
     # Auto-calculate figure size if not provided
@@ -66,10 +64,10 @@ def vizualize_responses(model: NeuromorphicModel, vthr: int, fig_name: str, figs
             model.get_internal_states_history(agent_id=synapse_id)
         )
         # Get the internal learning states for synapses
-        internal_learning_state_synapse = np.array(
-            model.get_internal_learning_states_history(agent_id=synapse_id)
+        learning_internal_states_synapse = np.array(
+            model.get_learning_internal_states_history(agent_id=synapse_id)
         )
-        num_plots = 1 if internal_learning_state_synapse.size == 0 else 3
+        num_plots = 1 if learning_internal_states_synapse.size == 0 else 3
         
         # Plot synaptic current
         plt.subplot(total_plot_count, 1, current_subplot)
@@ -82,13 +80,13 @@ def vizualize_responses(model: NeuromorphicModel, vthr: int, fig_name: str, figs
         plt.legend()
         current_subplot += 1
 
-        # print(internal_learning_state_synapse)
+        # print(learning_internal_states_synapse)
 
         if num_plots > 1:
             # Plot pre trace
             plt.subplot(total_plot_count, 1, current_subplot)
             plt.plot(
-                internal_learning_state_synapse[:, 0],
+                learning_internal_states_synapse[:, 0],
                 "r-",
                 label=f"Synapse {synapse_id} pre_trace",
             )
@@ -99,7 +97,7 @@ def vizualize_responses(model: NeuromorphicModel, vthr: int, fig_name: str, figs
             # Plot post trace
             plt.subplot(total_plot_count, 1, current_subplot)
             plt.plot(
-                internal_learning_state_synapse[:, 1],
+                learning_internal_states_synapse[:, 1],
                 "r-",
                 label=f"Synapse {synapse_id} post-trace",
             )

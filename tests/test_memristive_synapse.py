@@ -19,7 +19,7 @@ class TestMemristiveSynapse(unittest.TestCase):
 
 
     def _make_model(self):
-        return NeuromorphicModel(enable_internal_state_tracking=True)
+        return NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_single_spike_response(self):
 
@@ -34,7 +34,7 @@ class TestMemristiveSynapse(unittest.TestCase):
             learning_rule="memristive_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
         model.add_spike(synapse_id=synapse, tick=2, value=1)
         model.simulate(ticks=200, update_data_ticks=1)
 

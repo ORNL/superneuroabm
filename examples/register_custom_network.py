@@ -44,7 +44,7 @@ USER_CONFIG_PATH = SCRIPT_DIR / "custom_components_config.yaml"
 
 
 def main():
-    model = NeuromorphicModel(user_config=USER_CONFIG_PATH, enable_internal_state_tracking=True)
+    model = NeuromorphicModel(user_config=USER_CONFIG_PATH, enable_internal_states_tracking=True)
 
     # ── Register custom soma ──────────────────────────────────────────
     model.register_soma_type(
@@ -95,7 +95,7 @@ def main():
         overrides={"learning_hyperparameters": {"stdp_type": float(bounded_id)}},
     )
 
-    model.setup(use_gpu=True)
+    model.setup()
 
     # ── Read initial weight ───────────────────────────────────────────
     initial_weight = model.get_agent_property_value(

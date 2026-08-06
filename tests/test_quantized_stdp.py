@@ -17,7 +17,7 @@ class TestThreeBitSTDP(unittest.TestCase):
     """Tests for 3-bit quantized exponential pair-wise STDP learning rule."""
 
     def _make_model(self):
-        return NeuromorphicModel(enable_internal_state_tracking=True)
+        return NeuromorphicModel(enable_internal_states_tracking=True)
 
     def test_single_spike_response(self):
         """A single input spike should propagate through the STDP synapse and cause the soma to fire."""
@@ -69,7 +69,7 @@ class TestThreeBitSTDP(unittest.TestCase):
             learning_rule="three_bit_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         initial_weight = model.get_agent_property_value(
             id=synapse_stdp, property_name="hyperparameters"
@@ -113,7 +113,7 @@ class TestThreeBitSTDP(unittest.TestCase):
             learning_rule="three_bit_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         for tick in [10, 30, 50, 70, 90]:
             model.add_spike(synapse_id=synapse_input, tick=tick, value=1.0)
@@ -162,7 +162,7 @@ class TestThreeBitSTDP(unittest.TestCase):
             learning_rule="three_bit_exp_pair_wise_stdp",
         )
 
-        model.setup(use_gpu=True)
+        model.setup()
 
         # Heavy stimulation to push weight toward bounds
         for tick in range(5, 500, 5):
