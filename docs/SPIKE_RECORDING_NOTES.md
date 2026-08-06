@@ -107,7 +107,7 @@ unchanged. Nothing gets slower.
 
 - **Single-GPU runs** — one `worker_coroutine` call, so the mask is built once and used once. This is
   why the single-GPU 400k case pays the full 4.58 s.
-- **Per-sample inference loops** (e.g. `tutorials/02_superneuroabm_digits.ipynb`) — `reset()` per sample
+- **Per-sample inference loops** (e.g. `tests/test_spike_mask.py`) — `reset()` per sample
   nulls the mask, so it is rebuilt every sample regardless.
 
 ---
@@ -177,7 +177,8 @@ precedes `simulate()` and never runs between chunks.
   code uses `internal_states` / `learning_internal_states`. It also lists synapse `internal_state` as
   `[I_synapse, I_synapse_supp, pre_trace, post_trace]`, but the configs put only `I_synapse` there, with
   the traces in `learning_internal_states`.
-- Both `docs/FUNCTIONALITY_GUIDE.md` and `docs/DATA_FORMAT.md` use
+- ~~Both `docs/FUNCTIONALITY_GUIDE.md` and `docs/DATA_FORMAT.md` use
   `enable_internal_state_tracking` (missing the `s`) and a stale `setup(use_gpu=True)`; `setup()` takes
-  no arguments since commit `bf17a22`.
+  no arguments since commit `bf17a22`.~~ Fixed — both docs now use `enable_internal_states_tracking`,
+  and the stale `setup(use_gpu=True)` is gone from the docs and from both tutorials.
 - Neither doc mentions `set_recorded_somas` or `get_all_spike_times`.

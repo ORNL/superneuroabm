@@ -1,5 +1,5 @@
 # ==============================================================================
-# SuperNeuroABM Tutorial 02: Handwritten Digits Classifier Configuration
+# SuperNeuroABM Tutorial 01: Handwritten Digits Classifier Configuration
 # ==============================================================================
 #
 # Three top-level sections (soma / synapse / learning_rule), same schema as
@@ -7,6 +7,12 @@
 # and `internal_states`; learning rules live under `learning_rule:` and are
 # attached to a synapse at create_synapse() time via
 # learning_rule=/learning_rule_config=.
+#
+# The soma breed below is not a built-in: its kernel lives in
+# user_customized_lif.py next to this file and is registered on the model at
+# runtime. A custom soma needs a matching block here, keyed by the name passed
+# to register_soma_type(). A custom learning rule does not -- see the
+# `learning_rule:` section at the bottom.
 # ==============================================================================
 
 
@@ -15,7 +21,11 @@
 # ==============================================================================
 
 soma:
-  lif_soma:
+  # This key must equal the `name=` passed to model.register_soma_type().
+  #
+  # Key ORDER is index order -- the kernel reads neuron_params[i] positionally
+  # and nothing validates soma configs, so a reordered block fails silently.
+  user_customized_lif:
 
     # Input layer LIF neurons (one per pixel)
     digits_input_config:
@@ -32,6 +42,10 @@ soma:
       internal_states:
         v: -60.0
         tcount: 0.0
+        # -inf, not 0.0: the refractory test is (t - tlast) >= tref, so a finite
+        # 0.0 would block the first 2 ticks of the run. user_customized_lif
+        # handles the sentinel; the built-in lif_soma turns it into NaN on the
+        # first spike and loses the refractory period thereafter.
         tlast: -.inf
 
     # Output layer LIF neurons (one per class)

@@ -7,7 +7,6 @@ from cupyx import jit
 import cupy as cp
 
 
-
 @jit.rawkernel(device="cuda")
 def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_step_func
     tick,
@@ -67,47 +66,25 @@ def lif_soma_step_func(  # NOTE: update the name to soma_step_func from neuron_s
         1
     ]  # time count from the start of the simulation
     tlast = internal_states[agent_index][2]  # last spike time
-    # Physical time corresponding to the current neuron update.
-    current_time = dt * tcount
-
-    # With tlast initialized to -inf, this is True before the first spike.
-    # A neuron that spiked at time ts may spike again at ts + tref.
-
-    refractory_complete = (current_time - tlast) >= tref
 
     # Calculate the membrane potential update
     dv = (vrest - v) / (R * C) + (I_synapse * scaling_factor + I_bias + I_in) / C
-    # Integration and spike generation are separate decisions:
-    # tref_allows_integration may permit v to evolve during refractory,
-    # but it does not permit the neuron to emit another spike.
-    integration_allowed = (
-        refractory_complete or tref_allows_integration != 0.0
+
+    v += (
+        (dv * dt)
+        if ((dt * tcount) > (tlast + tref)) or tref_allows_integration
+        else 0.0
     )
 
-    if integration_allowed:
-        v += dv * dt
-    # ------------------------------------------------------------------
-    # Spike generation and reset
-    # ------------------------------------------------------------------
-    s = 0.0
-
-    if refractory_complete and v >= vthr:
-        s = 1.0
-        tlast = current_time
-        v = vreset
-
     #if tlast > 0 else 1 # output spike only happens if the membrane potential exceeds the threshold and the neuron is not in refractory period.
-    # s = 1.0 * ((v >= vthr) and (( dt * tcount > tlast + tref) if (tlast > 0 and tlast<= tref) else True))
+    s = 1.0 * ((v >= vthr) and (( dt * tcount > tlast + tref) if tlast > 0 else True))
 
-    # ------------------------------------------------------------------
-    # Store updated state
-    # ------------------------------------------------------------------
-    next_tcount = tcount + 1.0
-    # tlast = tlast * (1 - s) + dt * tcount * s
-    # v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
+
+    tlast = tlast * (1 - s) + dt * tcount * s
+    v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
 
     internal_states[agent_index][0] = v
-    internal_states[agent_index][1] = next_tcount
+    internal_states[agent_index][1] += 1
     internal_states[agent_index][2] = tlast
 
     output_spikes_tensor[agent_index][t_current % 2] = s

@@ -192,9 +192,9 @@ the underlying sync stays as-is.
   so the test should be rewritten to assert *that* rather than deleted.
 - `tests/test_model_reset_stdp.py` pins `retain_parameters` semantics — unaffected by (a)/(b), needs
   updating under (d).
-- `tutorials/02_superneuroabm_digits.ipynb` and `tutorials/03_masquelier_2008_stdp.ipynb` both do
-  `reset(retain_parameters=True)` before reading or writing weights. Correct under every option
-  above; only the explanatory comments would need softening.
+- `tutorials/01_superneuroabm_digits.ipynb` does `reset(retain_parameters=True)` between training
+  epochs (only when `N_EPOCHS > 1`, so not on the shipped run). Correct under every option above;
+  only the explanatory comments would need softening.
 - `superneuroabm/model.py:564-595` (`_write_stdp_type`) hand-rolls the invalidation dance and would
   simplify under (b).
 - MPI: `get`/`set_agent_property_value` are collective, the `*_local_*` variants are not

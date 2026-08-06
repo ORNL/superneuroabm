@@ -10,7 +10,7 @@ The single entry point is:
 ```python
 from superneuroabm.model import NeuromorphicModel
 
-model = NeuromorphicModel(enable_internal_state_tracking=False)
+model = NeuromorphicModel(enable_internal_states_tracking=False)
 model.load_from_file("my_network.pkl")
 model.setup()
 model.simulate(ticks=100, update_data_ticks=1)
@@ -271,7 +271,7 @@ with open("my_network.pkl", "wb") as f:
 Then load and run:
 
 ```python
-model = NeuromorphicModel(enable_internal_state_tracking=False)
+model = NeuromorphicModel(enable_internal_states_tracking=False)
 model.load_from_file("my_network.pkl")
 model.setup()
 model.add_spike(synapse_id=input_synapse_ids[0], tick=1, value=1.0)
