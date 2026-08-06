@@ -113,15 +113,21 @@ synapse:
 # ==============================================================================
 # LEARNING RULE CONFIGURATIONS
 # ==============================================================================
-# Bounded exponential pair-wise STDP (stdp_type=2): hard-clamped to [wmin, wmax].
-# LTD amplitude (a_exp_post) slightly exceeds LTP (a_exp_pre) so common pixels
-# stay near zero while class-specific pixels accumulate net LTP.
+# Bounded pair-wise STDP, hard-clamped to [wmin, wmax].
+#
+# Like the soma above, this block is named after the kernel that runs it --
+# user_customized_stdp.py next to this file. The name is what create_synapse's
+# learning_rule= argument looks up here; it is not what selects the kernel.
 # ==============================================================================
 
 learning_rule:
-  exp_pair_wise_stdp_bounded:
+  user_customized_stdp:
     digits_learning:
       learning_hyperparameters:
+        # Placeholder. stdp_type is what actually selects the kernel, and rule
+        # ids are assigned at registration time, so the notebook overrides this
+        # per synapse with the id register_learning_rule() returned. Never
+        # hard-code the real id here.
         stdp_type: 2.0
         tau_pre_stdp: 3e-3 #10e-3
         tau_post_stdp: 2e-3 #10e-3

@@ -77,18 +77,23 @@ If Worker 0 has Neuron A, and Worker 1 has Neuron B, and they are connected:
 
 **SAGESim** (SuperNeuroABM's backend ABM framework) handles all of this automatically:
 
-✅ **Agent partitioning** across workers
+✅ **Ghost agent discovery** and management for cross-worker synapses
 ✅ **MPI communication** for cross-worker synapses
 ✅ **State synchronization** between workers
 ✅ **GPU memory management** on each worker
-✅ **Load balancing** across compute nodes
+
+❌ **Not** automatic: **deciding which rank owns which agent.** SuperNeuroABM reads the
+ownership you encode in the partition files — it never infers placement. Partitioning and
+load balancing are yours to do up front.
 
 **What you need to do:**
-1. Specify how many nodes and GPUs to use (via SLURM job script)
-2. Choose a partitioning method: round-robin (default) or METIS
+1. Partition the network yourself and write one file per rank (see
+   [PARTITION_LOADING.md](PARTITION_LOADING.md))
+2. Specify how many nodes and GPUs to use (via SLURM job script) — the file count must
+   match the rank count
 3. Launch your simulation with `mpirun` or `srun`
 
-That's it! SAGESim handles the rest, including creating and managing ghost agents.
+From there SAGESim handles the rest, including creating and managing ghost agents.
 
 ---
 
@@ -124,7 +129,7 @@ source activate /path/to/your/superneuroabm_env
 # --gpu-bind=closest: Bind rank to physically closest GPU (NUMA-aware)
 srun -n 4 -c 7 --gpus-per-task=1 --gpu-bind=closest \
     python -u my_simulation.py \
-    --partition_method metis
+    --partition_dir ./partitions
 
 echo "Simulation complete"
 ```
@@ -148,10 +153,15 @@ echo "Simulation complete"
 
 Your simulation code needs minimal changes for distributed execution:
 
+Each rank loads **its own** partition file. Partitioning happens ahead of time, in your
+own producer — see [PARTITION_LOADING.md](PARTITION_LOADING.md) for the file format and
+the ownership invariant.
+
 ```python
+import pickle
+
 from mpi4py import MPI
-import networkx as nx
-from superneuroabm.io.nx import model_from_nx_graph
+from superneuroabm.model import NeuromorphicModel
 
 # Initialize MPI (required)
 comm = MPI.COMM_WORLD
@@ -161,27 +171,26 @@ size = comm.Get_size()  # How many workers total?
 if rank == 0:
     print(f"Running distributed simulation on {size} MPI workers")
 
-# Load your network (all workers load the same graph metadata)
-graph = nx.read_graphml("large_network.graphml")
+# Each rank builds only the agents it owns. The number of partition files must
+# equal the launched rank count.
+model = NeuromorphicModel(enable_internal_states_tracking=False)  # save memory
+model.load_post_owned(f"partition_{rank}.pkl")
 
-if rank == 0:
-    print(f"Network: {graph.number_of_nodes()} neurons, {graph.number_of_edges()} synapses")
-
-# Create model with partitioning method
-model = model_from_nx_graph(
-    graph,
-    enable_internal_state_tracking=False,  # Save memory for large networks
-    partition_method='metis'                # Or None for round-robin
-)
+# Keep the partition around: it is this rank's source of truth for *which* agents it
+# owns. SuperNeuroABM stores id -> properties and nothing else, so any app-level
+# labelling ("these are my input synapses") lives in your data, not the model.
 
 # Setup and simulate (SAGESim handles distribution automatically!)
 model.setup()
 
-# Add external inputs (if needed)
-if rank == 0:  # Only rank 0 needs to add inputs
-    input_synapses = list(model.get_agents_with_tag("input_synapse"))
-    for syn in input_synapses:
-        model.add_spike(synapse_id=syn, tick=10, value=1.0)
+# Add external inputs. Under post-owns, an input synapse lives on whichever rank owns
+# its post soma, so every rank injects into its own -- pre == -1 marks an external input.
+with open(f"partition_{rank}.pkl", "rb") as f:
+    partition = pickle.load(f)
+input_synapses = [syn["id"] for syn in partition["synapses"] if syn["pre"] == -1]
+
+for syn in input_synapses:
+    model.add_local_spike(synapse_id=syn, tick=10, value=1.0)  # owner-only, no MPI
 
 # Run simulation (all workers participate)
 model.simulate(ticks=10000, update_data_ticks=100)
@@ -198,6 +207,13 @@ if rank == 0:
 
 **Network partitioning** determines which agents are assigned to which workers. Different networks may perform better with different partitioning methods.
 
+> **SuperNeuroABM does not partition for you.** Deciding which rank owns which soma,
+> assigning globally-unique agent IDs, and guaranteeing the partition is complete are all
+> the *producer's* job — use METIS, a generator, or a rule, then write one file per rank
+> and load it with `load_post_owned()`. See
+> [PARTITION_LOADING.md](PARTITION_LOADING.md) §1 for the full responsibility boundary.
+> The two methods below are guidance for writing that producer, not framework options.
+
 ### Method 1: Round-Robin (Default)
 
 **How it works:**
@@ -205,12 +221,9 @@ if rank == 0:
 - Simple and deterministic assignment
 - Does not consider network topology
 
-**Example:**
+**Example** (in your producer, before writing the per-rank files):
 ```python
-model = model_from_nx_graph(
-    graph,
-    partition_method=None  # Uses round-robin by default
-)
+owner = {soma_id: soma_id % num_ranks for soma_id in soma_ids}
 ```
 
 **Characteristics:**
@@ -228,12 +241,13 @@ model = model_from_nx_graph(
 - Groups connected agents together when possible
 - Topology-aware partitioning
 
-**Example:**
+**Example** (in your producer, before writing the per-rank files):
 ```python
-model = model_from_nx_graph(
-    graph,
-    partition_method='metis'  # Graph-based partitioning
-)
+import networkx as nx
+import nxmetis                                  # or pymetis / the METIS CLI
+
+_, parts = nxmetis.partition(graph, num_ranks)  # parts[r] = soma ids for rank r
+owner = {sid: r for r, ids in enumerate(parts) for sid in ids}
 ```
 
 **Characteristics:**
@@ -243,17 +257,15 @@ model = model_from_nx_graph(
 - Performance depends on network structure
 
 **Partition Quality:**
-When using METIS, SuperNeuroABM reports the edge cut ratio:
+Report the edge cut ratio from your producer, where the whole network is in one process:
 
-```
-[SuperNeuroABM] Running METIS partition with 4 partitions...
-[SuperNeuroABM] Partition quality:
-  - Edge cut ratio: 0.0872
-  - Total edges: 10,000,000
-  - Cross-worker edges: 872,000
+```python
+cut = sum(1 for u, v in graph.edges() if owner[u] != owner[v])
+print(f"Edge cut ratio: {cut / graph.number_of_edges():.4f} "
+      f"({cut:,} of {graph.number_of_edges():,} edges cross workers)")
 ```
 
-The edge cut ratio indicates what fraction of connections cross worker boundaries. Lower values mean fewer ghost agents and less communication overhead
+The edge cut ratio indicates what fraction of connections cross worker boundaries. Lower values mean fewer ghost agents and less communication overhead.
 
 ---
 
@@ -395,13 +407,13 @@ The optimal value depends on your specific network structure and dynamics
 Large-scale distributed spiking neural network simulation
 """
 import time
+import pickle
 import argparse
 from pathlib import Path
 
-import networkx as nx
 from mpi4py import MPI
 
-from superneuroabm.io.nx import model_from_nx_graph
+from superneuroabm.model import NeuromorphicModel
 
 
 def main():
@@ -412,11 +424,9 @@ def main():
 
     # Parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument('--network', type=str, required=True,
-                        help='Path to network file (GraphML format)')
-    parser.add_argument('--partition_method', type=str, default='metis',
-                        choices=['metis', None],
-                        help='Partitioning method (metis or None for round-robin)')
+    parser.add_argument('--partition_dir', type=str, required=True,
+                        help='Directory of per-rank partition files '
+                             '(partition_0.pkl, partition_1.pkl, ...)')
     parser.add_argument('--ticks', type=int, default=10000,
                         help='Number of simulation ticks')
     parser.add_argument('--sync_ticks', type=int, default=100,
@@ -429,35 +439,32 @@ def main():
         print(f"Distributed Simulation Configuration")
         print(f"{'='*60}")
         print(f"MPI Workers: {size}")
-        print(f"Partition Method: {args.partition_method or 'round-robin'}")
+        print(f"Partitions: {args.partition_dir}")
         print(f"Simulation Ticks: {args.ticks}")
         print(f"Sync Interval: {args.sync_ticks}")
         print(f"{'='*60}\n")
 
-    graph = nx.read_graphml(args.network)
-
+    # Each rank builds only the agents it owns. Partitioning already happened in
+    # the producer that wrote these files -- see PARTITION_LOADING.md. The number of
+    # files must equal the launched rank count.
     if rank == 0:
-        print(f"Loaded network:")
-        print(f"  - Neurons: {graph.number_of_nodes()}")
-        print(f"  - Synapses: {graph.number_of_edges()}")
-        print(f"  - Memory estimate: {(graph.number_of_nodes() * 1e-3 + graph.number_of_edges() * 5e-4):.1f} MB")
-
-    # Create model with partitioning
-    if rank == 0:
-        print(f"\nCreating model with {args.partition_method or 'round-robin'} partitioning...")
+        print(f"\nLoading rank-local partitions...")
 
     t_start = time.time()
 
-    model = model_from_nx_graph(
-        graph,
-        enable_internal_state_tracking=False,  # Save memory
-        partition_method=args.partition_method
-    )
+    partition_path = Path(args.partition_dir) / f"partition_{rank}.pkl"
+    model = NeuromorphicModel(enable_internal_states_tracking=False)  # save memory
+    model.load_post_owned(str(partition_path))
+
+    # This rank's own record of what it owns -- the model itself only stores
+    # id -> properties, so app-level labelling stays in your data.
+    with open(partition_path, "rb") as f:
+        partition = pickle.load(f)
 
     t_partition = time.time() - t_start
 
     if rank == 0:
-        print(f"Partitioning complete in {t_partition:.2f} sec")
+        print(f"Local build complete in {t_partition:.2f} sec")
 
     # Setup model
     if rank == 0:
@@ -470,13 +477,14 @@ def main():
     if rank == 0:
         print(f"Setup complete in {t_setup:.2f} sec")
 
-    # Add external inputs (only rank 0)
+    # Add external inputs. pre == -1 marks an external input synapse; each rank
+    # injects only into the ones it owns, so this needs no MPI.
+    input_synapses = [syn["id"] for syn in partition["synapses"] if syn["pre"] == -1]
     if rank == 0:
         print(f"\nAdding external inputs...")
-        input_synapses = list(model.get_agents_with_tag("input_synapse"))
-        print(f"Found {len(input_synapses)} input synapses")
-        for syn in input_synapses[:10]:  # Add spikes to first 10 inputs
-            model.add_spike(synapse_id=syn, tick=10, value=1.0)
+    print(f"  rank {rank}: {len(input_synapses)} input synapses")
+    for syn in input_synapses[:10]:  # Add spikes to first 10 inputs
+        model.add_local_spike(synapse_id=syn, tick=10, value=1.0)
 
     # Run simulation
     if rank == 0:
@@ -502,8 +510,8 @@ def main():
         print(f"Speedup vs. real-time: {(args.ticks * 1e-3) / t_sim:.2f}×")
 
     # Analyze results (each worker has local results)
-    local_soma_count = len(list(model.get_agents_with_tag("soma")))
-    local_synapse_count = len(list(model.get_agents_with_tag("synapse")))
+    local_soma_count = len(partition["somas"])
+    local_synapse_count = len(partition["synapses"])
 
     # Gather stats from all workers
     all_soma_counts = comm.gather(local_soma_count, root=0)
@@ -558,8 +566,7 @@ mkdir -p logs
 # Run with 16 MPI workers (1 per GPU)
 srun -n 16 -c 7 --gpus-per-task=1 --gpu-bind=closest \
     python -u large_network_sim.py \
-    --network large_network.graphml \
-    --partition_method metis \
+    --partition_dir ./partitions \
     --ticks 10000 \
     --sync_ticks 100
 
@@ -590,7 +597,11 @@ date
 **Enable distributed simulation:**
 ```python
 from mpi4py import MPI
-model = model_from_nx_graph(graph, partition_method='metis')  # or None for round-robin
+from superneuroabm.model import NeuromorphicModel
+
+rank = MPI.COMM_WORLD.Get_rank()
+model = NeuromorphicModel()
+model.load_post_owned(f"partition_{rank}.pkl")   # partition offline; see PARTITION_LOADING.md
 ```
 
 **Launch with MPI:**

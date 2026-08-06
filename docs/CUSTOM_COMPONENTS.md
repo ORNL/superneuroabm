@@ -463,9 +463,15 @@ syn = model.create_synapse(
 
 Because ids are assigned in registration order, always write the id back with
 an override rather than hard-coding it in YAML. That also lets you reuse a
-tuned block from someone else's config while running your own kernel — the
-digits tutorial does exactly this, borrowing `exp_pair_wise_stdp_bounded`'s
-tuned constants for a custom rule without editing the shared config.
+tuned block from someone else's config while running your own kernel —
+`examples/masquelier_2008/` does this, borrowing `exp_pair_wise_stdp_bounded`'s
+constants for a custom rule without editing the shared config.
+
+Prefer naming the block after your own rule, as above, unless you specifically
+want that borrowing behaviour: a synapse declaring `learning_rule="…_bounded"`
+while actually running your kernel is accurate but reads as a contradiction.
+`tutorials/01_superneuroabm_digits.ipynb` names its block `user_customized_stdp`
+to match the kernel it registers.
 
 Verify the override landed before you spend a long run on it:
 
