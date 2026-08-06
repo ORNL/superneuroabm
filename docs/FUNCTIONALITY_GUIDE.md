@@ -105,10 +105,10 @@ model = NeuromorphicModel()
 soma_id = model.create_soma(
     breed="lif_soma",
     config_name="config_0",
-    hyperparameters_overrides={
-        "vthr": -55.0e-3,  # Custom threshold
-        "tref": 3.0e-3     # Custom refractory period
-    }
+    overrides={"hyperparameters": {
+            "vthr": -55.0e-3,  # Custom threshold
+            "tref": 3.0e-3     # Custom refractory period
+        }}
 )
 ```
 
@@ -180,24 +180,24 @@ model = NeuromorphicModel()
 rs_neuron = model.create_soma(
     breed="izh_soma",
     config_name="config_0",
-    hyperparameters_overrides={
-        "a": 0.02,
-        "b": 0.2,
-        "c": -65.0e-3,
-        "d": 8.0
-    }
+    overrides={"hyperparameters": {
+            "a": 0.02,
+            "b": 0.2,
+            "c": -65.0e-3,
+            "d": 8.0
+        }}
 )
 
 # Create a fast spiking neuron
 fs_neuron = model.create_soma(
     breed="izh_soma",
     config_name="config_0",
-    hyperparameters_overrides={
-        "a": 0.1,
-        "b": 0.2,
-        "c": -65.0e-3,
-        "d": 2.0
-    }
+    overrides={"hyperparameters": {
+            "a": 0.1,
+            "b": 0.2,
+            "c": -65.0e-3,
+            "d": 2.0
+        }}
 )
 ```
 
@@ -457,13 +457,13 @@ synapse = model.create_synapse(
     pre_soma_id=soma_pre,
     post_soma_id=soma_post,
     config_name="exp_pair_wise_stdp_config_0",  # STDP enabled
-    hyperparameters_overrides={
-        "weight": 10.0,
-        "tau_pre_stdp": 20.0e-3,    # 20 ms pre trace
-        "tau_post_stdp": 20.0e-3,   # 20 ms post trace
-        "a_exp_pre": 0.01,          # LTP rate
-        "a_exp_post": -0.01         # LTD rate
-    }
+    overrides={"hyperparameters": {
+            "weight": 10.0,
+            "tau_pre_stdp": 20.0e-3,    # 20 ms pre trace
+            "tau_post_stdp": 20.0e-3,   # 20 ms post trace
+            "a_exp_pre": 0.01,          # LTP rate
+            "a_exp_post": -0.01         # LTD rate
+        }}
 )
 
 # Simulate with STDP learning active
@@ -471,7 +471,7 @@ model.setup()
 model.simulate(ticks=1000)
 
 # Check learned weight
-final_weight = model.get_agent_property_value(synapse, "hyperparameters")[0]
+final_weight = model.get_hyperparameters(synapse)["weight"]
 print(f"Initial weight: 10.0, Final weight: {final_weight}")
 ```
 
@@ -649,25 +649,61 @@ for neighbor_index in neighbor_indices:
 
 ### Property Access
 
+Read and write parameters **by name**. The name→position mapping comes from the agent's own
+config block, so this keeps working if a config is reordered or a custom breed is registered.
+
 ```python
-# Get hyperparameters
+# Read -- returns {name: value}
+model.get_hyperparameters(soma_id)
+# {'C': 1e-09, 'R': 1e6, 'vthr': -45.0, 'tref': 0.005, 'vrest': -60.0, ...}
+model.get_hyperparameters(synapse_id)
+# {'weight': 14.0, 'synaptic_delay': 1.0, 'scale': 1.0, 'tau_fall': 0.001, ...}
+model.get_learning_hyperparameters(synapse_id)
+# {'stdp_type': 0.0, 'tau_pre_stdp': 0.02, 'a_exp_pre': 0.01, ...}
+
+# Write -- partial update; unnamed parameters are left alone
+model.set_hyperparameters(soma_id, {"vthr": -50.0, "tref": 0.0})
+model.set_hyperparameters(output_somas, {"vthr": -50.0})     # one id or an iterable
+model.set_learning_hyperparameters(synapse_ids, {"a_exp_pre": 0.02})
+
+# Pass an iterable to the getter and you get a list of dicts back, so
+# read-transform-write is a comprehension:
+for syn, hp in zip(synapse_ids, model.get_hyperparameters(synapse_ids)):
+    model.set_hyperparameters(syn, {"weight": hp["weight"] * 0.5})
+```
+
+An unknown name raises `KeyError` listing the valid ones. `synaptic_delay` raises
+`ValueError`: it sizes the delay register at `create_synapse()` time and is rebuilt from
+config on every `reset()`, so it can only be set at creation.
+
+**Ordering**: write before the first `simulate()`, or after a
+`reset(retain_parameters=True)`. After a `simulate()` the GPU holds values the CPU has not
+seen, so a write would discard them — the setters raise rather than let that happen. See
+[CPU_GPU_DATA_FLOW.md](CPU_GPU_DATA_FLOW.md).
+
+#### Raw vector access (escape hatch)
+
+The underlying SAGESim API works on whole property vectors by position. Use it for
+properties the named API does not cover, or when you deliberately want the unguarded path.
+
+```python
+# Whole-vector read/write -- a single-field change is a read-modify-write
 params = model.get_agent_property_value(agent_id, "hyperparameters")
-# For LIF: [C, R, vthr, tref, vrest, vreset, ...]
-# For synapse: [weight, delay, scale, tau_fall, ...]
+model.set_agent_property_value(agent_id, "hyperparameters", params)
 
-# Get internal state
-state = model.get_agent_property_value(agent_id, "internal_state")
-# For LIF: [v, tcount, tlast, ...]
-# For synapse: [I_synapse, I_synapse_supp, pre_trace, post_trace]
+# Internal state (runtime state; reset() owns it)
+state = model.get_agent_property_value(agent_id, "internal_states")
+# For LIF: [v, tcount, tlast];  for synapse: [I_synapse, ...]
 
-# Get connectivity (locations)
+# Connectivity (locations)
 connectivity = model.get_agent_property_value(agent_id, "locations")
 # For soma: [synapse_idx_1, synapse_idx_2, ...]  (input synapses)
 # For synapse: [pre_soma_idx, post_soma_idx]
-
-# Set properties (before model.setup())
-model.set_agent_property_value(agent_id, "hyperparameters", new_params)
 ```
+
+Note that `weight` and `synaptic_delay` are always elements 0 and 1 of a synapse's
+`hyperparameters`, and `stdp_type` is element 0 of `learning_hyperparameters` — device code
+reads those positions directly, so a config that reorders them is rejected at creation.
 ## Key Features
 
 SuperNeuroABM provides several unique capabilities that make it powerful for neuromorphic computing research:
@@ -685,24 +721,22 @@ model = NeuromorphicModel()
 fs_neuron = model.create_soma(
     breed="lif_soma",
     config_name="config_0",
-    hyperparameters_overrides={
-        "tref": 1.0e-3,  # Short refractory period (1 ms)
-        "vthr": -55.0e-3
-    },
-    tags={"inhibitory"}
+    overrides={"hyperparameters": {
+            "tref": 1.0e-3,  # Short refractory period (1 ms)
+            "vthr": -55.0e-3
+        }}
 )
 
 # Regular-spiking Izhikevich neuron (excitatory pyramidal cell)
 rs_neuron = model.create_soma(
     breed="izh_soma",
     config_name="config_0",
-    hyperparameters_overrides={
-        "a": 0.02,
-        "b": 0.2,
-        "c": -65.0e-3,
-        "d": 8.0
-    },
-    tags={"excitatory"}
+    overrides={"hyperparameters": {
+            "a": 0.02,
+            "b": 0.2,
+            "c": -65.0e-3,
+            "d": 8.0
+        }}
 )
 
 # Excitatory connection (positive weight)
@@ -711,100 +745,100 @@ exc_synapse = model.create_synapse(
     pre_soma_id=rs_neuron,
     post_soma_id=fs_neuron,
     config_name="no_learning_config_0",
-    hyperparameters_overrides={"weight": 20.0}
-)
+    overrides={"hyperparameters": {    "weight": 20.0}
+    )
 
-# Inhibitory connection (negative weight)
-inh_synapse = model.create_synapse(
-    breed="single_exp_synapse",
-    pre_soma_id=fs_neuron,
-    post_soma_id=rs_neuron,
-    config_name="no_learning_config_0",
-    hyperparameters_overrides={"weight": -30.0}  # Negative = inhibitory
-)
-```
+    # Inhibitory connection (negative weight)
+    inh_synapse = model.create_synapse(
+        breed="single_exp_synapse",
+        pre_soma_id=fs_neuron,
+        post_soma_id=rs_neuron,
+        config_name="no_learning_config_0",
+        overrides={"hyperparameters": {"weight": -30.0}}  # Negative = inhibitory
+    )
+    ```
 
-**Benefits:**
-- Model realistic cortical microcircuits (E/I balance)
-- Mix simple (LIF) and complex (Izhikevich) neurons for efficiency
-- Support for excitatory and inhibitory connections in the same network
+    **Benefits:**
+    - Model realistic cortical microcircuits (E/I balance)
+    - Mix simple (LIF) and complex (Izhikevich) neurons for efficiency
+    - Support for excitatory and inhibitory connections in the same network
 
----
+    ---
 
-### 2. Modular STDP Learning
+    ### 2. Modular STDP Learning
 
-Learning is implemented as a separate step function (Priority 101), allowing:
+    Learning is implemented as a separate step function (Priority 101), allowing:
 
-- **Enable/disable learning** without changing synapse dynamics (`stdp_type = -1`)
-- **Mix learning and non-learning synapses** in the same network
-- **Easy addition of new learning rules** (triplet STDP, voltage-dependent STDP, etc.)
+    - **Enable/disable learning** without changing synapse dynamics (`stdp_type = -1`)
+    - **Mix learning and non-learning synapses** in the same network
+    - **Easy addition of new learning rules** (triplet STDP, voltage-dependent STDP, etc.)
 
-```python
-# Plastic synapse with STDP
-learning_syn = model.create_synapse(
-    breed="single_exp_synapse",
-    pre_soma_id=neuron_A,
-    post_soma_id=neuron_B,
-    config_name="exp_pair_wise_stdp_config_0"  # STDP enabled
-)
+    ```python
+    # Plastic synapse with STDP
+    learning_syn = model.create_synapse(
+        breed="single_exp_synapse",
+        pre_soma_id=neuron_A,
+        post_soma_id=neuron_B,
+        config_name="exp_pair_wise_stdp_config_0"  # STDP enabled
+    )
 
-# Fixed synapse without learning
-fixed_syn = model.create_synapse(
-    breed="single_exp_synapse",
-    pre_soma_id=neuron_B,
-    post_soma_id=neuron_C,
-    config_name="no_learning_config_0"  # STDP disabled
-)
-```
+    # Fixed synapse without learning
+    fixed_syn = model.create_synapse(
+        breed="single_exp_synapse",
+        pre_soma_id=neuron_B,
+        post_soma_id=neuron_C,
+        config_name="no_learning_config_0"  # STDP disabled
+    )
+    ```
 
----
+    ---
 
-### 3. Customizable Step Functions for Hardware Constraints
+    ### 3. Customizable Step Functions for Hardware Constraints
 
-SuperNeuroABM allows users to **easily modify step functions** to accommodate specific hardware designs or computational constraints. This is critical for neuromorphic hardware research where:
+    SuperNeuroABM allows users to **easily modify step functions** to accommodate specific hardware designs or computational constraints. This is critical for neuromorphic hardware research where:
 
-- **Fixed-point arithmetic** is required instead of floating-point
-- **Quantized weights and states** must be used
-- **Specific energy constraints** limit operations
-- **Custom spike encoding schemes** are needed
+    - **Fixed-point arithmetic** is required instead of floating-point
+    - **Quantized weights and states** must be used
+    - **Specific energy constraints** limit operations
+    - **Custom spike encoding schemes** are needed
 
-**Example: Adding Fixed-Point Arithmetic**
+    **Example: Adding Fixed-Point Arithmetic**
 
-```python
-# Original LIF step function (superneuroabm/step_functions/soma/lif.py)
-@jit.rawkernel(device="cuda")
-def lif_soma_step_func(...):
-    dv = (vrest - v) / (R * C) + (I_synapse * scaling_factor) / C
-    v += dv * dt
-    # ... rest of function
+    ```python
+    # Original LIF step function (superneuroabm/step_functions/soma/lif.py)
+    @jit.rawkernel(device="cuda")
+    def lif_soma_step_func(...):
+        dv = (vrest - v) / (R * C) + (I_synapse * scaling_factor) / C
+        v += dv * dt
+        # ... rest of function
 
-# Modified for 16-bit fixed-point (custom_lif.py)
-@jit.rawkernel(device="cuda")
-def lif_soma_step_func_fixedpoint(...):
-    # Scale to 16-bit integer range
-    SCALE = 2**15
-    v_int = int(v * SCALE)
-    dv_int = int(((vrest - v) / (R * C) + I_synapse / C) * SCALE * dt)
-    v_int = v_int + dv_int
+    # Modified for 16-bit fixed-point (custom_lif.py)
+    @jit.rawkernel(device="cuda")
+    def lif_soma_step_func_fixedpoint(...):
+        # Scale to 16-bit integer range
+        SCALE = 2**15
+        v_int = int(v * SCALE)
+        dv_int = int(((vrest - v) / (R * C) + I_synapse / C) * SCALE * dt)
+        v_int = v_int + dv_int
 
-    # Check overflow and clip
-    v_int = max(min(v_int, SCALE-1), -SCALE)
+        # Check overflow and clip
+        v_int = max(min(v_int, SCALE-1), -SCALE)
 
-    v = float(v_int) / SCALE
-    # ... rest of function
-```
+        v = float(v_int) / SCALE
+        # ... rest of function
+    ```
 
-**How to Use Custom Step Functions:**
+    **How to Use Custom Step Functions:**
 
-```python
-from custom_lif import lif_soma_step_func_fixedpoint
+    ```python
+    from custom_lif import lif_soma_step_func_fixedpoint
 
-model = NeuromorphicModel(
-    soma_breed_info={
-        "lif_soma_fixedpoint": [
-            (lif_soma_step_func_fixedpoint, Path("custom_lif.py"))
-        ]
-    }
+    model = NeuromorphicModel(
+        soma_breed_info={
+            "lif_soma_fixedpoint": [
+                (lif_soma_step_func_fixedpoint, Path("custom_lif.py"))
+            ]
+        }}
 )
 
 # Create neurons using custom breed
@@ -819,30 +853,48 @@ neuron = model.create_soma(breed="lif_soma_fixedpoint", config_name="config_0")
 
 ---
 
-### 4. Tag-Based Network Organization
+### 4. Organizing Agents: Labels Live in Your Application
 
-Use tags to organize and query agents for network analysis and selective operations:
+SuperNeuroABM is a **pure id → property store**. It records each agent's breed, config and
+parameter values, and nothing else — there is no tagging or querying layer. What a group of
+agents *means* to your experiment ("layer 1", "inhibitory", "the input synapses") is
+application knowledge, so keep it in your own data structures.
+
+`create_soma` / `create_synapse` return the agent id; hold onto it.
 
 ```python
-# Create neurons with descriptive tags
+# Build your own index as you create agents
+layers = {"layer1": [], "layer2": []}
+inhibitory = []
+
 for i in range(100):
-    layer = "layer1" if i < 50 else "layer2"
-    neuron_type = "excitatory" if i % 4 != 0 else "inhibitory"
+    soma_id = model.create_soma(breed="lif_soma", config_name="config_0")
 
-    model.create_soma(
-        breed="lif_soma",
-        config_name="config_0",
-        tags={layer, neuron_type, f"neuron_{i}"}
-    )
+    layers["layer1" if i < 50 else "layer2"].append(soma_id)
+    if i % 4 == 0:
+        inhibitory.append(soma_id)
 
-# Query by tags
-layer1_neurons = model.get_agents_with_tag("layer1")
-inhibitory_neurons = model.get_agents_with_tag("inhibitory")
-specific_neuron = list(model.get_agents_with_tag("neuron_42"))[0]
+print(f"Layer 1 has {len(layers['layer1'])} neurons")
+print(f"Network has {len(inhibitory)} inhibitory neurons")
 
-print(f"Layer 1 has {len(layer1_neurons)} neurons")
-print(f"Network has {len(inhibitory_neurons)} inhibitory neurons")
+# Those lists are what you pass to the rest of the API -- it takes ids, or iterables of them
+model.set_hyperparameters(inhibitory, {"vthr": -45.0})
+weights = model.get_hyperparameters(layers["layer1"])
 ```
+
+Ask the model about an agent you already have an id for:
+
+```python
+model.get_agent_breed(soma_id)          # 'lif_soma'
+model.get_agent_config_name(soma_id)    # 'config_0'
+model.get_agent_config_diff(soma_id)    # values that differ from the config
+model.get_synapse_connectivity(syn_id)  # [pre_soma_id, post_soma_id]
+model.get_soma_outgoing_synapses(soma_id)
+```
+
+For a **distributed** run the same principle applies, and it matters more: each rank should
+resolve ownership from its own metadata — normally the partition file it loaded — rather
+than asking the model. See [PARTITION_LOADING.md](PARTITION_LOADING.md).
 
 ---
 
@@ -852,12 +904,12 @@ For large-scale simulations, you can disable internal state tracking to dramatic
 
 ```python
 # Full tracking mode (for analysis and debugging)
-model_full = NeuromorphicModel(enable_internal_state_tracking=True)
+model_full = NeuromorphicModel(enable_internal_states_tracking=True)
 # Memory: ~1 GB per 10K neurons for 1M timesteps
 # Can retrieve: Full voltage traces, STDP traces, weight changes over time
 
 # Lean mode (for large-scale production runs)
-model_lean = NeuromorphicModel(enable_internal_state_tracking=False)
+model_lean = NeuromorphicModel(enable_internal_states_tracking=False)
 # Memory: ~10 MB per 10K neurons (100× reduction)
 # Can retrieve: Final states, spike times only
 
@@ -867,7 +919,7 @@ model_lean.simulate(ticks=1_000_000)  # 1 million timesteps, minimal memory
 
 # Access results (still available in lean mode)
 spike_times = model_lean.get_spike_times(soma_id=neuron_id)
-final_weight = model_lean.get_agent_property_value(synapse_id, "hyperparameters")[0]
+final_weight = model_lean.get_hyperparameters(synapse_id)["weight"]
 ```
 
 **Trade-offs:**
@@ -893,7 +945,7 @@ model = NeuromorphicModel()
 soma = model.create_soma(
     breed="lif_soma",
     config_name="config_0",  # References component_base_config.yaml
-    hyperparameters_overrides={"vthr": -55.0e-3}  # Override specific params
+    overrides={"hyperparameters": {"vthr": -55.0e-3}}  # Override specific params
 )
 ```
 
