@@ -1,3 +1,49 @@
 v0.1.0: Initial release
 v0.2.0: Spike Time Dependent Plasticity included. Heterogenous neuron API. Bug fixes to synaptic step functions.
 v0.3.0: Model can be saved and loaded. Simulation can be continued with multiple calls to model.NeurmorphicModel.simulate. model.NeuromorphicModel.setup provides the option to reset the simulation temporally, while preserving weights. API functions renamed: model.NeuromorhpicModel.get_spikes -> model.NeuromorphicModel.get_spike_times and model.NeuromorphicModel.spike -> model.NeuromorphicModel.add_spike. Bug fixes to synaptic delay, compress_tensor and shared memory use in CPU mode. Customizable learning parameters.
+v1.0.0: Rebuilt on SAGESim's CSR neighbor format and GPU-resident buffers. Adaptive-threshold LIF soma and 4-bit weighted synapse added. Input spikes flattened to [tick, val, tick, val, ...]. Double buffering can be disabled per breed. Unit tests reorganized with spike-time baselines under tests/baselines/.
+v1.0.1: Packaging migrated from setup.py to pyproject.toml. Requires sagesim 0.6.0. Learning-rule helper function added; _tick removed from the learning rule selector and learning parameters no longer write to internal states. Global variables split and random seeding delegated to SAGESim. Property lengths derived instead of hardcoded.
+v1.1.0: Requires sagesim 0.7.0.
+
+  Added:
+    - Distributed model construction: each MPI rank builds only its own partition, with no global
+      graph ever materialized. model.NeuromorphicModel.load_post_owned() reads a post-owns-synapse
+      partition file; model.NeuromorphicModel.load_from_adjacency() reads an explicit-neighbors
+      partition file and lifts the post-owns constraint, allowing an incoming synapse to live on
+      another rank.
+    - model.NeuromorphicModel.create_from_lists(): bulk single-GPU construction of a whole network
+      from in-memory soma/synapse lists.
+    - Plasticity switch: model.NeuromorphicModel.train() and eval(), the learning_enabled property,
+      and set_learning_enabled() to toggle learning globally or per synapse.
+    - Named-parameter API: get_hyperparameters()/set_hyperparameters() and
+      get_learning_hyperparameters()/set_learning_hyperparameters() address parameters by name
+      instead of by position.
+    - Rank-local spike injection: add_local_spike() and add_local_spike_list().
+    - model.NeuromorphicModel.get_soma_outgoing_synapses(), and the soma_adj/synapse_adj accessors.
+    - Caller-supplied agent IDs via agent_id= on create_soma()/create_synapse(), with a duplicate-ID
+      guard.
+    - superneuroabm/brunel.py: Brunel balanced random network generation. brunel_partition()
+      supports topology="global", "bounded", "torus2d" and "torus3d"; spatial_smallworld_partition()
+      generates a spatially embedded economical small-world variant.
+    - Tutorial 01: handwritten-digit classification with a tutorial-owned LIF soma
+      (tutorials/user_customized_lif.py) and a tutorial-owned bounded STDP rule
+      (tutorials/user_customized_stdp.py), registered at runtime with no package changes.
+    - Documentation: docs/CPU_GPU_DATA_FLOW.md, docs/CPU_GPU_SYNC_DESIGN_NOTES.md,
+      docs/CUSTOM_COMPONENTS.md, docs/DATA_FORMAT.md, docs/DISTRIBUTED_SIMULATION.md,
+      docs/FUNCTIONALITY_GUIDE.md, docs/SPIKE_RECORDING_NOTES.md, docs/BRUNEL_SCALING.md,
+      docs/PARTITION_LOADING.md, docs/SINGLE_GPU_NETWORK_CONSTRUCTION.md.
+    - Weak and strong scaling campaign under scaling_analysis/ (drivers, SLURM runners, analysis
+      and figure scripts).
+
+  Removed:
+    - model.NeuromorphicModel.setup() no longer accepts use_gpu; execution is always on GPU.
+    - model.NeuromorphicModel.create_soma_at_index() and create_synapse_at_index().
+    - model.NeuromorphicModel.get_agents_with_tag().
+
+  Renamed:
+    - model.NeuromorphicModel.get_internal_learning_states_history() ->
+      get_learning_internal_states_history().
+
+  Other:
+    - __init__.py added to the step_functions sub-packages so they ship in the wheel.
+    - tests/ is now included in the source distribution.
