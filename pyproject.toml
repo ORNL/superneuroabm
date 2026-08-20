@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "superneuroabm"
-version = "1.0.1"
+version = "1.1.0"
 description = "A GPU-based multi-agent simulation framework for neuromorphic computing."
 readme = "README.md"
 license = "BSD-3-Clause"
@@ -13,7 +13,7 @@ authors = [
     { name = "Xi Zhang, Ashish Gautam, Shruti Kulkarni, Chathika Gunaratne, Prasanna Date", email = "zhangx8@ornl.gov" },
 ]
 dependencies = [
-    "sagesim==0.6.0",
+    "sagesim==0.7.0",
     "pyyaml",
     "networkx",
     "matplotlib",
