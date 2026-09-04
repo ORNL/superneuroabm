@@ -32,7 +32,7 @@ Your system might require specific steps to install `mpi4py` and/or `cupy` depen
 pip install superneuroabm
 ```
 
-This pulls in `sagesim==0.7.0`.
+This pulls in `sagesim>=0.7.0`.
 
 ## Quick Start
 

@@ -13,7 +13,7 @@ authors = [
     { name = "Xi Zhang, Ashish Gautam, Shruti Kulkarni, Chathika Gunaratne, Prasanna Date", email = "zhangx8@ornl.gov" },
 ]
 dependencies = [
-    "sagesim==0.7.0",
+    "sagesim>=0.7.0",
     "pyyaml",
     "networkx",
     "matplotlib",
@@ -26,6 +26,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 

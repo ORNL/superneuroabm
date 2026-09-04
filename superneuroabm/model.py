@@ -896,6 +896,14 @@ class NeuromorphicModel(Model):
         # Step 3: Regenerate data tensors to reflect the reset states
         super()._regenerate_data_tensors()
 
+        # Step 3b: super().reset() synced the GPU back with .get().tolist(), which
+        # replaced every column with fresh per-agent lists. Re-share the write-only
+        # history buffers so a chunked run does not rebuild them row by row on the
+        # next tick. Learned values in the other columns are correctly per-agent now.
+        if not self.enable_internal_states_tracking:
+            self._share_history_buffers()
+            super()._regenerate_data_tensors()
+
         # Step 4: Clear recording state + caches
         self._recorded_spikes = []
         self._spike_record_gpu = None
@@ -929,24 +937,65 @@ class NeuromorphicModel(Model):
         if getattr(self, '_has_simulated', False):
             self._reset_agents(retain_parameters=False)
 
+        import time
+        _t_pre = time.time()
         self._recorded_spikes = []
         self._spike_record_gpu = None
         self._spike_record_count_gpu = None
         self._spike_mask_gpu = None  # rebuild mask on next prepare
         self._spikes_need_gather = False
         self.set_property_neighbor_visible("breed", False)  # no step func reads neighbor breeds
+        _t_super = time.time()
         super().setup(skip_priority_barriers={100})
+        self._setup_timings["snn_pre_super"] = _t_super - _t_pre
+        self._setup_timings["sagesim_setup"] = time.time() - _t_super
 
         if not self.enable_internal_states_tracking:
-            af = self._agent_factory
-            rank = MPI.COMM_WORLD.Get_rank()
-            local_agent_map = af._rank2agentid2agentidx.get(rank, {})
-            data = af._property_name_2_agent_data_tensor
-            for agent_id, idx in local_agent_map.items():
-                state = data["internal_states"][idx]
-                data["internal_states_buffer"][idx] = [state[::]]
-                ls = data["learning_internal_states"][idx]
-                data["learning_internal_states_buffer"][idx] = [ls[::]]
+            # Tracking off does not remove the history buffers: every synapse and
+            # learning kernel writes them unconditionally via
+            # buffer[agent][t % len(buffer[agent])][k], so each row is shrunk to a
+            # single write-only slot instead. That per-agent loop is timed here
+            # because it is the whole of setup()'s cost outside SAGESim.
+            _t_buf = time.time()
+            self._share_history_buffers()
+            self._setup_timings["snn_shrink_buffers"] = time.time() - _t_buf
+
+    def _share_history_buffers(self) -> None:
+        """Give every agent the SAME one-slot history-buffer row, when tracking is off.
+
+        Tracking off does not remove these buffers: every synapse and learning kernel
+        writes them unconditionally as ``buffer[agent][t % len(buffer[agent])][k]``, so
+        the column cannot be empty. Each agent therefore gets a single write-only slot.
+
+        What this does NOT change is the value, the outer length (1) or the inner width,
+        so the GPU tensor keeps its ``(capacity, 1, W)`` shape. What it changes is the
+        number of Python objects behind those values: one per agent becomes one in total,
+        referenced by every agent. That removes an N-iteration allocation loop, and it is
+        what lets SAGESim's converter collapse the column instead of walking every row.
+
+        Sharing is safe because nothing reads these rows: the kernels only write them,
+        ``get_internal_states_history`` returns [] while tracking is off, and no host
+        code mutates a buffer row in place (only whole-row replacement). Device rows are
+        independent regardless, since the converter copies into a dense tensor.
+        """
+        af = self._agent_factory
+        data = af._property_name_2_agent_data_tensor
+        n_local = len(data["internal_states"])
+        if not n_local:
+            return
+        # Width must be the max over agents, not any one agent's: breeds differ (a
+        # single_exp_synapse carries 1 internal state, a lif_soma 3), the tensor width is
+        # the column max, and kernels write up to their own state width. A narrower
+        # shared row would shrink the tensor into unchecked out-of-bounds device writes.
+        w_is = max(map(len, data["internal_states"]))
+        w_lis = max(map(len, data["learning_internal_states"])) if \
+            data["learning_internal_states"] else 0
+        # Slice-assign, do not rebind. Model.setup() caches
+        # __rank_local_agent_data_tensors as references to these very list objects
+        # (_generate_agent_data_tensors returns dict.values()), so replacing the dict
+        # entry would leave the GPU build reading the old column.
+        data["internal_states_buffer"][:] = [[[0.0] * w_is]] * n_local
+        data["learning_internal_states_buffer"][:] = [[[0.0] * w_lis]] * n_local
 
     def simulate(
         self, ticks: int, update_data_ticks: int = 1  # , num_cpu_proc: int = 4
@@ -1728,6 +1777,10 @@ class NeuromorphicModel(Model):
         must be local (enforced here).
         """
         import numpy as np
+        import time
+
+        _load_timings = {}
+        _t = time.time()
 
         def _scalar(name):
             return np.asarray(arrays[name]).item()
@@ -1763,6 +1816,9 @@ class NeuromorphicModel(Model):
                 "sort first. Reorder the breed registration or extend the loader "
                 "to sort columns by breed index.")
 
+        _load_timings['decode_arrays'] = time.time() - _t
+        _t = time.time()
+
         # --- Post-owns constraint + soma-incoming grouping (vectorized).
         # Every synapse's post must be a local soma (post != -1). Map each post to
         # its local soma index via searchsorted on the sorted soma ids. ---
@@ -1780,6 +1836,9 @@ class NeuromorphicModel(Model):
                 "every synapse's post-soma must be co-located (post-owns). Use "
                 "load_from_adjacency() to lift this constraint.")
         post_local = order[sp_clipped]  # local soma index (0..N-1) per synapse
+
+        _load_timings['constraint_check'] = time.time() - _t
+        _t = time.time()
 
         # --- Property columns via shared templates. Somas are uniform (no
         # overrides in this producer); synapses dedup on their hyperparameter
@@ -1827,6 +1886,9 @@ class NeuromorphicModel(Model):
                 [default["input_spikes_tensor"]] * N + _syn_col("input_spikes_tensor"),
         }
 
+        _load_timings['property_columns'] = time.time() - _t
+        _t = time.time()
+
         # --- Neighbor CSR (global ids), vectorized. Row layout matches the agent
         # order [somas..., synapses...]. Soma i's neighbors = incoming synapse ids
         # (post==i), in synapse-array order (stable). Synapse j's neighbors =
@@ -1850,6 +1912,9 @@ class NeuromorphicModel(Model):
             soma_offsets, int(soma_offsets[-1]) + syn_offsets[1:]]).astype(np.int32)
         neighbor_values_ids = np.concatenate([soma_values, syn_values]).astype(np.int64)
 
+        _load_timings['neighbor_csr'] = time.time() - _t
+        _t = time.time()
+
         # --- Assemble and hand off ---
         agent_ids = np.concatenate([soma_ids, synapse_ids])
         breed_indices = np.concatenate([
@@ -1858,9 +1923,14 @@ class NeuromorphicModel(Model):
         remote_agent_ranks = {int(i): int(r)
                               for i, r in zip(remote_ids, remote_rank_of)}
 
+        _load_timings['assemble'] = time.time() - _t
+        _t = time.time()
+
         self.build_from_local_columns(
             agent_ids, breed_indices, property_columns,
             neighbor_offsets, neighbor_values_ids, remote_agent_ranks)
+        _load_timings['build_from_local_columns'] = time.time() - _t
+        _t = time.time()
 
         # --- SuperNeuroABM bookkeeping (deliberately minimal). Per-soma config is
         # cheap (N entries) and kept; per-synapse config/overrides dicts are the
@@ -1876,6 +1946,8 @@ class NeuromorphicModel(Model):
         self._input_synapse_ids = synapse_ids[pre < 0].astype(np.int64)
         self._num_synapses = int(M)
         self._built_from_file = True
+        _load_timings['bookkeeping'] = time.time() - _t
+        self._load_timings = _load_timings
 
     def load_from_adjacency(self, partition_file: str,
                             soma_breed: str = "lif_soma",

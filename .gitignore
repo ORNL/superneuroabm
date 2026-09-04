@@ -71,6 +71,9 @@ tests/output_archieve/
 tests/baselines/
 *.png
 *.csv
+# The NEST GPU comparison result CSVs are the point of that directory, so re-include
+# them. Must come after the *.csv rule above.
+!scaling_analysis/nest_comparison/results/*.csv
 
 # Documentation builds
 # docs/
@@ -94,6 +97,9 @@ tests/test_lif_mixed_synapses_stdp_mpi.py
 scaling_analysis/networks/
 scaling_analysis/outputs/
 scaling_analysis/partitions/
+# Generated Brunel partition caches, hundreds of MB, reproducible from the
+# benchmark's --neurons/--in-degree/--seed arguments.
+scaling_analysis/nest_comparison/partitions/
 
 # Scaling analysis: superseded campaigns, generated figures
 scaling_analysis/archive/
