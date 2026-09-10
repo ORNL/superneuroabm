@@ -1,9 +1,9 @@
-"""Masquelier 2008 on SuperNeuroABM: one 10 s chunk, with phase timing.
+"""Masquelier 2008 on SuperNeuroABM: one continuous run of --seconds, with phase timing.
 
 Same experiment and the same spike-train generator as
 ``/home/xxz/ns-applications/duplicates/masquelier_2008/run_experiment_hg.py``,
-reduced to a single chunk and instrumented so the phases line up with
-``masquelier_nestgpu.py``. The upstream script is not modified.
+run in one simulate() call (no chunking, no reset) and instrumented so the phases
+line up with ``masquelier_nestgpu.py``. The upstream script is not modified.
 """
 
 import argparse
@@ -107,12 +107,12 @@ def run(args):
         v for k, v in st.items() if k != "total")))
     log.add("setup.total", setup_wall)
 
-    # ---- inject the chunk's spikes ----
+    # ---- inject every spike of the run in one call (Brian2 SpikeGeneratorGroup shape) ----
     t0 = time.time()
-    for i, syn_id in enumerate(synapses):
-        ticks = np.asarray(trains[i], dtype=np.int64) * upscale
-        if ticks.size:
-            model.add_local_spike_list(syn_id, [[int(t), 1.0] for t in ticks])
+    ids = np.concatenate([np.full(len(t), syn_id, dtype=np.int64)
+                          for syn_id, t in zip(synapses, trains)])
+    ticks = np.concatenate([np.asarray(t, dtype=np.int64) * upscale for t in trains])
+    model.add_spikes(ids, ticks)
     log.add("load_spike_trains", time.time() - t0)
 
     # ---- simulate one chunk ----

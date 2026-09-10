@@ -144,7 +144,7 @@ class NeuromorphicModel(Model):
                 [0.0] * max_sizes.get("learning_internal_states", 0), False
             ),
             "synapse_delay_reg": ([], False),  # Synapse delay
-            "input_spikes_tensor": ([], False),  # input spikes tensor
+            "input_spikes_tensor": ([-1.0, 0.0], False),  # [last_delivered_tick, value]
             "output_spikes_tensor": ([], True),  # NEIGHBOR-VISIBLE: synapses read soma spikes
             "internal_states_buffer": ([], False),
             "learning_internal_states_buffer": ([], False),  # learning states buffer
@@ -165,7 +165,7 @@ class NeuromorphicModel(Model):
                 [0.0] * max_sizes.get("learning_internal_states", 0), False
             ),
             "synapse_delay_reg": ([], False),  # Synapse delay
-            "input_spikes_tensor": ([], False),  # input spikes tensor
+            "input_spikes_tensor": ([-1.0, 0.0], False),  # [last_delivered_tick, value]
             "output_spikes_tensor": ([], False),
             "internal_states_buffer": ([], False),
             "learning_internal_states_buffer": ([], False),  # learning states buffer
@@ -200,6 +200,13 @@ class NeuromorphicModel(Model):
         self._recorded_soma_ids = None   # None = record all, list = subset
         self._spike_mask_gpu = None      # CuPy float32 bitmask, built lazily
         self._spikes_need_gather = False
+
+        # External input spikes: host-side (ids, ticks, values) chunks, compiled
+        # lazily into a tick-major device event list (see add_spike).
+        self._input_events = []
+        self._input_events_dirty = True
+        self._input_events_gpu = None
+        self._input_next_tick = 0      # tick the next launch is expected to start at
 
         # Learning mode (see eval()/train()). True = plasticity active.
         self._learning_enabled = True
@@ -852,7 +859,7 @@ class NeuromorphicModel(Model):
                 _, hp, lhp, is_state, ils = self._get_synapse_properties(
                     breed_name, config_name, overrides, lr_breed, lr_config)
 
-                data["input_spikes_tensor"][idx] = [-1, 0.0]
+                data["input_spikes_tensor"][idx] = [-1.0, 0.0]
                 data["synapse_delay_reg"][idx] = [0] * int(hp[self._SYNAPTIC_DELAY_INDEX])
                 data["internal_states"][idx] = is_state
                 data["learning_internal_states"][idx] = ils
@@ -904,12 +911,15 @@ class NeuromorphicModel(Model):
             self._share_history_buffers()
             super()._regenerate_data_tensors()
 
-        # Step 4: Clear recording state + caches
+        # Step 4: Clear recording state + caches. Injected input spikes are
+        # discarded too (reset has always done that); re-inject after reset().
         self._recorded_spikes = []
         self._spike_record_gpu = None
         self._spike_record_count_gpu = None
         self._spike_mask_gpu = None  # rebuild mask on next prepare
         self._spikes_need_gather = False
+        self.clear_input_spikes()
+        self._input_next_tick = 0
         # self._agent_factory._prev_agent_data.clear()
         
     def setup(self) -> None:
@@ -936,6 +946,12 @@ class NeuromorphicModel(Model):
         # Only needed on subsequent setup() calls (after simulate() has run).
         if getattr(self, '_has_simulated', False):
             self._reset_agents(retain_parameters=False)
+            self.clear_input_spikes()
+        # Buffers are rebuilt by setup(); the compiled event list refers to the
+        # old buffer rows, so recompile at the next tick.
+        self._input_events_dirty = True
+        self._input_events_gpu = None
+        self._input_next_tick = 0
 
         import time
         _t_pre = time.time()
@@ -1021,29 +1037,8 @@ class NeuromorphicModel(Model):
 
                 ls = data["learning_internal_states"][idx]
                 data["learning_internal_states_buffer"][idx] = [ls[::] for _ in range(ticks)]
-
-                if agent_id in self._synapse_ids:
-                    spikes = data["input_spikes_tensor"][idx]
-                    if len(spikes) > 2:
-                        pairs = [(spikes[i], spikes[i + 1]) for i in range(2, len(spikes), 2)]
-                        pairs.sort(key=lambda p: p[0])
-                        sorted_spikes = [spikes[0], spikes[1]]
-                        for t, v in pairs:
-                            sorted_spikes.append(t)
-                            sorted_spikes.append(v)
-                        data["input_spikes_tensor"][idx] = sorted_spikes
-        else:
-            for agent_id, idx in local_agent_map.items():
-                if agent_id in self._synapse_ids:
-                    spikes = data["input_spikes_tensor"][idx]
-                    if len(spikes) > 2:
-                        pairs = [(spikes[i], spikes[i + 1]) for i in range(2, len(spikes), 2)]
-                        pairs.sort(key=lambda p: p[0])
-                        sorted_spikes = [spikes[0], spikes[1]]
-                        for t, v in pairs:
-                            sorted_spikes.append(t)
-                            sorted_spikes.append(v)
-                        data["input_spikes_tensor"][idx] = sorted_spikes
+        # Input spikes need no host-side preparation here: they are compiled into
+        # the tick-major event list in _prepare_kernel_extras when the kernel launches.
         t_construction_end = time.time()
         self._construction_time = t_construction_end - t_construction_start
 
@@ -2036,94 +2031,190 @@ class NeuromorphicModel(Model):
             soma_breed, soma_config, synapse_breed, synapse_config,
             soma_adj, synapse_adj)
 
+    # ------------------------------------------------------------------
+    # External input spikes: a tick-major event list delivered by the kernel
+    # ------------------------------------------------------------------
+    #
+    # Injected spikes are not stored per synapse. They accumulate host-side as
+    # (synapse_id, tick, value) chunks and are compiled, when the kernel next
+    # launches, into three device arrays sorted by tick:
+    #     ev_offsets[t] .. ev_offsets[t + 1]   the events of tick t
+    #     ev_syn[k]                           local row of the target synapse
+    #     ev_val[k]                           summed value
+    # At the top of every tick the generated kernel scatters that tick's events
+    # into each target's `input_spikes_tensor` row as [tick, value] (see
+    # _get_extra_kernel_config) and get_soma_spike reads the row back with one
+    # comparison. Per-tick cost is the number of events at that tick, so run
+    # length does not matter, and injecting between simulate() calls does not
+    # touch the property buffers, so nothing the kernels learned is lost.
+
+    _MAX_INPUT_TICK = 1 << 24   # ticks are stored in float32 on the device
+
     def add_spike(self, synapse_id: int, tick: int, value: float) -> None:
         """
-        Schedules an external input spike to this soma.
+        Schedules an external input spike on a synapse whose ``pre_soma_id`` is -1.
 
-        :param tick: tick at which spike should be triggered
-        :param value: spike value
+        :param tick: tick at which the spike arrives (absolute simulation tick)
+        :param value: spike value; several spikes on one tick are summed
         """
-        # Copy-on-write: the columnar builder shares ONE list object across all
-        # synapses of a breed (dedup), so appending in place would grow every
-        # synapse's input-spike column at once and explode the padded tensor at
-        # first tick. Copy before mutating so only this synapse's row changes.
-        spikes = list(self.get_agent_property_value(
-            id=synapse_id,
-            property_name="input_spikes_tensor",
-        ))
-        # OPTIMIZED: Store as flattened [tick, value, tick, value, ...] (depth 2) instead of [[tick, value], ...] (depth 3)
-        spikes.append(tick)
-        spikes.append(value)
-        self.set_agent_property_value(
-            synapse_id, "input_spikes_tensor", spikes
-        )
+        self._append_input_events([synapse_id], [tick], [value])
 
     def add_local_spike(self, synapse_id: int, tick: int, value: float) -> None:
-        """Schedule an input spike on a LOCALLY-OWNED synapse — non-collective.
+        """Schedule an input spike on a LOCALLY-OWNED synapse.
 
-        Local counterpart of add_spike: reads and writes only on the rank that owns
-        ``synapse_id`` (no MPI). Use on the scalable distributed path, where each rank
-        injects spikes only for the synapses it owns (caller resolves ownership from
-        app-level metadata). Calling this for a non-local synapse raises KeyError.
+        Same effect as add_spike (injection is rank-local either way: each rank keeps
+        only the spikes of synapses it owns and drops the rest when the event list is
+        built), but this variant checks ownership eagerly and raises KeyError for a
+        synapse this rank does not own, as the distributed API has always done.
         """
-        # Copy-on-write (see add_spike): never mutate a shared columnar column
-        # object in place — copy this synapse's row first.
-        spikes = list(self.get_local_agent_property_value(
-            id=synapse_id,
-            property_name="input_spikes_tensor",
-        ))
-        spikes.append(tick)
-        spikes.append(value)
-        self.set_local_agent_property_value(
-            synapse_id, "input_spikes_tensor", spikes
-        )
+        self._append_input_events([synapse_id], [tick], [value], local=True)
 
-    def add_spike_list(self, synapse_id: int, spike_list):
+    def add_spike_list(self, synapse_id: int, spike_list) -> None:
         """
-        Schedules a list of external input spikes to this synapse.
+        Schedules a list of external input spikes on one synapse.
 
-        :param spike_list: List of [tick, value] pairs
+        :param spike_list: ``[[tick, value], ...]`` or an ``(N, 2)`` array
         """
-        # Copy-on-write (see add_spike): never mutate a shared columnar column
-        # object in place — copy this synapse's row first.
-        spikes = list(self.get_agent_property_value(
-            id=synapse_id,
-            property_name="input_spikes_tensor",
-        ))
-        # OPTIMIZED: Flatten [[tick, value], ...] to [tick, value, tick, value, ...]
-        for spike_pair in spike_list:
-            spikes.append(spike_pair[0])  # tick
-            spikes.append(spike_pair[1])  # value
-        self.set_agent_property_value(
-            synapse_id, "input_spikes_tensor", spikes
-        )
+        pairs = np.asarray(spike_list, dtype=np.float64).reshape(-1, 2)
+        self._append_input_events(
+            np.full(len(pairs), synapse_id, dtype=np.int64), pairs[:, 0], pairs[:, 1])
 
-    def add_local_spike_list(self, synapse_id: int, spike_list):
-        """Schedule a list of input spikes on a LOCALLY-OWNED synapse — non-collective.
+    def add_local_spike_list(self, synapse_id: int, spike_list) -> None:
+        """Local counterpart of add_spike_list (see add_local_spike)."""
+        pairs = np.asarray(spike_list, dtype=np.float64).reshape(-1, 2)
+        self._append_input_events(
+            np.full(len(pairs), synapse_id, dtype=np.int64), pairs[:, 0], pairs[:, 1],
+            local=True)
 
-        Local, batched counterpart of add_spike_list: one get_local/set_local
-        round-trip appends the whole list (no per-spike read-modify-write), and it
-        reads/writes only on the rank that owns ``synapse_id`` (no MPI). Use on the
-        scalable distributed path where each rank injects spikes only for its own
-        synapses — the collective add_spike_list would deadlock there because ranks
-        loop over DIFFERENT local ids and cannot call in lockstep. Calling this for a
-        non-local synapse raises KeyError.
-
-        :param spike_list: List of [tick, value] pairs
+    def add_spikes(self, synapse_ids, ticks, values=1.0) -> None:
         """
-        # Copy-on-write (see add_spike): never mutate a shared columnar column
-        # object in place — copy this synapse's row first.
-        spikes = list(self.get_local_agent_property_value(
-            id=synapse_id,
-            property_name="input_spikes_tensor",
-        ))
-        # Flatten [[tick, value], ...] to [tick, value, tick, value, ...]
-        for spike_pair in spike_list:
-            spikes.append(spike_pair[0])  # tick
-            spikes.append(spike_pair[1])  # value
-        self.set_local_agent_property_value(
-            synapse_id, "input_spikes_tensor", spikes
-        )
+        Bulk injection in the shape of Brian2's ``SpikeGeneratorGroup``: flat
+        arrays of synapse ids and ticks (any order), optionally per-spike values.
+        This is the fast path for long experiments: one call for millions of spikes.
+        """
+        ids = np.asarray(synapse_ids, dtype=np.int64).ravel()
+        ticks = np.asarray(ticks, dtype=np.float64).ravel()
+        vals = np.broadcast_to(np.asarray(values, dtype=np.float64), ids.shape).ravel()
+        if len(ticks) != len(ids):
+            raise ValueError("synapse_ids and ticks must have the same length")
+        self._append_input_events(ids, ticks, vals)
+
+    def get_input_spikes(self, synapse_id: int):
+        """Return ``(ticks, values)`` injected on ``synapse_id`` from this rank's
+        host store, sorted by tick. Events set with set_input_events are device-only
+        and not reported here."""
+        ticks, vals = [], []
+        for ids_c, ticks_c, vals_c in self._input_events:
+            m = ids_c == synapse_id
+            if m.any():
+                ticks.append(ticks_c[m]); vals.append(vals_c[m])
+        if not ticks:
+            return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.float32)
+        t = np.concatenate(ticks); v = np.concatenate(vals)
+        order = np.argsort(t, kind="stable")
+        return t[order], v[order]
+
+    def clear_input_spikes(self) -> None:
+        """Discard every pending input spike (host store and device event list)."""
+        self._input_events = []
+        self._input_events_gpu = None
+        self._input_events_dirty = True
+
+    def set_input_events(self, syn_rows, ticks, values=None) -> None:
+        """Low-level, device-side replacement of ALL pending input spikes.
+
+        ``syn_rows`` are local GPU buffer row indices (``_gpu_buffers.agent_id_to_index``),
+        ``ticks`` absolute ticks, ``values`` per-event values (default 1.0); CuPy or numpy
+        arrays, compiled on the device without a host round trip. Meant for drivers that
+        generate their input on the GPU per presentation (Diehl & Cook). Replaces anything
+        added with add_spike*.
+        """
+        import cupy as cp
+        rows = cp.asarray(syn_rows).astype(cp.int64).ravel()
+        tks = cp.asarray(ticks).astype(cp.int64).ravel()
+        if values is None:
+            vals = cp.ones(rows.size, dtype=cp.float64)
+        else:
+            vals = cp.broadcast_to(cp.asarray(values, dtype=cp.float64), rows.shape).ravel()
+        if rows.size != tks.size:
+            raise ValueError("syn_rows and ticks must have the same length")
+        self._input_events = []
+        self._input_events_gpu = self._build_event_list(cp, rows, tks, vals)
+        self._input_events_dirty = False
+
+    # -- internals -----------------------------------------------------------
+
+    def _append_input_events(self, ids, ticks, values, local: bool = False) -> None:
+        ids = np.asarray(ids, dtype=np.int64).ravel()
+        ticks = np.asarray(ticks, dtype=np.float64).ravel()
+        vals = np.asarray(values, dtype=np.float64).ravel()
+        if not (len(ids) == len(ticks) == len(vals)):
+            raise ValueError("ids, ticks and values must have the same length")
+        if len(ids) == 0:
+            return
+        # On one rank every agent is local, so an unknown id is an error right away.
+        # Under MPI the collective idiom (every rank calls with the same ids) must
+        # tolerate ids owned elsewhere; only the add_local_* variants insist.
+        if local or MPI.COMM_WORLD.Get_size() == 1:
+            owned = self._agent_factory._rank2agentid2agentidx.get(MPI.COMM_WORLD.Get_rank(), {})
+            unknown = [i for i in np.unique(ids).tolist() if i not in owned]
+            if unknown:
+                raise KeyError(f"synapse id(s) not owned by this rank: {unknown[:5]}")
+        if not np.all(ticks == np.floor(ticks)):
+            raise ValueError("input spike ticks must be integers")
+        if ticks.min() < 0 or ticks.max() >= self._MAX_INPUT_TICK:
+            raise ValueError(f"input spike ticks must lie in [0, {self._MAX_INPUT_TICK})")
+        if not np.all(np.isfinite(vals)):
+            raise ValueError("input spike values must be finite")
+        self._input_events.append(
+            (ids, ticks.astype(np.int64), vals.astype(np.float32)))
+        self._input_events_dirty = True
+
+    @staticmethod
+    def _build_event_list(xp, rows, ticks, vals):
+        """Aggregate duplicate (tick, row) pairs, sort by tick, build tick offsets.
+        ``xp`` is numpy or cupy; arrays are int64 rows, int64 ticks, float64 values."""
+        if rows.size == 0:
+            return (xp.zeros(1, dtype=xp.int32), xp.zeros(1, dtype=xp.int32),
+                    xp.zeros(1, dtype=xp.float32))
+        n_rows = int(rows.max()) + 1
+        key = ticks * n_rows + rows                     # sorts by tick, then row
+        ukey, inv = xp.unique(key, return_inverse=True)
+        summed = xp.bincount(inv.ravel(), weights=vals, minlength=len(ukey))
+        ev_tick = ukey // n_rows
+        max_tick = int(ev_tick[-1])
+        offsets = xp.zeros(max_tick + 2, dtype=xp.int64)
+        offsets[1:] = xp.cumsum(xp.bincount(ev_tick, minlength=max_tick + 1))
+        return (offsets.astype(xp.int32), (ukey % n_rows).astype(xp.int32),
+                summed.astype(xp.float32))
+
+    def _compile_input_events(self, buf) -> None:
+        """Turn the host store into device arrays (once per change)."""
+        import cupy as cp
+        if not self._input_events_dirty and self._input_events_gpu is not None:
+            return
+        self._input_events_dirty = False
+        if not self._input_events:
+            if self._input_events_gpu is None:
+                self._input_events_gpu = self._build_event_list(
+                    np, np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros(0))
+                self._input_events_gpu = tuple(cp.asarray(a) for a in self._input_events_gpu)
+            return
+        ids = np.concatenate([c[0] for c in self._input_events])
+        ticks = np.concatenate([c[1] for c in self._input_events])
+        vals = np.concatenate([c[2] for c in self._input_events]).astype(np.float64)
+        # Resolve ids -> buffer rows once per distinct id, not once per event.
+        uniq, inverse = np.unique(ids, return_inverse=True)
+        owned = self._agent_factory._rank2agentid2agentidx.get(MPI.COMM_WORLD.Get_rank(), {})
+        rows_u = np.fromiter(
+            (buf.agent_id_to_index.get(i, -1) if i in owned else -1 for i in uniq.tolist()),
+            dtype=np.int64, count=len(uniq))
+        if MPI.COMM_WORLD.Get_size() == 1 and (rows_u < 0).any():
+            raise KeyError(f"add_spike*: unknown synapse id(s) {uniq[rows_u < 0][:5].tolist()}")
+        rows = rows_u[inverse.ravel()]
+        keep = rows >= 0                                # other ranks' synapses
+        off, syn, val = self._build_event_list(np, rows[keep], ticks[keep], vals[keep])
+        self._input_events_gpu = (cp.asarray(off), cp.asarray(syn), cp.asarray(val))
 
     # ------------------------------------------------------------------
     # GPU kernel extension hooks for spike recording
@@ -2131,8 +2222,26 @@ class NeuromorphicModel(Model):
 
     def _get_extra_kernel_config(self) -> dict:
         prop_idx = self._agent_factory._property_name_2_index["output_spikes_tensor"]
+        in_idx = self._agent_factory._property_name_2_index["input_spikes_tensor"]
         return {
-            'extra_kernel_params': ['spike_record', 'spike_record_count', 'spike_mask'],
+            'extra_kernel_params': ['spike_record', 'spike_record_count', 'spike_mask',
+                                    'ev_offsets', 'ev_syn', 'ev_val', 'n_ev_offsets'],
+            # Deliver this tick's external input events: all threads stride over
+            # ev_syn[ev_offsets[t]:ev_offsets[t+1]] and stamp [tick, value] into the
+            # target synapse rows. Every thread reads the same offsets, so the branch
+            # is uniform and the barrier is only paid on ticks that have events.
+            'pre_tick_code': [
+                'if thread_local_tick + 1 < int(n_ev_offsets):',
+                '\t_e0 = int(ev_offsets[thread_local_tick])',
+                '\t_e1 = int(ev_offsets[thread_local_tick + 1])',
+                '\tif _e1 > _e0:',
+                '\t\t_k = _e0 + int(thread_id)',
+                '\t\twhile _k < _e1:',
+                f'\t\t\ta{in_idx}[int(ev_syn[_k])][0] = 1.0 * thread_local_tick',
+                f'\t\t\ta{in_idx}[int(ev_syn[_k])][1] = ev_val[_k]',
+                '\t\t\t_k = _k + int(total_threads)',
+                '\t\t__GRID_BARRIER__',
+            ],
             'post_breed_step_code': [
                 (
                     [
@@ -2171,7 +2280,17 @@ class NeuromorphicModel(Model):
                     if 0 <= idx < num_local_agents:
                         mask[idx] = 1.0
             self._spike_mask_gpu = mask
-        return (self._spike_record_gpu, self._spike_record_count_gpu, self._spike_mask_gpu)
+        self._compile_input_events(self._gpu_buffers)
+        # A driver that rewinds the clock (Diehl & Cook sets model.tick = 0 before
+        # every presentation) would otherwise see last presentation's stamps
+        # [tick, value] match again on the same tick numbers; clear them.
+        if self.tick < self._input_next_tick:
+            in_idx = self._agent_factory._property_name_2_index["input_spikes_tensor"]
+            self._gpu_buffers.property_tensors[in_idx][:, 0] = -1.0
+        self._input_next_tick = self.tick + sync_ticks
+        ev_offsets, ev_syn, ev_val = self._input_events_gpu
+        return (self._spike_record_gpu, self._spike_record_count_gpu, self._spike_mask_gpu,
+                ev_offsets, ev_syn, ev_val, cp.int32(ev_offsets.size))
 
     def _process_kernel_extras(self):
         count = int(self._spike_record_count_gpu[0].get())

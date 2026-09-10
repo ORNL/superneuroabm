@@ -40,6 +40,8 @@ def build_parser():
     p.add_argument("--standalone", action="store_true",
                    help="Use the cpp_standalone device, as the reference does.")
     p.add_argument("--csv", default=str(SCRIPT_DIR / "results" / "masquelier.csv"))
+    p.add_argument("--dump-dir", default=None,
+                   help="Save output spike ticks (at --dt-s) and all weights as .npy.")
     return p
 
 
@@ -110,11 +112,18 @@ def run(args):
         '''wi : 1
            dLTPtrace/dt = -LTPtrace / tauplus  : 1 (event-driven)
            dLTDtrace/dt = -LTDtrace / tauminus : 1 (event-driven)''',
+        # The reference's default "RNN" rule (run_simulation.py:110-119): nearest
+        # neighbour AND restricted -- each trace is zeroed once consumed. That is
+        # what superneuroabm's exp_pair_wise_stdp_bounded_nn implements despite its
+        # name. The un-restricted `_nn` variant depresses on every pre spike after a
+        # post spike and silences the neuron after ~20 discharges.
         on_pre='''x_post += deltax*wi
                   LTPtrace = aplus
-                  wi = clip(wi + LTDtrace, wmin, wmax)''',
+                  wi = clip(wi + LTDtrace, wmin, wmax)
+                  LTDtrace = 0''',
         on_post='''LTDtrace = -aminus
-                   wi = clip(wi + LTPtrace, wmin, wmax)''',
+                   wi = clip(wi + LTPtrace, wmin, wmax)
+                   LTPtrace = 0''',
     )
     syn.connect()
     syn.wi = win
@@ -133,6 +142,14 @@ def run(args):
     print(f"\n  input spikes delivered: {n_spikes:,}")
     print(f"  output spikes: {mon.num_spikes}")
     print(f"  first 5 weights: {[round(float(w), 4) for w in syn.wi[:5]]}")
+    if args.dump_dir:
+        import os
+        os.makedirs(args.dump_dir, exist_ok=True)
+        ticks = np.rint(np.asarray(mon.t / second) / args.dt_s).astype(np.int64)
+        np.save(os.path.join(args.dump_dir, "spike_times.npy"), ticks)
+        np.save(os.path.join(args.dump_dir, "weights_all.npy"),
+                np.asarray(syn.wi[:], dtype=np.float64))
+        print(f"  dumped {len(ticks)} spike times and {len(syn.wi[:])} weights to {args.dump_dir}")
     log.write(args.csv)
     print(f"  wrote {args.csv}")
 

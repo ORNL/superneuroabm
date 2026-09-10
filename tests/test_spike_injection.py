@@ -1,24 +1,27 @@
 #!/usr/bin/env python
 """Unit tests for the spike-injection API family on ``NeuromorphicModel``.
 
-Covers the three ways external input spikes are scheduled onto a synapse's
-``input_spikes_tensor`` (all defined in ``superneuroabm/model.py``):
+Covers the ways external input spikes are scheduled on a synapse whose
+``pre_soma_id`` is -1 (all defined in ``superneuroabm/model.py``):
 
-- ``add_spike(synapse_id, tick, value)``          (model.py:1411, collective)
-- ``add_spike_list(synapse_id, [[tick, value]])`` (model.py:1447, collective bulk)
-- ``add_local_spike(synapse_id, tick, value)``    (model.py:1429, MPI-local)
+- ``add_spike(synapse_id, tick, value)``
+- ``add_spike_list(synapse_id, [[tick, value], ...])``   (also accepts an (N, 2) array)
+- ``add_spikes(synapse_ids, ticks, values)``              (bulk, flat arrays, any order)
+- ``add_local_spike`` / ``add_local_spike_list``          (raise KeyError for a non-owned id)
 
-These were previously untested as subjects-in-themselves: ``add_spike`` appeared
-only as plumbing in other tests, and the other two had no coverage at all.
-
-The storage contract for all three is identical: append ``[tick, value]`` pairs,
-flattened, into the synapse's ``input_spikes_tensor`` (additive; never clears).
+Storage contract: spikes accumulate in a host-side event store (additive; never
+clears until ``reset()``/``clear_input_spikes()``), readable with
+``get_input_spikes(synapse_id) -> (ticks, values)`` sorted by tick. They are
+compiled into a tick-major event list when the kernel launches and delivered
+into the synapse's ``input_spikes_tensor`` row as ``[tick, value]`` on the tick
+they fall on. Delivery timing itself is covered by ``test_input_spike_events.py``.
 
 Usage:
-    # single-process (GPU), runs everything except the multi-rank local case:
     python -m pytest tests/test_spike_injection.py -v
-    # the distributed add_local_spike contract (needs GPU + 2 ranks):
-    mpirun -n 2 python -m unittest tests.test_spike_injection.TestAddLocalSpike
+    mpirun -n 2 python -m unittest \
+        tests.test_spike_injection.TestAddLocalSpike.test_local_owner_injection_multirank
+    (the single-rank tests skip themselves under mpirun: they build agents on every
+    rank and would desynchronise the collective simulate)
 """
 
 import pickle
@@ -49,12 +52,14 @@ def _get_mpi():
         return None, 0, 1
 
 
-def _build_chain():
-    """Build ``external -> soma_0 -> soma_1`` and return (model, soma_0, soma_1, syn_ext).
+def _single_rank_only(test):
+    _comm, _rank, size = _get_mpi()
+    if size != 1:
+        test.skipTest("single-rank fixture; run this one without mpirun")
 
-    Standard build order used across the suite: create -> setup. Spikes are injected
-    by the caller AFTER this returns, since ``setup`` creates the property tensors.
-    """
+
+def _build_chain():
+    """Build ``external -> soma_0 -> soma_1`` and return (model, soma_0, soma_1, syn_ext)."""
     model = NeuromorphicModel()
     model.set_seed(42)
     soma_0 = model.create_soma(breed="lif_soma", config_name="config_0")
@@ -69,12 +74,10 @@ def _build_chain():
     return model, soma_0, soma_1, syn_ext
 
 
-def _as_floats(tensor):
-    """Read-back helper: coerce a stored spike tensor to a plain list of floats.
-
-    The tensor may come back as ints, a numpy array, or floats depending on the
-    storage path; compare on value, not representation."""
-    return [float(x) for x in tensor]
+def _injected(model, syn):
+    """(ticks, values) as plain lists, for readable assertions."""
+    t, v = model.get_input_spikes(syn)
+    return t.tolist(), v.tolist()
 
 
 def _assert_bit_exact(test, model_a, somas_a, model_b, somas_b):
@@ -93,59 +96,69 @@ def _assert_bit_exact(test, model_a, somas_a, model_b, somas_b):
 
 
 class TestAddSpike(unittest.TestCase):
-    """Direct coverage of add_spike's storage contract (elsewhere only plumbing)."""
+    """Direct coverage of add_spike's storage contract."""
 
-    def test_flattened_tensor(self):
-        """Two add_spike calls append, flattened and in order, additively.
-
-        The tensor ships with a [-1, 0] never-fires sentinel; assert against the
-        captured baseline rather than the sentinel value so the test survives an
-        init change."""
+    def test_round_trip(self):
+        """Two add_spike calls are both recorded, sorted by tick, values kept."""
+        _single_rank_only(self)
         model, _soma_0, _soma_1, syn_ext = _build_chain()
-        base = _as_floats(model.get_agent_property_value(syn_ext, "input_spikes_tensor"))
+        self.assertEqual(_injected(model, syn_ext), ([], []))
 
-        model.add_spike(synapse_id=syn_ext, tick=2, value=1.0)
         model.add_spike(synapse_id=syn_ext, tick=50, value=1.0)
+        model.add_spike(synapse_id=syn_ext, tick=2, value=0.5)
 
-        tensor = model.get_agent_property_value(syn_ext, "input_spikes_tensor")
-        self.assertEqual(_as_floats(tensor), base + [2.0, 1.0, 50.0, 1.0])
+        self.assertEqual(_injected(model, syn_ext), ([2, 50], [0.5, 1.0]))
+
+    def test_unknown_id_raises(self):
+        """On one rank every agent is local, so an unknown id is an error at call time."""
+        _single_rank_only(self)
+        model, _soma_0, _soma_1, _syn_ext = _build_chain()
+        with self.assertRaises(KeyError):
+            model.add_spike(synapse_id=10_000_000, tick=2, value=1.0)
+
+    def test_tick_validation(self):
+        _single_rank_only(self)
+        model, _soma_0, _soma_1, syn_ext = _build_chain()
+        with self.assertRaises(ValueError):
+            model.add_spike(synapse_id=syn_ext, tick=2.5, value=1.0)
+        with self.assertRaises(ValueError):
+            model.add_spike(synapse_id=syn_ext, tick=-1, value=1.0)
+        with self.assertRaises(ValueError):
+            model.add_spike(synapse_id=syn_ext, tick=1 << 24, value=1.0)
 
 
 class TestAddSpikeList(unittest.TestCase):
-    """Comprehensive coverage of the bulk add_spike_list API."""
+    """Comprehensive coverage of the bulk add_spike_list / add_spikes API."""
 
-    def test_flattened_tensor(self):
-        """A [[tick, value], ...] list is flattened to [tick, value, ...] in order."""
+    def test_pairs_recorded(self):
+        _single_rank_only(self)
         model, _soma_0, _soma_1, syn_ext = _build_chain()
-        base = _as_floats(model.get_agent_property_value(syn_ext, "input_spikes_tensor"))
-
         model.add_spike_list(syn_ext, [[2, 1.0], [50, 1.0], [80, 1.0]])
+        self.assertEqual(_injected(model, syn_ext), ([2, 50, 80], [1.0, 1.0, 1.0]))
 
-        tensor = model.get_agent_property_value(syn_ext, "input_spikes_tensor")
-        self.assertEqual(_as_floats(tensor), base + [2.0, 1.0, 50.0, 1.0, 80.0, 1.0])
+    def test_array_input(self):
+        """An (N, 2) numpy array is accepted as well as a list of pairs."""
+        _single_rank_only(self)
+        model, _soma_0, _soma_1, syn_ext = _build_chain()
+        model.add_spike_list(syn_ext, np.array([[2, 1.0], [50, 1.0]]))
+        self.assertEqual(_injected(model, syn_ext), ([2, 50], [1.0, 1.0]))
 
     def test_additive_accumulation(self):
         """Successive calls concatenate rather than overwrite."""
-        # Two add_spike_list calls accumulate.
+        _single_rank_only(self)
         model, _s0, _s1, syn_ext = _build_chain()
-        base = _as_floats(model.get_agent_property_value(syn_ext, "input_spikes_tensor"))
         model.add_spike_list(syn_ext, [[2, 1.0], [50, 1.0]])
         model.add_spike_list(syn_ext, [[80, 1.0]])
-        self.assertEqual(
-            _as_floats(model.get_agent_property_value(syn_ext, "input_spikes_tensor")),
-            base + [2.0, 1.0, 50.0, 1.0, 80.0, 1.0])
+        self.assertEqual(_injected(model, syn_ext), ([2, 50, 80], [1.0, 1.0, 1.0]))
 
-        # add_spike followed by add_spike_list also accumulates onto the same tensor.
         model2, _a, _b, syn2 = _build_chain()
-        base2 = _as_floats(model2.get_agent_property_value(syn2, "input_spikes_tensor"))
         model2.add_spike(synapse_id=syn2, tick=2, value=1.0)
         model2.add_spike_list(syn2, [[50, 1.0], [80, 1.0]])
-        self.assertEqual(
-            _as_floats(model2.get_agent_property_value(syn2, "input_spikes_tensor")),
-            base2 + [2.0, 1.0, 50.0, 1.0, 80.0, 1.0])
+        self.assertEqual(_injected(model2, syn2), ([2, 50, 80], [1.0, 1.0, 1.0]))
 
     def test_equivalent_to_add_spike(self):
         """add_spike_list must be a faithful bulk form of repeated add_spike calls."""
+        _single_rank_only(self)
         model_a, a0, a1, syn_a = _build_chain()
         model_a.add_spike_list(syn_a, [[2, 1.0], [50, 1.0]])
 
@@ -158,8 +171,29 @@ class TestAddSpikeList(unittest.TestCase):
 
         _assert_bit_exact(self, model_a, [a0, a1], model_b, [b0, b1])
 
+    def test_add_spikes_equivalent(self):
+        """Bulk flat-array injection (unsorted) matches per-synapse pairs bit-for-bit."""
+        _single_rank_only(self)
+        model_a, a0, a1, syn_a = _build_chain()
+        model_a.add_spikes([syn_a, syn_a, syn_a], [50, 2, 80])   # any order, value 1.0
+
+        model_b, b0, b1, syn_b = _build_chain()
+        model_b.add_spike_list(syn_b, [[2, 1.0], [50, 1.0], [80, 1.0]])
+
+        self.assertEqual(_injected(model_a, syn_a), _injected(model_b, syn_b))
+        model_a.simulate(ticks=SIM_TICKS, update_data_ticks=1)
+        model_b.simulate(ticks=SIM_TICKS, update_data_ticks=1)
+        _assert_bit_exact(self, model_a, [a0, a1], model_b, [b0, b1])
+
+    def test_add_spikes_length_mismatch(self):
+        _single_rank_only(self)
+        model, _s0, _s1, syn_ext = _build_chain()
+        with self.assertRaises(ValueError):
+            model.add_spikes([syn_ext, syn_ext], [1])
+
     def test_bulk_train_drives_firing(self):
         """A bulk-injected spike train drives the downstream soma to fire."""
+        _single_rank_only(self)
         model, soma_0, soma_1, syn_ext = _build_chain()
         model.add_spike_list(syn_ext, [[t, 1.0] for t in (2, 5, 8, 11)])
         model.simulate(ticks=SIM_TICKS, update_data_ticks=1)
@@ -167,29 +201,24 @@ class TestAddSpikeList(unittest.TestCase):
                                 "directly-stimulated soma_0 should fire")
 
 
-@unittest.skipUnless(
-    hasattr(NeuromorphicModel, "get_local_agent_property_value"),
-    "local accessors require the editable SAGESim install")
 class TestAddLocalSpike(unittest.TestCase):
-    """add_local_spike: non-collective, rank-local spike injection.
+    """add_local_spike: rank-local injection with an eager ownership check.
 
-    On a single-process run rank 0 owns every agent, so the happy path and the
-    KeyError-on-unknown-id path are exercised here. The distinctive cross-rank
-    contract (owner injects locally; a non-owner raises KeyError; the spike still
-    reaches the soma through the collective simulate) is exercised by the
-    multi-rank case below, which auto-skips unless launched under mpirun -n 2.
+    Injection is rank-local for every variant; the add_local_* names differ only
+    in raising KeyError for a synapse this rank does not own. The multi-rank case
+    auto-skips unless launched under mpirun -n 2.
     """
 
-    def test_local_flattened_tensor(self):
-        """add_local_spike appends [tick, value] to the owner's tensor."""
+    def test_local_round_trip(self):
+        _single_rank_only(self)
         model, _soma_0, _soma_1, syn_ext = _build_chain()
-        base = _as_floats(model.get_local_agent_property_value(syn_ext, "input_spikes_tensor"))
         model.add_local_spike(synapse_id=syn_ext, tick=2, value=1.0)
-        tensor = model.get_local_agent_property_value(syn_ext, "input_spikes_tensor")
-        self.assertEqual(_as_floats(tensor), base + [2.0, 1.0])
+        model.add_local_spike_list(syn_ext, [[5, 1.0]])
+        self.assertEqual(_injected(model, syn_ext), ([2, 5], [1.0, 1.0]))
 
     def test_local_equivalent_to_add_spike(self):
-        """On one rank, add_local_spike matches collective add_spike bit-for-bit."""
+        """On one rank, add_local_spike matches add_spike bit-for-bit."""
+        _single_rank_only(self)
         model_a, a0, a1, syn_a = _build_chain()
         model_a.add_local_spike(synapse_id=syn_a, tick=2, value=1.0)
         model_a.add_local_spike(synapse_id=syn_a, tick=50, value=1.0)
@@ -204,22 +233,13 @@ class TestAddLocalSpike(unittest.TestCase):
         _assert_bit_exact(self, model_a, [a0, a1], model_b, [b0, b1])
 
     def test_local_keyerror_on_unknown_id(self):
-        """A non-local (here: nonexistent) id raises KeyError, not a silent no-op.
-
-        On a single rank "owned elsewhere" and "does not exist" are indistinguishable;
-        distinguishing them requires a real 2-rank run (see the multi-rank case)."""
+        _single_rank_only(self)
         model, _soma_0, _soma_1, _syn_ext = _build_chain()
         with self.assertRaises(KeyError):
             model.add_local_spike(synapse_id=10_000_000, tick=2, value=1.0)
 
     def test_local_owner_injection_multirank(self):
-        """Owner injects locally; non-owner raises KeyError; each soma still fires.
-
-        Two disjoint single-soma networks, one per rank (soma id == rank, external
-        synapse id == 100 + rank). Each rank injects only into the synapse it owns;
-        injecting into the other rank's synapse must raise KeyError. After the
-        collective simulate, both somas have fired.
-        """
+        """Owner injects locally; non-owner raises KeyError; each soma still fires."""
         comm, rank, size = _get_mpi()
         if size == 1:
             self.skipTest("multi-rank add_local_spike contract needs mpirun -n 2")
@@ -227,8 +247,6 @@ class TestAddLocalSpike(unittest.TestCase):
             self.skipTest(f"fixture supports exactly 2 ranks, got {size}")
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Every rank writes both files deterministically (distinct names, no race)
-            # then loads only its own.
             for r in (0, 1):
                 soma_id, syn_id = r, 100 + r
                 f = Path(tmpdir) / f"local_spike_rank{r}.pkl"
@@ -246,17 +264,14 @@ class TestAddLocalSpike(unittest.TestCase):
             my_syn = 100 + rank
             other_syn = 100 + (1 - rank)
 
-            # Non-owner path: this rank does not own the other rank's synapse.
             with self.assertRaises(KeyError):
                 model.add_local_spike(synapse_id=other_syn, tick=2, value=1.0)
 
-            # Owner path: inject a short train locally so the local soma fires.
             for t in (2, 5, 8, 11):
                 model.add_local_spike(synapse_id=my_syn, tick=t, value=1.0)
 
             model.simulate(ticks=SIM_TICKS, update_data_ticks=1)
 
-            # get_spike_times is collective/owner-agnostic, so every rank can read both.
             fired = {sid: len(model.get_spike_times(soma_id=sid)) for sid in (0, 1)}
 
         self.assertGreaterEqual(fired[0], 1, "soma on rank 0 should fire from its local injection")

@@ -1,0 +1,7 @@
+simulator,variant,neurons,in_degree,synapses,repeat,phase,seconds,host_rss_mb,gpu_mb
+nestgpu,fixed_indegree,12500,1000,12512500,0,create,0.0029196739196777344,190.4,217.0
+nestgpu,fixed_indegree,12500,1000,12512500,0,connect,0.03369402885437012,198.3,513.0
+nestgpu,fixed_indegree,12500,1000,12512500,0,calibrate,0.0439910888671875,198.9,367.0
+nestgpu,fixed_indegree,12500,1000,12512500,0,simulate_warmup_10,0.0020339488983154297,199.2,367.0
+nestgpu,fixed_indegree,12500,1000,12512500,0,ticks_11_100,0.014367103576660156,199.2,367.0
+nestgpu,fixed_indegree,12500,1000,12512500,0,total,2.106848955154419,201.3,367.0

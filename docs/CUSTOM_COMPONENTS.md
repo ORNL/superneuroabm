@@ -77,7 +77,7 @@ def my_step_func(
     internal_states,
     learning_internal_states,
     synapse_history,                   # delay register
-    input_spikes_tensor,               # externally injected spikes (synapses only)
+    input_spikes_tensor,               # [tick, value] stamp of this tick's injected spike (synapses only)
     output_spikes_tensor,              # soma spike output ring buffer
     internal_states_buffer,            # per-tick history
     learning_internal_states_buffer,   # per-tick history
@@ -94,6 +94,10 @@ the *order* is fixed.
 - **soma**: `locations[agent_index]` is the list of incoming synapse indices.
 - **synapse**: `locations[agent_index] == [pre_soma_index, post_soma_index]`,
   where `-1` in the pre slot means "external input, read `input_spikes_tensor`".
+  That row holds `[last_delivered_tick, value]`: the framework delivers each tick's
+  injected spikes into it before priority 0 (a tick-major event list, see
+  `NeuromorphicModel._get_extra_kernel_config`), so `get_soma_spike` is one
+  comparison and custom kernels should read it the same way rather than scan it.
 
 These are already local indices — SAGESim converts agent ids to indices before
 launch, so there is never a search to do.

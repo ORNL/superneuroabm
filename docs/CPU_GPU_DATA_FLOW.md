@@ -15,7 +15,7 @@ This is the *how it works* reference. `CPU_GPU_SYNC_DESIGN_NOTES.md` is the comp
 | Where | `AgentFactory._property_name_2_agent_data_tensor` | `GPUBufferManager.property_tensors` |
 | Shape | dict of ragged Python lists, one row per local agent | list of 2-D CuPy arrays, one per property |
 | Type | Python floats (float64) | **float32**, NaN-padded to the widest row |
-| Who writes it | `create_*`, `reset()`, property setters, `add_spike*` | step functions, every tick |
+| Who writes it | `create_*`, `reset()`, property setters | step functions, every tick |
 
 Two consequences that surprise people:
 
@@ -56,7 +56,7 @@ There is no flag today that tracks device-newer-ness. §5 records the design for
 | later `simulate()` ticks | — | written by kernel | `True` | device is authoritative |
 | `get_agent_property_value` | read *only if* buffers are down | read when buffers are live | unchanged | returns fresh values either way |
 | `set_agent_property_value` | **writes** | — | → `False` | host authoritative; **see §4** |
-| `add_spike` / `add_spike_list` | **writes** (via the setter) | — | → `False` | same as above |
+| `add_spike*` / `add_spikes` | — (host event store, not a property) | event list rebuilt at next launch | unchanged | **safe mid-run**: property buffers are untouched, nothing learned is lost |
 | `eval()` / `train()` | **writes** (`_write_stdp_type`, direct) | — | → `False` | same as above |
 | `reset(retain_parameters=…)` | **overwritten by sync**, then agents reset | freed | → `False` | **host authoritative and current** |
 | `get_spike_times` | reads the gathered spike log | reads `spike_record` | unchanged | independent of the property path |
@@ -152,25 +152,18 @@ Cost: one device→host copy of all properties at the first host access after ea
 by convention. Everything else becomes free. Once this lands, the guard in
 `set_hyperparameters` is deleted rather than reworked.
 
-## 6. Known issue: `simulate()` writes the host store without invalidating the device
+## 6. Known issue: `simulate()` resizes the tracking buffers without invalidating the device
 
-`superneuroabm/model.py:786-814` reaches into `af._property_name_2_agent_data_tensor`
-directly and does two things:
+When `enable_internal_states_tracking` is on, `simulate()` reaches into
+`af._property_name_2_agent_data_tensor` and resizes `internal_states_buffer` and
+`learning_internal_states_buffer` to `ticks` rows without setting
+`is_initialized = False`. On a second `simulate()` while buffers are still live the
+device keeps the old buffer shape. (The in-place sort of `input_spikes_tensor` that used
+to live next to it is gone: input spikes are a tick-major event list now and never touch
+the property store, see FUNCTIONALITY_GUIDE "External Input Connections".)
 
-- **(a)** when `enable_internal_states_tracking` is on, resizes `internal_states_buffer`
-  and `learning_internal_states_buffer` to `ticks` rows (`:787-793`);
-- **(b)** sorts each synapse's `input_spikes_tensor` in place by tick — in **both**
-  branches, tracked or not (`:795-804`, `:806-814`).
-
-Neither sets `is_initialized = False`. So on a second `simulate()` while buffers are still
-live, the device keeps the old buffer shape and the unsorted spike tensor, and the
-host-side work is silently discarded.
-
-It is masked today because `add_spike` / `add_spike_list` go through the property setter
-and invalidate the buffers, so the usual inject-then-simulate flow rebuilds anyway. The
-exposed path is **back-to-back `simulate()` calls with no intervening property write**.
-
-The fix needs *both* directions handled, which is why it waits for §5:
+The exposed path is back-to-back `simulate()` calls with tracking on and no intervening
+property write. The fix needs both directions handled, which is why it waits for §5:
 
 1. `_ensure_host_current()` **before** reading `data["internal_states"][idx]` to seed the
    buffer — after the first `simulate()` that host row is stale, so the buffer would

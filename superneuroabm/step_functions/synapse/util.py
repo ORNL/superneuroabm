@@ -26,6 +26,13 @@ def get_soma_spike(
     NOTE: output_spikes_tensor is NOT double-buffered. Reading t_current-1
     introduces a 1-tick synaptic delay (0.1ms at dt=1e-4), which is
     biologically realistic and negligible at fine dt.
+
+    External input (pre_soma_index == -1): input_spikes_tensor[agent_index] is
+    [last_delivered_tick, value]. The generated kernel scatters this tick's
+    injected events into these rows before priority 0 (see
+    NeuromorphicModel._get_extra_kernel_config), so the read is one comparison
+    and costs the same at tick 10 and tick 10 million. Spikes injected on the
+    same synapse and tick were summed when the event list was built.
     """
     t_current = int(tick)
 
@@ -36,18 +43,8 @@ def get_soma_spike(
         else:
             spike = 0.0
     else:
-        spike = 0.0
-        spike_buffer_max_len = len(input_spikes_tensor[agent_index])
-
-        # input_spikes_tensor layout: [-1, 0.0, tick, value, tick, value, ...]
-        # Spikes are sorted by tick in setup(). Scan sequentially and
-        # stop once past t_current — read-only, no warp divergence.
-        i = 0
-        done = False
-        while not done and i + 1 < spike_buffer_max_len and not cp.isnan(input_spikes_tensor[agent_index][i]):
-            if input_spikes_tensor[agent_index][i] == t_current:
-                spike += input_spikes_tensor[agent_index][i + 1]
-            elif input_spikes_tensor[agent_index][i] > t_current:
-                done = True
-            i += 2
+        if input_spikes_tensor[agent_index][0] == t_current:
+            spike = input_spikes_tensor[agent_index][1]
+        else:
+            spike = 0.0
     return spike

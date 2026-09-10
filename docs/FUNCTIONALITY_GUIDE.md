@@ -490,7 +490,7 @@ soma_properties = {
     "internal_state": [...]         # Dynamic state (v, u, tcount, tlast)
     "internal_learning_state": [...] # Learning state (traces, dW)
     "synapse_delay_reg": []         # Delay buffer for spike transmission
-    "input_spikes_tensor": []       # External input spikes
+    "input_spikes_tensor": [-1, 0]  # unused on somas (see External Input Connections)
     "output_spikes_tensor": []      # Output spike history
     "internal_states_buffer": []    # History of internal states (optional)
     "internal_learning_states_buffer": []  # History of learning states (optional)
@@ -506,7 +506,8 @@ synapse_properties = {
     "internal_state": [I_synapse, I_synapse_supp, pre_trace, post_trace]
     "internal_learning_state": [pre_trace, post_trace, dW]
     "locations": [pre_soma_index, post_soma_index]  # Connectivity (pre-converted indices)
-    "input_spikes_tensor": []       # External input spikes (if pre_soma = -1)
+    "input_spikes_tensor": [-1, 0]  # [last_delivered_tick, value] stamp written by the
+                                    # framework each tick an injected spike arrives (pre_soma = -1)
     "output_spikes_tensor": []      # Not used for synapses
     "internal_states_buffer": []    # History of synaptic currents (optional)
     "internal_learning_states_buffer": []  # History of STDP traces (optional)
@@ -624,6 +625,32 @@ input_synapse = model.create_synapse(
 # input_synapse.locations = [-1, soma_B_local_index]
 # The synapse checks if pre_soma_index == -1 and reads from input_spikes_tensor instead
 ```
+
+Spikes are scheduled on such a synapse with any of
+
+```python
+model.add_spike(input_synapse, tick=5, value=1.0)
+model.add_spike_list(input_synapse, [[5, 1.0], [12, 1.0]])      # or an (N, 2) array
+model.add_spikes(synapse_ids, ticks, values=1.0)                 # bulk, flat arrays, any order
+```
+
+They are not stored per synapse. All injected spikes live in one host-side event
+store that is compiled, when the kernel next launches, into a tick-major event
+list on the device (`offsets[tick]`, target row, value). At the top of every tick
+the generated kernel stamps that tick's events into the target rows as
+`input_spikes_tensor[row] = [tick, value]`, and `get_soma_spike` reads the row
+back with a single comparison. Consequences:
+
+- per-tick cost is the number of spikes arriving on that tick, independent of how
+  many were injected in total, so a 450 s run costs 45x a 10 s run and no more;
+- several spikes on one synapse and tick are summed;
+- injecting between `simulate()` calls only rebuilds the event list, never the
+  property buffers, so nothing the kernels learned is lost;
+- `get_input_spikes(synapse_id)` returns `(ticks, values)` of what was injected;
+  `clear_input_spikes()` and `reset()` discard it;
+- ticks must be integers below 2**24 (they are stored in float32 on the device);
+- reading `input_spikes_tensor` back after a run gives the last stamp, not the
+  injected list.
 
 #### Why `locations` Matters
 
