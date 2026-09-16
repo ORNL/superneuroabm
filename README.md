@@ -80,8 +80,8 @@ and [`tutorials/user_customized_stdp.py`](tutorials/user_customized_stdp.py) —
 model at runtime, with no changes to the installed package. See
 [`docs/CUSTOM_COMPONENTS.md`](docs/CUSTOM_COMPONENTS.md) for the full pattern.
 
-Runnable scripts live in [`examples/`](examples), including a Brunel network generator and a
-Masquelier 2008 STDP replication.
+Runnable experiment scripts — including the Brunel network and the Masquelier 2008 STDP
+replication — live in the `ns-applications` repository rather than here.
 
 ## Unit Tests
 
@@ -89,8 +89,17 @@ Masquelier 2008 STDP replication.
 python -m pytest tests/
 ```
 
-The MPI consistency test compares multi-rank spike times against the single-rank baseline and
-needs more than one GPU:
+That runs single-rank only. The multi-rank tests are in the same files and self-skip there, so a
+green run says nothing about correctness above one rank. Sweep the rank counts with:
+
+```bash
+tests/run_mpi_tests.sh          # ranks 1 2 4
+tests/run_mpi_tests.sh 2        # only 2 ranks
+```
+
+One GPU is enough — the ranks share it via `mpirun --oversubscribe`. On a cluster, the MPI
+consistency test compares multi-rank spike times against the single-rank baseline with one GPU
+per rank:
 
 ```bash
 srun -A <account> -q debug -N1 -n2 -c7 --gpu-bind=closest \

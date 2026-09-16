@@ -32,21 +32,6 @@ def exp_pair_wise_stdp_bounded(
     learning_internal_states_buffer,
 ):
     t_current = int(tick)
-
-    # Get the synapse parameters:
-    weight = synapse_params[agent_index][0]
-    synaptic_delay = synapse_params[agent_index][1]
-
-    # Get the learning parameters:
-    # stdpType = 2 # Parsed in the learning rule selector
-    tau_pre_stdp = learning_params[agent_index][1]
-    tau_post_stdp = learning_params[agent_index][2]
-    a_exp_pre = learning_params[agent_index][3]
-    a_exp_post = learning_params[agent_index][4]
-    stdp_history_length = learning_params[agent_index][5]
-    wmin = learning_params[agent_index][6]
-    wmax = learning_params[agent_index][7]
-
     pre_trace = learning_internal_states[agent_index][0]
     post_trace = learning_internal_states[agent_index][1]
     dW = learning_internal_states[agent_index][2]
@@ -80,6 +65,32 @@ def exp_pair_wise_stdp_bounded(
         input_spikes_tensor,
         output_spikes_tensor,
     )
+
+    # Idle fast path: with no pre or post spike and all traces (and the last dW)
+    # exactly zero, every value this rule writes would be rewritten unchanged, so
+    # return before reading the parameter rows. The history buffer is skipped only
+    # while tracking is off (single write-only slot); traces reach exact zero only
+    # by float32 underflow, so this is bit-for-bit the same as stepping.
+    tracking = len(learning_internal_states_buffer[agent_index]) > 1
+    if (pre_soma_spike == 0.0 and post_soma_spike == 0.0 and pre_trace == 0.0 and post_trace == 0.0
+            and dW == 0.0 and not tracking):
+        return
+
+
+    # Get the synapse parameters:
+    weight = synapse_params[agent_index][0]
+    synaptic_delay = synapse_params[agent_index][1]
+
+    # Get the learning parameters:
+    # stdpType = 2 # Parsed in the learning rule selector
+    tau_pre_stdp = learning_params[agent_index][1]
+    tau_post_stdp = learning_params[agent_index][2]
+    a_exp_pre = learning_params[agent_index][3]
+    a_exp_post = learning_params[agent_index][4]
+    stdp_history_length = learning_params[agent_index][5]
+    wmin = learning_params[agent_index][6]
+    wmax = learning_params[agent_index][7]
+
 
     pre_trace = pre_trace * (1 - dt / tau_pre_stdp) + pre_soma_spike * a_exp_pre
     post_trace = post_trace * (1 - dt / tau_post_stdp) + post_soma_spike * a_exp_post

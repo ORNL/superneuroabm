@@ -10,6 +10,7 @@ import numpy as np
 import cupy as cp
 from sagesim.space import NetworkSpace
 from sagesim.model import Model
+from sagesim.columns import IndexedColumn
 from sagesim.breed import Breed
 
 from superneuroabm.step_functions.soma.izh import izh_soma_step_func
@@ -737,7 +738,8 @@ class NeuromorphicModel(Model):
                     idxs.append(i)
                     ids.append(sid)
             if idxs:
-                vals = tensor[cp.asarray(idxs), self._STDP_TYPE_INDEX].get().tolist()
+                rows = self._gpu_buffers.rows(prop_idx, cp.asarray(idxs))
+                vals = rows[:, self._STDP_TYPE_INDEX].get().tolist()
                 out = dict(zip(ids, vals))
         else:
             rank = MPI.COMM_WORLD.Get_rank()
@@ -772,7 +774,13 @@ class NeuromorphicModel(Model):
         for sid, value in id2value.items():
             idx = local_agent_map.get(sid)
             if idx is not None:
-                data[idx][self._STDP_TYPE_INDEX] = float(value)
+                # Read-modify-write the row: a column stored as a padded array hands
+                # out a copy, so an element write through the alias would be lost
+                # (and on a list column shared between synapses it would have
+                # changed every synapse holding that row object).
+                row = list(data[idx])
+                row[self._STDP_TYPE_INDEX] = float(value)
+                data[idx] = row
                 touched = True
 
         # _generate_agent_data_tensors() hands out references to these same
@@ -860,7 +868,7 @@ class NeuromorphicModel(Model):
                     breed_name, config_name, overrides, lr_breed, lr_config)
 
                 data["input_spikes_tensor"][idx] = [-1.0, 0.0]
-                data["synapse_delay_reg"][idx] = [0] * int(hp[self._SYNAPTIC_DELAY_INDEX])
+                data["synapse_delay_reg"][idx] = []          # no kernel reads the register
                 data["internal_states"][idx] = is_state
                 data["learning_internal_states"][idx] = ils
                 if not retain_parameters:
@@ -1003,15 +1011,25 @@ class NeuromorphicModel(Model):
         # single_exp_synapse carries 1 internal state, a lif_soma 3), the tensor width is
         # the column max, and kernels write up to their own state width. A narrower
         # shared row would shrink the tensor into unchecked out-of-bounds device writes.
-        w_is = max(map(len, data["internal_states"]))
-        w_lis = max(map(len, data["learning_internal_states"])) if \
-            data["learning_internal_states"] else 0
-        # Slice-assign, do not rebind. Model.setup() caches
-        # __rank_local_agent_data_tensors as references to these very list objects
-        # (_generate_agent_data_tensors returns dict.values()), so replacing the dict
-        # entry would leave the GPU build reading the old column.
-        data["internal_states_buffer"][:] = [[[0.0] * w_is]] * n_local
-        data["learning_internal_states_buffer"][:] = [[[0.0] * w_lis]] * n_local
+        def _max_len(col):
+            if hasattr(col, "max_length"):          # ArrayColumn: no per-row walk
+                return col.max_length()
+            return max(map(len, col)) if col else 0
+
+        def _fill(col, row):
+            # Write in place, do not rebind. Model.setup() caches
+            # __rank_local_agent_data_tensors as references to these very column
+            # objects (_generate_agent_data_tensors returns dict.values()), so
+            # replacing the dict entry would leave the GPU build reading the old column.
+            if hasattr(col, "fill_rows"):           # ArrayColumn: one broadcast write
+                col.fill_rows(row)
+            else:
+                col[:] = [row] * n_local            # one shared list object per row
+
+        w_is = _max_len(data["internal_states"])
+        w_lis = _max_len(data["learning_internal_states"])
+        _fill(data["internal_states_buffer"], [[0.0] * w_is])
+        _fill(data["learning_internal_states_buffer"], [[0.0] * w_lis])
 
     def simulate(
         self, ticks: int, update_data_ticks: int = 1  # , num_cpu_proc: int = 4
@@ -1204,8 +1222,10 @@ class NeuromorphicModel(Model):
         for k, v in overrides.get("learning_internal_states", {}).items():
             default_learning_internal_states[ils_keys.index(k)] = float(v)
 
-        synaptic_delay = int(hyperparameters[self._SYNAPTIC_DELAY_INDEX])
-        delay_reg = [0 for _ in range(synaptic_delay)]
+        # `synapse_delay_reg` is registered (positional kernel argument 12 stays in place)
+        # but carries no payload: no built-in or duplicate kernel indexes it, and a
+        # 12.5 M-synapse network paid 50 MB on the GPU for the zeros.
+        delay_reg = []
         synapse_id = self.create_agent_of_breed(
             breed=self._synapse_breeds[breed],
             agent_id=agent_id,
@@ -1327,8 +1347,7 @@ class NeuromorphicModel(Model):
         for k, v in overrides.get("learning_internal_states", {}).items():
             ils[ils_keys.index(k)] = float(v)
 
-        synaptic_delay = int(hp[self._SYNAPTIC_DELAY_INDEX])
-        delay_reg = [0 for _ in range(synaptic_delay)]
+        delay_reg = []                    # see create_synapse: registered, no payload
 
         return {
             'hyperparameters': hp,
@@ -1850,36 +1869,79 @@ class NeuromorphicModel(Model):
                 synapse_breed, synapse_config, overrides,
                 learning_rule, learning_rule_config)
             combo_props.append(props)
-        inverse = inverse.tolist()
 
-        def _syn_col(prop_name):
-            # One shared object per distinct override combo; if the property does
-            # not vary across combos (common — only 'hyperparameters'/delay do),
-            # collapse to a single shared object for all M synapses.
-            vals = [cp[prop_name] for cp in combo_props]
-            if not vals:
-                return []
-            if all(v == vals[0] for v in vals):
-                return [vals[0]] * M
-            return [vals[inv] for inv in inverse]
+        inverse = np.asarray(inverse, dtype=np.intp).ravel()
+        n_combo = len(combo_props)
+
+        def _padded_column(soma_row, syn_rows):
+            """(values, lengths) for N soma rows then M synapse rows, as one NaN-padded
+            float32 array -- the layout the GPU tensor has anyway. `syn_rows` holds one
+            row per distinct override combo; `inverse` picks each synapse's combo.
+            Handing the framework an array (not a list of M Python rows) is what lets
+            the first tick upload the column in a single copy."""
+            soma_row = [float(x) for x in soma_row]
+            syn_rows = [[float(x) for x in r] for r in syn_rows]
+            w = max([len(soma_row)] + [len(r) for r in syn_rows])
+            values = np.full((N + M, w), np.nan, dtype=np.float32)
+            lengths = np.empty(N + M, dtype=np.int32)
+            if N:
+                values[:N, :len(soma_row)] = soma_row
+                lengths[:N] = len(soma_row)
+            if M:
+                table = np.full((max(n_combo, 1), w), np.nan, dtype=np.float32)
+                tlen = np.zeros(max(n_combo, 1), dtype=np.int32)
+                for k, r in enumerate(syn_rows):
+                    table[k, :len(r)] = r
+                    tlen[k] = len(r)
+                values[N:] = table[inverse]
+                lengths[N:] = tlen[inverse]
+            return values, lengths
+
+        def _combo_rows(prop_name):
+            return [cp[prop_name] for cp in combo_props]
+
+        def _indexed_column(soma_row, syn_rows):
+            """IndexedColumn: table = [soma row, one row per override combo], codes per
+            agent. Parameters are per type, so the framework can keep them on the device
+            as this table + codes when no kernel writes them (see SAGESim interning)."""
+            soma_row = [float(x) for x in soma_row]
+            syn_rows = [[float(x) for x in r] for r in syn_rows]
+            rows = [soma_row] + syn_rows
+            w = max(len(r) for r in rows)
+            table = np.full((len(rows), w), np.nan, dtype=np.float32)
+            lengths = np.empty(len(rows), dtype=np.int32)
+            for k, r in enumerate(rows):
+                table[k, :len(r)] = r
+                lengths[k] = len(r)
+            codes = np.concatenate([np.zeros(N, dtype=np.int32),
+                                    (inverse + 1).astype(np.int32)]) if M else np.zeros(N, dtype=np.int32)
+            return IndexedColumn(table, codes, lengths)
 
         # Full columns (length N + M): soma rows then synapse rows. Only properties
         # that either group sets to a non-default value need an explicit column;
         # anything else build_from_local_columns fills with its registered default.
         property_columns = {
-            "hyperparameters": [hp_soma] * N + _syn_col("hyperparameters"),
-            "internal_states": [is_soma] * N + _syn_col("internal_states"),
-            "output_spikes_tensor":
-                [[0.0, 0.0]] * N + [default["output_spikes_tensor"]] * M,
-            "learning_hyperparameters":
-                [default["learning_hyperparameters"]] * N + _syn_col("learning_hyperparameters"),
-            "learning_internal_states":
-                [default["learning_internal_states"]] * N + _syn_col("learning_internal_states"),
-            "synapse_delay_reg":
-                [default["synapse_delay_reg"]] * N + _syn_col("synapse_delay_reg"),
-            "input_spikes_tensor":
-                [default["input_spikes_tensor"]] * N + _syn_col("input_spikes_tensor"),
+            "hyperparameters": _indexed_column(hp_soma, _combo_rows("hyperparameters")),
+            "internal_states": _padded_column(is_soma, _combo_rows("internal_states")),
+            "output_spikes_tensor": _padded_column(
+                [0.0, 0.0], [default["output_spikes_tensor"]] * n_combo),
+            "learning_hyperparameters": _indexed_column(
+                default["learning_hyperparameters"], _combo_rows("learning_hyperparameters")),
+            "learning_internal_states": _padded_column(
+                default["learning_internal_states"], _combo_rows("learning_internal_states")),
+            "synapse_delay_reg": _padded_column(
+                default["synapse_delay_reg"], _combo_rows("synapse_delay_reg")),
+            "input_spikes_tensor": _padded_column(
+                default["input_spikes_tensor"], _combo_rows("input_spikes_tensor")),
         }
+        # History buffers: one write-only slot per agent while tracking is off
+        # (_share_history_buffers re-fills them); tracking on grows them per row.
+        for buf_name, src in (("internal_states_buffer", "internal_states"),
+                              ("learning_internal_states_buffer", "learning_internal_states")):
+            w = int(property_columns[src][1].max()) if N + M else 0
+            # lengths 0: reads back as [] (the registered default) until setup() fills it
+            property_columns[buf_name] = (np.zeros((N + M, 1, w), dtype=np.float32),
+                                          np.zeros(N + M, dtype=np.int32))
 
         _load_timings['property_columns'] = time.time() - _t
         _t = time.time()
@@ -2225,7 +2287,12 @@ class NeuromorphicModel(Model):
         in_idx = self._agent_factory._property_name_2_index["input_spikes_tensor"]
         return {
             'extra_kernel_params': ['spike_record', 'spike_record_count', 'spike_mask',
+                                    'n_spike_slots',
                                     'ev_offsets', 'ev_syn', 'ev_val', 'n_ev_offsets'],
+            # The delivery code below writes this property; the framework's write
+            # analysis cannot see generated code, and a property any kernel writes must
+            # never be interned into a shared table.
+            'writes_properties': ['input_spikes_tensor'],
             # Deliver this tick's external input events: all threads stride over
             # ev_syn[ev_offsets[t]:ev_offsets[t+1]] and stamp [tick, value] into the
             # target synapse rows. Every thread reads the same offsets, so the branch
@@ -2248,8 +2315,11 @@ class NeuromorphicModel(Model):
                         f'_sv = a{prop_idx}[_real_idx][thread_local_tick % 2]',
                         'if _sv > 0.0 and spike_mask[_real_idx] > 0.0:',
                         '\t_slot = jit.atomic_add(spike_record_count, 0, 1)',
-                        '\tspike_record[_slot * 2] = agent_ids[_real_idx]',
-                        '\tspike_record[_slot * 2 + 1] = float(thread_local_tick)',
+                        # never write past the record; the host reads the count and
+                        # reports an overflow instead of corrupting device memory
+                        '\tif _slot < int(n_spike_slots):',
+                        '\t\tspike_record[_slot * 2] = agent_ids[_real_idx]',
+                        '\t\tspike_record[_slot * 2 + 1] = float(thread_local_tick)',
                     ],
                     True,  # once_per_breed
                     0,     # only_priority — only emit for soma priority
@@ -2259,9 +2329,13 @@ class NeuromorphicModel(Model):
 
     def _prepare_kernel_extras(self, num_local_agents, sync_ticks):
         import cupy as cp
-        if self._spike_record_gpu is None:
-            max_slots = max(10000, num_local_agents * sync_ticks // 100)
+        # Size the record for THIS launch (1 % of agents firing per tick on average, at
+        # least 10k spikes); grow when a longer launch needs more. Overflow is caught by
+        # the guard in the recording code and reported by _process_kernel_extras.
+        max_slots = max(10000, num_local_agents * sync_ticks // 100)
+        if self._spike_record_gpu is None or self._spike_record_gpu.size < max_slots * 2:
             self._spike_record_gpu = cp.full(max_slots * 2, cp.nan, dtype=cp.float32)
+        if self._spike_record_count_gpu is None:
             self._spike_record_count_gpu = cp.zeros(1, dtype=cp.int32)
         self._spike_record_count_gpu[0] = 0
         # Build spike mask: 1.0 for target somas, 0.0 for others
@@ -2290,10 +2364,17 @@ class NeuromorphicModel(Model):
         self._input_next_tick = self.tick + sync_ticks
         ev_offsets, ev_syn, ev_val = self._input_events_gpu
         return (self._spike_record_gpu, self._spike_record_count_gpu, self._spike_mask_gpu,
+                cp.int32(self._spike_record_gpu.size // 2),
                 ev_offsets, ev_syn, ev_val, cp.int32(ev_offsets.size))
 
     def _process_kernel_extras(self):
         count = int(self._spike_record_count_gpu[0].get())
+        capacity = self._spike_record_gpu.size // 2
+        if count > capacity:
+            raise RuntimeError(
+                f"spike record overflow: {count:,} spikes in one simulate() call but room for "
+                f"{capacity:,} (sized as max(10000, agents * ticks / 100)). Call simulate() "
+                f"in shorter pieces or record fewer somas (set_recorded_somas).")
         if count > 0:
             self._recorded_spikes.extend(
                 self._spike_record_gpu[:count * 2].get().tolist()

@@ -23,6 +23,40 @@ def exp_pair_wise_stdp_memristive(
     learning_internal_states_buffer,
 ):
     t_current = int(tick)
+    pre_trace  = learning_internal_states[agent_index][0]
+    post_trace = learning_internal_states[agent_index][1]
+    dW         = learning_internal_states[agent_index][2]
+
+    # =========================
+    # ---- Connectivity -------
+    # =========================
+    pre_soma_index  = locations[agent_index][0]
+    post_soma_index = locations[agent_index][1]
+
+    pre_spike = get_soma_spike(
+        tick, agent_index, dt, I_bias,
+        agent_ids, pre_soma_index,
+        t_current, input_spikes_tensor,
+        output_spikes_tensor
+    )
+
+    post_spike = get_soma_spike(
+        tick, agent_index, dt, I_bias,
+        agent_ids, post_soma_index,
+        t_current, input_spikes_tensor,
+        output_spikes_tensor
+    )
+
+    # Idle fast path: with no pre or post spike and all traces (and the last dW)
+    # exactly zero, every value this rule writes would be rewritten unchanged, so
+    # return before reading the parameter rows. The history buffer is skipped only
+    # while tracking is off (single write-only slot); traces reach exact zero only
+    # by float32 underflow, so this is bit-for-bit the same as stepping.
+    tracking = len(learning_internal_states_buffer[agent_index]) > 1
+    if (pre_spike == 0.0 and post_spike == 0.0 and pre_trace == 0.0 and post_trace == 0.0
+            and dW == 0.0 and not tracking):
+        return
+
     # =========================
     # ---- Synapse Params -----
     # =========================
@@ -61,29 +95,6 @@ def exp_pair_wise_stdp_memristive(
     # =========================
     # ---- Internal States ----
     # =========================
-    pre_trace  = learning_internal_states[agent_index][0]
-    post_trace = learning_internal_states[agent_index][1]
-    dW         = learning_internal_states[agent_index][2]
-
-    # =========================
-    # ---- Connectivity -------
-    # =========================
-    pre_soma_index  = locations[agent_index][0]
-    post_soma_index = locations[agent_index][1]
-
-    pre_spike = get_soma_spike(
-        tick, agent_index, dt, I_bias,
-        agent_ids, pre_soma_index,
-        t_current, input_spikes_tensor,
-        output_spikes_tensor
-    )
-
-    post_spike = get_soma_spike(
-        tick, agent_index, dt, I_bias,
-        agent_ids, post_soma_index,
-        t_current, input_spikes_tensor,
-        output_spikes_tensor
-    )
 
     # =========================
     # ---- STDP ---------------

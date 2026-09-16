@@ -61,6 +61,12 @@ def _record_model(params):
     return m
 
 
+def _f32(v):
+    if isinstance(v, list):
+        return [_f32(x) for x in v]
+    return float(np.float32(v)) if isinstance(v, (float, int, np.floating, np.integer)) else v
+
+
 def _assert_same_build(test, mr, mc):
     afr = mr._agent_factory._property_name_2_agent_data_tensor
     afc = mc._agent_factory._property_name_2_agent_data_tensor
@@ -77,7 +83,10 @@ def _assert_same_build(test, mr, mc):
         for i, (x, y) in enumerate(zip(a, b)):
             xl = list(x) if isinstance(x, (list, tuple, np.ndarray)) else x
             yl = list(y) if isinstance(y, (list, tuple, np.ndarray)) else y
-            test.assertEqual(xl, yl, f"{prop}[{i}] (agent {ids_r[i]}) differs")
+            # The columnar loader holds its columns as float32 arrays (the device's
+            # precision, half the host memory); the record path keeps Python floats.
+            # Compare at float32, which is what every kernel ever saw from either.
+            test.assertEqual(_f32(xl), _f32(yl), f"{prop}[{i}] (agent {ids_r[i]}) differs")
 
     rec_off, rec_val = build_csr_from_ragged(afr["locations"])
     test.assertTrue(np.array_equal(

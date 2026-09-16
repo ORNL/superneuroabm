@@ -136,6 +136,10 @@ class TestLoadFromAdjacency(unittest.TestCase):
         synapse S (owned by rank 0) via ghost exchange.
         """
         comm, rank, size = _get_mpi()
+        if size not in (1, 2):
+            # Skip rather than let the helper raise, so a rank sweep
+            # (scripts/run_mpi_tests.sh) is not blocked by a fixture limit.
+            self.skipTest(f"fixture supports 1 or 2 ranks, got {size}")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Every rank builds the file set deterministically (no shared FS race on
@@ -154,8 +158,11 @@ class TestLoadFromAdjacency(unittest.TestCase):
 
             got = model.get_spike_times(B)          # collective getter, owner-agnostic
 
+        # The reference model's setup()/simulate() contain MPI barriers, so EVERY rank
+        # must build it (calling it on rank 0 alone deadlocks rank 0 against ranks
+        # that have already finished); only rank 0 asserts.
+        expected = _reference_spike_times()
         if rank == 0:
-            expected = _reference_spike_times()
             self.assertEqual(
                 sorted(got), sorted(expected),
                 f"size={size}: B spike train {sorted(got)} != reference "

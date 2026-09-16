@@ -10,6 +10,14 @@ from cupyx import jit
 from superneuroabm.step_functions.synapse.util import get_soma_spike
 from sagesim.utils import get_neighbor_data_from_tensor
 
+# Flush-to-zero floor for the synaptic current. 0.0 (default) = exact dynamics. A
+# positive value (e.g. 1e-7 * typical weight) snaps a decaying tail to exactly 0 once
+# |I| is below it, so an idle synapse reaches the fast path below in a few time
+# constants instead of the ~150-900 ticks float32 needs to underflow. This is a
+# modelling choice with a bounded effect; set it BEFORE model.setup():
+#     superneuroabm.step_functions.synapse.single_exp.I_FLOOR = 1e-7
+I_FLOOR = 0.0
+
 
 @jit.rawkernel(device="cuda")
 def synapse_single_exp_step_func(
@@ -32,18 +40,9 @@ def synapse_single_exp_step_func(
 ):
     t_current = int(tick)
 
-    weight = synapse_params[agent_index][0]
-    synaptic_delay = synapse_params[agent_index][1]
-    scale = synapse_params[agent_index][2]
-    tau_fall = synapse_params[agent_index][3]
-    tau_rise = synapse_params[agent_index][4]
-
     # locations[agent_index] = [pre_soma_index, post_soma_index]
     # SAGESim has already converted agent IDs to local indices
-    pre_soma_index, post_soma_index = (
-        locations[agent_index][0],
-        locations[agent_index][1],
-    )
+    pre_soma_index = locations[agent_index][0]
 
     spike = get_soma_spike(
         tick,
@@ -59,7 +58,21 @@ def synapse_single_exp_step_func(
 
     I_synapse = internal_states[agent_index][0]
 
+    # Idle fast path. With no incoming spike and no current, every value this synapse
+    # owns would be rewritten unchanged, so return before reading the parameter row.
+    # The history buffer is skipped only while tracking is off (its single slot is
+    # write-only); with tracking on the buffer must record this tick.
+    tracking = len(internal_states_buffer[agent_index]) > 1
+    if spike == 0.0 and I_synapse == 0.0 and not tracking:
+        return
+
+    weight = synapse_params[agent_index][0]
+    scale = synapse_params[agent_index][2]
+    tau_fall = synapse_params[agent_index][3]
+
     I_synapse = I_synapse * (1 - dt / tau_fall) + spike * scale * weight
+    if I_synapse < I_FLOOR and I_synapse > -I_FLOOR:
+        I_synapse = 0.0
 
     internal_states[agent_index][0] = I_synapse
 
