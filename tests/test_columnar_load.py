@@ -56,15 +56,23 @@ VARIANTS = {
 def _record_model(params):
     rec = brunel_partition(output_format="records", **params)
     m = NeuromorphicModel(enable_internal_states_tracking=False)
-    m._build_post_owned(rec["somas"], rec["synapses"], rec.get("remote_ranks", {}),
-                        "lif_soma", "config_0", "single_exp_synapse", "config_0")
+    m.load_post_owned(rec)
     return m
 
 
-def _f32(v):
-    if isinstance(v, list):
-        return [_f32(x) for x in v]
-    return float(np.float32(v)) if isinstance(v, (float, int, np.floating, np.integer)) else v
+def _csr_of(model):
+    """(offsets, values) for a model, from whichever representation it holds.
+
+    Both builders now hand SAGESim a prebuilt CSR, so `locations` is empty and the
+    neighbour lists live in the space. The ragged fallback covers a model built by
+    create_soma/create_synapse, which still keeps per-agent lists.
+    """
+    space = model.get_space()
+    off = getattr(space, "_prebuilt_csr_offsets", None)
+    if off is not None:
+        return np.asarray(off), np.asarray(space._prebuilt_csr_values)
+    locs = model._agent_factory._property_name_2_agent_data_tensor["locations"]
+    return build_csr_from_ragged(locs)
 
 
 def _assert_same_build(test, mr, mc):
@@ -83,16 +91,15 @@ def _assert_same_build(test, mr, mc):
         for i, (x, y) in enumerate(zip(a, b)):
             xl = list(x) if isinstance(x, (list, tuple, np.ndarray)) else x
             yl = list(y) if isinstance(y, (list, tuple, np.ndarray)) else y
-            # The columnar loader holds its columns as float32 arrays (the device's
-            # precision, half the host memory); the record path keeps Python floats.
-            # Compare at float32, which is what every kernel ever saw from either.
-            test.assertEqual(_f32(xl), _f32(yl), f"{prop}[{i}] (agent {ids_r[i]}) differs")
+            # Compared EXACTLY. Both builders store float32 now, so the downcast this
+            # assertion used to need on the record side is gone -- a parity test that
+            # needs a fudge factor is not quite a parity test.
+            test.assertEqual(xl, yl, f"{prop}[{i}] (agent {ids_r[i]}) differs")
 
-    rec_off, rec_val = build_csr_from_ragged(afr["locations"])
-    test.assertTrue(np.array_equal(
-        rec_off, np.asarray(mc.get_space()._prebuilt_csr_offsets)), "CSR offsets differ")
-    test.assertTrue(np.array_equal(
-        rec_val, np.asarray(mc.get_space()._prebuilt_csr_values)), "CSR values differ")
+    rec_off, rec_val = _csr_of(mr)
+    col_off, col_val = _csr_of(mc)
+    test.assertTrue(np.array_equal(rec_off, col_off), "CSR offsets differ")
+    test.assertTrue(np.array_equal(rec_val, col_val), "CSR values differ")
 
     # Remote (ghost) ranks match.
     def _remote(m):
@@ -110,7 +117,7 @@ class TestColumnarLoad(unittest.TestCase):
                 p = {**BASE, **params}
                 mr = _record_model(p)
                 mc = NeuromorphicModel(enable_internal_states_tracking=False)
-                mc._build_post_owned_columnar(brunel_partition(output_format="columns", **p))
+                mc.load_post_owned(brunel_partition(output_format="columns", **p))
                 _assert_same_build(self, mr, mc)
 
                 # Input synapses (external, pre == -1) exposed vectorized.
@@ -160,6 +167,61 @@ class TestColumnarLoad(unittest.TestCase):
 
         self.assertEqual(rec_spikes, col_spikes,
                          "columnar-loaded network fired differently from the record path")
+
+
+class TestAutapseKeepsBothSlots(unittest.TestCase):
+    """A synapse onto its own pre-soma must keep BOTH positional slots.
+
+    A synapse's neighbour row is positional: slot 0 = pre (read every tick for the
+    incoming spike), slot 1 = post (read by STDP). The record path used to route its
+    adjacency through space.bulk_connect, which dedups in ordered mode, so an autapse
+    (pre == post) came out as [pre] -- slot 1 silently deleted -- while the columnar
+    path emitted [pre, post]. The two builders produced different networks for the same
+    input, and nothing caught it because brunel_partition resamples autapses away.
+    """
+
+    def test_create_from_lists_keeps_pre_and_post(self):
+        A, S = 0, 1
+        m = NeuromorphicModel(enable_internal_states_tracking=False)
+        m.create_from_lists(somas=[{"id": A}], synapses=[{"id": S, "pre": A, "post": A}])
+
+        off, val = _csr_of(m)
+        row = m._agent_factory._rank2agentid2agentidx[0][S]
+        self.assertEqual(list(val[off[row]:off[row + 1]]), [A, A],
+                         "autapse lost its post slot; slot 1 is read by STDP")
+
+    def test_record_and_columnar_agree_on_an_autapse(self):
+        A, S = 0, 1
+        somas = [{"id": A}]
+        synapses = [{"id": S, "pre": A, "post": A}]
+
+        m_rec = NeuromorphicModel(enable_internal_states_tracking=False)
+        m_rec.create_from_lists(somas=somas, synapses=synapses)
+
+        arrays = {
+            "schema": np.asarray("columnar_post_owned_v1"),
+            "soma_ids": np.array([A], dtype=np.int64),
+            "soma_breed": np.asarray("lif_soma"),
+            "soma_config": np.asarray("config_0"),
+            "synapse_ids": np.array([S], dtype=np.int64),
+            "pre": np.array([A], dtype=np.int64),
+            "post": np.array([A], dtype=np.int64),
+            "synapse_breed": np.asarray("single_exp_synapse"),
+            "synapse_config": np.asarray("config_0"),
+            "learning_rule": np.asarray(""),
+            "learning_rule_config": np.asarray("default"),
+            "syn_hp_keys": np.asarray([], dtype=object),
+            "syn_hp_vals": np.zeros((1, 0), dtype=np.float64),
+            "remote_ids": np.empty(0, np.int64),
+            "remote_rank_of": np.empty(0, np.int64),
+        }
+        m_col = NeuromorphicModel(enable_internal_states_tracking=False)
+        m_col.load_post_owned(arrays)
+
+        rec_off, rec_val = _csr_of(m_rec)
+        col_off, col_val = _csr_of(m_col)
+        self.assertTrue(np.array_equal(rec_off, col_off), "CSR offsets differ")
+        self.assertTrue(np.array_equal(rec_val, col_val), "CSR values differ")
 
 
 if __name__ == "__main__":

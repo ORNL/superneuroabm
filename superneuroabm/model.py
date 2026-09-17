@@ -2,7 +2,8 @@
 Model class for building an SNN
 """
 
-from collections import defaultdict
+from collections import defaultdict, namedtuple
+from collections.abc import Mapping
 from typing import Dict, List, Set
 from pathlib import Path
 
@@ -20,6 +21,56 @@ from superneuroabm.step_functions.soma.hg_lif import hg_lif_soma_step_func
 from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
 from superneuroabm.step_functions.synapse.weighted_synapse import weighted_synapse_step_func
 from superneuroabm.util import load_component_configurations
+
+
+#: What an agent IS, as far as its initial property values are concerned. Two agents with
+#: the same Combo get byte-identical property rows, so the model stores one row per combo
+#: and one int32 code per agent instead of one row per agent. A model where every agent
+#: differs degrades to one combo per agent, which is what the per-agent dicts cost today.
+Combo = namedtuple(
+    "Combo",
+    "component_class breed config learning_rule learning_rule_config overrides_key",
+)
+
+
+#: What every reader produces and the one builder consumes. Deliberately holds no
+#: per-agent Python objects: ids and codes are arrays, and the combo table lives on the
+#: model (the reader interns into it). ``nbr_values`` are GLOBAL agent ids, -1 allowed as
+#: the external-input sentinel.
+BuildSpec = namedtuple(
+    "BuildSpec", "agent_ids combo_codes nbr_offsets nbr_values remote_ranks")
+
+
+class _ComboField(Mapping):
+    """Read-only ``agent_id -> field`` view over the model's combo store.
+
+    Replaces the ``agentid2config`` / ``agentid2overrides`` / ``agentid2learning_rule``
+    dicts. Those were three entries per agent; this is one int32 code per agent plus a
+    table with one row per DISTINCT agent description. Kept as a Mapping so existing
+    readers (``superneuroabm/util.py:93``, user code) are unchanged.
+    """
+
+    __slots__ = ("_model", "_get")
+
+    def __init__(self, model, get):
+        self._model = model
+        self._get = get
+
+    def __getitem__(self, agent_id):
+        combo = self._model._combo_of(agent_id)
+        if combo is None:
+            raise KeyError(agent_id)
+        return self._get(combo)
+
+    def __iter__(self):
+        return iter(self._model._combo_agent_ids())
+
+    def __len__(self):
+        return sum(1 for _ in self._model._combo_agent_ids())
+
+    def __repr__(self):
+        return f"{type(self).__name__}({dict(self)!r})"
+
 import importlib.util
 import sys
 from mpi4py import MPI
@@ -118,7 +169,7 @@ class NeuromorphicModel(Model):
         self.register_global_property("I_bias", 0)     # No bias current
 
         # Load and hold configurations (needed before property dicts are built)
-        self.agentid2config = {}
+        self.agentid2config = _ComboField(self, lambda c: c.config)
         if user_config is not None:
             self._component_configurations = load_component_configurations(user_config)
         else:
@@ -129,8 +180,19 @@ class NeuromorphicModel(Model):
         # Separate learning rule configs before building property dicts
         self._learning_rule_configurations = self._component_configurations.pop("learning_rule", {})
 
-        # Track which learning rule each synapse uses: agent_id -> (rule_breed, rule_config) or None
-        self.agentid2learning_rule = {}
+        # What each agent IS: one int32 code per agent into a table of DISTINCT agent
+        # descriptions. `agentid2config` / `agentid2overrides` / `agentid2learning_rule`
+        # are read-only Mapping views over this (see _ComboField), so existing readers
+        # are unchanged while the storage stops being three dict entries per agent.
+        self._combo_table = []          # list[Combo]
+        self._combo_index = {}          # Combo -> code, build-time interning
+        self._agentid2combo = {}        # agent_id -> code, for create_soma/create_synapse
+        self._combo_codes = None        # int32[n_local] by LOCAL ROW, for bulk builds
+        self._overrides_cache = {}      # overrides_key -> rebuilt dict
+        self._combo_reset_cache = {}    # code -> property rows to reset to
+        self.agentid2learning_rule = _ComboField(
+            self, lambda c: (c.learning_rule, c.learning_rule_config)
+            if c.learning_rule is not None else None)
 
         # Soma properties: (default_value, neighbor_visible)
         # neighbor_visible=True means the property is sent to neighbors during MPI sync
@@ -171,8 +233,12 @@ class NeuromorphicModel(Model):
             "internal_states_buffer": ([], False),
             "learning_internal_states_buffer": ([], False),  # learning states buffer
         }
-        self._synapse_ids = set()
-        self._soma_ids = set()
+        # Backing stores for the _soma_ids / _synapse_ids properties. Incremental
+        # creation adds to them directly; a bulk build leaves them None so the sets are
+        # materialised from the combo codes only if something actually asks, which a
+        # 12.5M-synapse run never does (it reads _num_synapses / _input_synapse_ids).
+        self._synapse_ids_set = set()
+        self._soma_ids_set = set()
 
         # Store property definitions for use by registration API
         self._soma_properties = soma_properties
@@ -214,7 +280,8 @@ class NeuromorphicModel(Model):
         self._saved_stdp_type = {}       # synapse_id -> stdp_type saved while disabled
 
         self._soma_outgoing_synapses = defaultdict(set)  # soma_id -> set(synapse_ids)
-        self.agentid2overrides = {}  # agent_id -> overrides dict
+        self.agentid2overrides = _ComboField(
+            self, lambda c: NeuromorphicModel._overrides_from_key(c.overrides_key))
 
         self._breed_names = list(self._agent_factory._breeds.keys())
 
@@ -232,17 +299,186 @@ class NeuromorphicModel(Model):
         # combined. Set True by either loader.
         self._built_from_file = False
 
+    # ------------------------------------------------------------------
+    # Combo store: what each agent IS, without a dict entry per agent
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _overrides_key(overrides) -> tuple:
+        """Hashable, value-normalised form of an overrides dict.
+
+        Values are coerced with ``float`` because the config path already does
+        (``_get_soma_properties``), so ``"1e-3"`` and ``"1E-3"`` and ``0.001`` describe
+        the same agent. Interning on the raw value would split combos the model treats
+        as identical -- Cora's overrides carry exactly those string spellings.
+        """
+        if not overrides:
+            return ()
+        return tuple(sorted(
+            (prop, tuple(sorted((k, float(v)) for k, v in d.items())))
+            for prop, d in overrides.items() if d
+        ))
+
+    @staticmethod
+    def _overrides_from_key(key) -> dict:
+        """Inverse of _overrides_key: rebuild the grouped overrides dict."""
+        return {prop: dict(kvs) for prop, kvs in key}
+
+    def _intern_combo(self, component_class, breed, config,
+                      learning_rule=None, learning_rule_config=None, overrides=None) -> int:
+        """Return the code for this agent description, adding it to the table if new."""
+        combo = Combo(component_class, breed, config, learning_rule,
+                      learning_rule_config, self._overrides_key(overrides))
+        code = self._combo_index.get(combo)
+        if code is None:
+            code = len(self._combo_table)
+            self._combo_index[combo] = code
+            self._combo_table.append(combo)
+        return code
+
+    @property
+    def _local_rank(self) -> int:
+        """This rank, cached. The combo accessors are called per agent in hot loops
+        (_reset_agents alone makes one call per agent), and MPI.COMM_WORLD.Get_rank()
+        inside a try/except is far too expensive to pay 35k times per reset."""
+        rank = getattr(self, "_local_rank_cached", None)
+        if rank is None:
+            try:
+                rank = MPI.COMM_WORLD.Get_rank()
+            except Exception:
+                rank = 0
+            self._local_rank_cached = rank
+        return rank
+
+    def _combo_code_of(self, agent_id: int):
+        """Combo code for an agent, or None if it is not locally known.
+
+        Two backings: a dict for incrementally created agents (create_soma /
+        create_synapse assign local rows in call order and accept explicit ids, so a
+        row-indexed array would need care there for no benefit), and a row-indexed
+        int32 array for bulk builds, where a dict would be the per-agent structure this
+        store exists to avoid.
+        """
+        code = self._agentid2combo.get(agent_id)
+        if code is not None:
+            return code
+        codes = self._combo_codes
+        if codes is None:
+            return None
+        idx = self._agent_factory._rank2agentid2agentidx.get(
+            self._local_rank, {}).get(agent_id)
+        if idx is None or idx >= len(codes):
+            return None
+        return int(codes[idx])
+
+    def _combo_of(self, agent_id: int):
+        code = self._combo_code_of(agent_id)
+        return self._combo_table[code] if code is not None else None
+
+    def _combo_agent_ids(self):
+        """Every locally known agent id that has a combo. Used only by the views."""
+        yield from self._agentid2combo
+        if self._combo_codes is not None:
+            local = self._agent_factory._rank2agentid2agentidx.get(self._local_rank, {})
+            n = len(self._combo_codes)
+            for aid, idx in local.items():
+                if idx < n and aid not in self._agentid2combo:
+                    yield aid
+
+    def _ids_of_class(self, component_class: str) -> set:
+        """Local agent ids of one component class, derived from the combo codes."""
+        codes = self._combo_codes
+        ids = getattr(self, "_agent_ids", None)
+        if codes is None or ids is None:
+            return set()
+        wanted = np.array([c.component_class == component_class
+                           for c in self._combo_table], dtype=bool)
+        return {int(a) for a in np.asarray(ids)[wanted[codes]]}
+
+    @property
+    def _soma_ids(self) -> set:
+        if self._soma_ids_set is None:
+            self._soma_ids_set = self._ids_of_class("soma")
+        return self._soma_ids_set
+
+    @property
+    def _synapse_ids(self) -> set:
+        """Every local synapse id.
+
+        Materialised on demand rather than at build time: at 12.5M synapses this set is
+        the kind of per-agent structure the columnar path exists to avoid, and the
+        callers that matter at that scale read _num_synapses / _input_synapse_ids
+        instead. Building it eagerly is what the columnar loader used to skip entirely,
+        which silently emptied reset() and eval() -- lazy keeps it correct AND cheap.
+        """
+        if self._synapse_ids_set is None:
+            self._synapse_ids_set = self._ids_of_class("synapse")
+        return self._synapse_ids_set
+
+    def _component_class_of(self, agent_id: int):
+        combo = self._combo_of(agent_id)
+        if combo is not None:
+            return combo.component_class
+        # Incremental models built before the combo store existed, and any agent the
+        # store does not know: fall back to the id sets.
+        return "soma" if agent_id in self._soma_ids else "synapse"
+
+    def _config_of(self, agent_id: int):
+        combo = self._combo_of(agent_id)
+        return combo.config if combo is not None else None
+
+    def _overrides_of(self, agent_id: int) -> dict:
+        combo = self._combo_of(agent_id)
+        return self._overrides_of_combo(combo) if combo is not None else {}
+
+    def _overrides_of_combo(self, combo) -> dict:
+        """Rebuilt once per COMBO, not once per agent that shares it."""
+        cache = self._overrides_cache
+        got = cache.get(combo.overrides_key)
+        if got is None:
+            got = self._overrides_from_key(combo.overrides_key)
+            cache[combo.overrides_key] = got
+        return got
+
+    def _learning_rule_of(self, agent_id: int):
+        combo = self._combo_of(agent_id)
+        if combo is None or combo.learning_rule is None:
+            return None
+        return (combo.learning_rule, combo.learning_rule_config)
+
     def get_agent_config_name(self, agent_id: int) -> Dict[str, any]:
         """
         Returns the configuration of the agent with the given ID.
         """
-        return self.agentid2config.get(agent_id, None)
+        return self._config_of(agent_id)
 
     def get_agent_breed(self, agent_id: int) -> str:
         """
         Returns the breed of the agent with the given ID.
         """
         return self._breed_names[self._agent_factory._agent2breed[agent_id]]
+
+    def get_neighbors(self, agent_id: int) -> List[int]:
+        """The agent's neighbour list, in its stored slot order (global agent ids).
+
+        For a synapse that is positional -- ``[pre]`` or ``[pre, post]``, with ``-1`` in
+        slot 0 for an external input. For a soma it is its incoming synapse ids.
+
+        Reads the CSR the builder produced rather than the ``locations`` property,
+        because a bulk build hands SAGESim a prebuilt CSR and ``set_prebuilt_csr``
+        clears the per-agent lists. It also survives ``reset()``, which frees the GPU
+        buffers that the property route depends on.
+        """
+        offsets = getattr(self, "_nbr_offsets", None)
+        if offsets is None:
+            # Incrementally built (create_soma / create_synapse): the space still holds
+            # real per-agent lists.
+            return list(self.get_space().get_location(agent_id))
+        row = self._agent_factory._rank2agentid2agentidx.get(
+            self._local_rank, {}).get(agent_id)
+        if row is None:
+            raise KeyError(f"agent {agent_id} is not local to this rank")
+        return [int(v) for v in self._nbr_values[offsets[row]:offsets[row + 1]]]
 
     def get_synapse_connectivity(self, synapse_id: int) -> List[int]:
         """
@@ -252,9 +488,7 @@ class NeuromorphicModel(Model):
         Note: This returns the ordered locations [pre_soma_id, post_soma_id].
         These are agent IDs, not local indices.
         """
-        return self.get_agent_property_value(
-            id=synapse_id, property_name="locations"
-        )
+        return self.get_neighbors(synapse_id)
 
     def get_soma_outgoing_synapses(self, soma_id: int) -> Set[int]:
         """
@@ -267,9 +501,9 @@ class NeuromorphicModel(Model):
         """
         Returns the configuration overrides for the agent with the given ID.
         """
-        component_class = "soma" if agent_id in self._soma_ids else "synapse"
+        component_class = self._component_class_of(agent_id)
         breed_name = self.get_agent_breed(agent_id)
-        config_name = self.get_agent_config_name(agent_id)
+        config_name = self._config_of(agent_id)
         config = self._component_configurations[component_class][breed_name][
             config_name
         ]
@@ -288,7 +522,7 @@ class NeuromorphicModel(Model):
             }
 
         # For synapses, also diff learning rule properties
-        lr_info = self.agentid2learning_rule.get(agent_id)
+        lr_info = self._learning_rule_of(agent_id)
         if lr_info is not None:
             lr_breed, lr_config_name = lr_info
             lr_config = self._learning_rule_configurations[lr_breed][lr_config_name]
@@ -362,9 +596,9 @@ class NeuromorphicModel(Model):
         derived here rather than hard-coded. Reuses _config_list_cache.
         """
         if property_name == "hyperparameters":
-            component_class = "soma" if agent_id in self._soma_ids else "synapse"
+            component_class = self._component_class_of(agent_id)
             breed_name = self.get_agent_breed(agent_id)
-            config_name = self.get_agent_config_name(agent_id)
+            config_name = self._config_of(agent_id)
             cache_key = (component_class, breed_name, config_name)
             if cache_key not in self._config_list_cache:
                 config = self._component_configurations[component_class][breed_name][config_name]
@@ -376,7 +610,7 @@ class NeuromorphicModel(Model):
                 )
             keys = self._config_list_cache[cache_key][0]
         elif property_name == "learning_hyperparameters":
-            lr_info = self.agentid2learning_rule.get(agent_id)
+            lr_info = self._learning_rule_of(agent_id)
             if lr_info is None:
                 # Synapses created without a rule carry the synthetic single-element
                 # vector create_synapse() gives them.
@@ -446,7 +680,13 @@ class NeuromorphicModel(Model):
                     f"Unknown {property_name} {unknown} for agent {agent_id}; "
                     f"valid names are {list(index)}."
                 )
-            values = self.get_agent_property_value(id=agent_id, property_name=property_name)
+            # Copy before mutating: for a list column get_agent_property_value returns
+            # the STORED row object (sagesim/agent.py:221-224), so writing into it in
+            # place edits the column directly -- and once rows are shared between agents
+            # that carry identical parameters, it would edit every agent sharing the row.
+            # _write_stdp_type copies for the same reason.
+            values = list(self.get_agent_property_value(
+                id=agent_id, property_name=property_name))
             for name, value in updates.items():
                 values[index[name]] = float(value)
             self.set_agent_property_value(agent_id, property_name, values)
@@ -710,11 +950,25 @@ class NeuromorphicModel(Model):
         Synapses created without one already default to stdp_type = -1, so they
         must be left alone: writing the sentinel would be a no-op but restoring
         it later could resurrect a rule that was never there.
+
+        Derived from the combo store rather than from _synapse_ids, which a bulk build
+        never fills -- that is why eval()/train() were silent no-ops on a columnar-loaded
+        model. Only combos that carry a rule are scanned, so a network with no plasticity
+        costs one pass over the (tiny) combo table and nothing per synapse.
         """
-        return [
-            sid for sid in self._synapse_ids
-            if self.agentid2learning_rule.get(sid) is not None
-        ]
+        plastic = {code for code, combo in enumerate(self._combo_table)
+                   if combo.component_class == "synapse" and combo.learning_rule is not None}
+        if not plastic:
+            return []
+        out = [sid for sid, code in self._agentid2combo.items() if code in plastic]
+        codes = self._combo_codes
+        if codes is not None:
+            local = self._agent_factory._rank2agentid2agentidx.get(self._local_rank, {})
+            n = len(codes)
+            out.extend(sid for sid, idx in local.items()
+                       if idx < n and int(codes[idx]) in plastic
+                       and sid not in self._agentid2combo)
+        return out
 
     def _buffers_live(self) -> bool:
         return (
@@ -766,22 +1020,41 @@ class NeuromorphicModel(Model):
         if not id2value:
             return
         af = self._agent_factory
-        rank = MPI.COMM_WORLD.Get_rank()
-        local_agent_map = af._rank2agentid2agentidx.get(rank, {})
+        local_agent_map = af._rank2agentid2agentidx.get(self._local_rank, {})
         data = af._property_name_2_agent_data_tensor["learning_hyperparameters"]
 
-        touched = False
+        rows, vals = [], []
         for sid, value in id2value.items():
             idx = local_agent_map.get(sid)
             if idx is not None:
-                # Read-modify-write the row: a column stored as a padded array hands
-                # out a copy, so an element write through the alias would be lost
-                # (and on a list column shared between synapses it would have
-                # changed every synapse holding that row object).
-                row = list(data[idx])
-                row[self._STDP_TYPE_INDEX] = float(value)
-                data[idx] = row
-                touched = True
+                rows.append(idx)
+                vals.append(float(value))
+        touched = bool(rows)
+        rows = np.asarray(rows, dtype=np.int64)
+        vals = np.asarray(vals, dtype=np.float64)
+
+        # Read-modify-write the row: a column stored as a padded array hands out a copy,
+        # so an element write through the alias would be lost (and on a list column
+        # shared between synapses it would have changed every synapse holding that row).
+        if isinstance(data, IndexedColumn) and touched:
+            # Group by (current table code, new value). Every synapse in a group starts
+            # from the same row and wants the same stdp_type, so the group has ONE
+            # result -- interned once and scattered, instead of hashing a row per
+            # synapse. eval() over a large plastic population is a single group.
+            codes = np.asarray(data.codes)[rows]
+            groups = []
+            for code, value in {(int(c), float(v)) for c, v in zip(codes, vals)}:
+                sel = rows[(codes == code) & (vals == value)]
+                row = list(data[int(sel[0])])
+                row[self._STDP_TYPE_INDEX] = value
+                groups.append((row, sel))          # snapshot before mutating any codes
+            for row, sel in groups:
+                self._scatter_row(data, row, sel)
+        else:
+            for i, value in zip(rows.tolist(), vals.tolist()):
+                row = list(data[i])
+                row[self._STDP_TYPE_INDEX] = value
+                data[i] = row
 
         # _generate_agent_data_tensors() hands out references to these same
         # lists, so the write above is already visible model-side; no
@@ -840,50 +1113,98 @@ class NeuromorphicModel(Model):
         self.set_learning_enabled(True)
         return self
 
+    @staticmethod
+    def _scatter_row(col, row, rows) -> None:
+        """Write one row into many positions of a column, without a per-row write.
+
+        Every agent sharing a combo resets to the SAME values, so this is a scatter, not
+        a loop. Each column representation gets its cheapest form, using public API only:
+
+        * IndexedColumn -- intern the row once (one hash lookup), then assign its code to
+          every position. ``codes`` is a live view, so this is one numpy scatter. Writing
+          row by row instead would re-hash the row for every agent, which is what made
+          reset 4x slower than it needed to be once the builder started emitting
+          IndexedColumns.
+        * ArrayColumn -- one fancy-index assignment into ``values`` plus ``lengths``.
+        * plain list -- one SHARED row object per position, which keeps the column
+          eligible for SAGESim's identity-based interning.
+        """
+        if not len(rows):
+            return
+        rows = np.asarray(rows)
+        if isinstance(col, IndexedColumn):
+            col[int(rows[0])] = row                  # interns; one hash lookup
+            col.codes[rows] = col.codes[int(rows[0])]
+            return
+        values = getattr(col, "values", None)
+        if values is not None and not col.degraded and values.ndim == 2:
+            n = len(row)
+            if n > values.shape[1]:
+                col[int(rows[0])] = row              # let the column grow, then retry
+                values = col.values
+            values[np.ix_(rows, np.arange(len(row)))] = row
+            if values.shape[1] > len(row):
+                values[rows, len(row):] = col.fill
+            col.lengths[rows] = len(row)
+            return
+        shared = list(row)
+        for i in rows.tolist():
+            col[int(i)] = shared
+
+    def _combo_reset_rows(self, code: int) -> dict:
+        """Property rows a combo resets to. Computed once per combo, then cached."""
+        cached = self._combo_reset_cache.get(code)
+        if cached is None:
+            cached = self._combo_property_rows(self._combo_table[code])
+            self._combo_reset_cache[code] = cached
+        return cached
+
     def _reset_agents(self, retain_parameters: bool = True) -> None:
         """
         Internal method to reset all soma and synapse agents to their initial states.
         Recomputes defaults from (breed, config, overrides) via config cache.
 
+        Grouped by combo, not by agent: every agent with the same description resets to
+        byte-identical rows, so the rows are computed once per combo and scattered. The
+        old per-agent form recomputed the same handful of results N times and wrote them
+        N times -- 205k column writes on a 35k-agent network.
+
         :param retain_parameters: If True, keeps current learned parameters.
             If False, resets parameters to their default values.
         """
         af = self._agent_factory
-        try:
-            rank = MPI.COMM_WORLD.Get_rank()
-        except Exception:
-            rank = 0
-        local_agent_map = af._rank2agentid2agentidx.get(rank, {})
+        local_agent_map = af._rank2agentid2agentidx.get(self._local_rank, {})
+        if not local_agent_map:
+            return
         data = af._property_name_2_agent_data_tensor
+        n_local = len(local_agent_map)
 
-        for agent_id, idx in local_agent_map.items():
-            if agent_id in self._synapse_ids:
-                # Reset synapse — recompute defaults from config
-                breed_name = self._breed_names[af._agent2breed[agent_id]]
-                config_name = self.agentid2config[agent_id]
-                overrides = self.agentid2overrides.get(agent_id, {})
-                lr = self.agentid2learning_rule.get(agent_id)
-                lr_breed, lr_config = lr if lr else (None, "default")
-                _, hp, lhp, is_state, ils = self._get_synapse_properties(
-                    breed_name, config_name, overrides, lr_breed, lr_config)
+        # Combo code per LOCAL ROW. Bulk builds already hold exactly this array;
+        # incrementally created models are assembled from the id map.
+        codes = self._combo_codes
+        if codes is not None and len(codes) >= n_local:
+            row_codes = np.asarray(codes[:n_local], dtype=np.int64)
+        else:
+            row_codes = np.full(n_local, -1, dtype=np.int64)
+            by_id = self._agentid2combo
+            for aid, idx in local_agent_map.items():
+                c = by_id.get(aid)
+                if c is not None and idx < n_local:
+                    row_codes[idx] = c
 
-                data["input_spikes_tensor"][idx] = [-1.0, 0.0]
-                data["synapse_delay_reg"][idx] = []          # no kernel reads the register
-                data["internal_states"][idx] = is_state
-                data["learning_internal_states"][idx] = ils
-                if not retain_parameters:
-                    data["hyperparameters"][idx] = hp
-                    data["learning_hyperparameters"][idx] = lhp
-            elif agent_id in self._soma_ids:
-                # Reset soma — recompute defaults from config
-                breed_name = self._breed_names[af._agent2breed[agent_id]]
-                config_name = self.agentid2config[agent_id]
-                overrides = self.agentid2overrides.get(agent_id, {})
-                hp, is_state = self._get_soma_properties(breed_name, config_name, overrides)
-                data["internal_states"][idx] = is_state
-                data["output_spikes_tensor"][idx] = [0.0, 0.0]
-                if not retain_parameters:
-                    data["hyperparameters"][idx] = hp
+        # Parameters are kept on retain_parameters=True; state always resets.
+        keep = {"hyperparameters", "learning_hyperparameters"} if retain_parameters else set()
+
+        for code in np.unique(row_codes):
+            code = int(code)
+            if code < 0:
+                continue          # agent with no combo: nothing known to reset it to
+            rows = np.flatnonzero(row_codes == code)
+            for prop_name, row in self._combo_reset_rows(code).items():
+                if prop_name in keep:
+                    continue
+                self._scatter_row(data[prop_name], row, rows)
+
 
     def reset(self, retain_parameters: bool = True) -> None:
         """
@@ -892,9 +1213,15 @@ class NeuromorphicModel(Model):
         :param retain_parameters: If True, keeps current learned parameters
             (e.g. STDP weights). If False, resets parameters to defaults.
         """
-        # Step 1: SAGESim syncs GPU->AgentFactory, regenerates tensors, frees GPU
-        # After this, AgentFactory has all GPU-learned values (including weights)
-        super().reset()
+        # Step 1: SAGESim syncs GPU->AgentFactory, regenerates tensors, frees GPU.
+        # Only the columns we are KEEPING need to come back off the device. Everything
+        # else is about to be restored from the combo table by _reset_agents, so reading
+        # it back first is a device->host copy of data we immediately overwrite. The
+        # learned values live in hyperparameters (weight) and learning_hyperparameters;
+        # the STDP traces in learning_internal_states are state, not parameters, and are
+        # meant to be cleared.
+        super().reset(sync_properties=("hyperparameters", "learning_hyperparameters")
+                      if retain_parameters else ())
 
         # Step 2: Reset agent states on AgentFactory (keeps hyperparameters if retain=True)
         self._reset_agents(retain_parameters=retain_parameters)
@@ -1130,8 +1457,8 @@ class NeuromorphicModel(Model):
         )
 
         self._soma_ids.add(soma_id)
-        self.agentid2config[soma_id] = config_name
-        self.agentid2overrides[soma_id] = overrides
+        self._agentid2combo[soma_id] = self._intern_combo(
+            "soma", breed, config_name, overrides=overrides)
         return soma_id
 
     def create_synapse(
@@ -1238,9 +1565,11 @@ class NeuromorphicModel(Model):
         )
 
         self._synapse_ids.add(synapse_id)
-        self.agentid2config[synapse_id] = config_name
-        self.agentid2overrides[synapse_id] = overrides
-        self.agentid2learning_rule[synapse_id] = (learning_rule, learning_rule_config) if learning_rule else None
+        self._agentid2combo[synapse_id] = self._intern_combo(
+            "synapse", breed, config_name,
+            learning_rule=learning_rule if learning_rule else None,
+            learning_rule_config=learning_rule_config if learning_rule else None,
+            overrides=overrides)
 
         network_space: NetworkSpace = self.get_space()
 
@@ -1522,88 +1851,6 @@ class NeuromorphicModel(Model):
                 f"also prevents calling {who}() more than once.)"
             )
 
-    def _build_from_partition(self, somas, synapses, remote_agent_ranks,
-                              soma_breed, soma_config, synapse_breed, synapse_config,
-                              soma_adjacency, synapse_adjacency) -> None:
-        """Shared whole-model build for both loaders.
-
-        Computes property tensors and bookkeeping identically for every soma and
-        synapse; the ONLY variable part is how each agent's neighbor list is
-        populated, supplied as two callbacks:
-          soma_adjacency(adjacency, soma_entry)    -> mutate adjacency for a soma
-          synapse_adjacency(adjacency, syn_entry)  -> mutate adjacency for a synapse
-        The soma loop runs fully before the synapse loop, so self._soma_ids is
-        complete (all local somas known) by the time synapse_adjacency runs.
-
-        The finished adjacency dict (each local agent -> its ordered neighbor
-        list) is handed to SAGESim's dict fast-path. Keys are always local
-        agents; a remote neighbor only ever appears as a value (named in
-        remote_agent_ranks).
-        """
-        from collections import defaultdict
-
-        agents = []
-        adjacency = defaultdict(list)
-
-        # --- Create every soma listed for this rank ---
-        for soma in somas:
-            breed = soma.get('breed', soma_breed)
-            config = soma.get('config', soma_config)
-            overrides = soma.get('overrides', {})
-            hp, is_state = self._get_soma_properties(breed, config, overrides)
-
-            agents.append({
-                'id': soma['id'],
-                'breed': self._soma_breeds[breed],
-                'properties': {
-                    'hyperparameters': hp,
-                    'internal_states': is_state,
-                    'output_spikes_tensor': [0.0, 0.0],
-                },
-            })
-
-            sid = soma['id']
-            self._soma_ids.add(sid)
-            self.agentid2config[sid] = config
-            self.agentid2overrides[sid] = overrides
-
-            soma_adjacency(adjacency, soma)
-
-        # --- Create every synapse listed for this rank ---
-        for syn in synapses:
-            syn_id = syn['id']
-            breed = syn.get('breed', synapse_breed)
-            config = syn.get('config', synapse_config)
-            overrides = syn.get('overrides', {})
-            learning_rule = syn.get('learning_rule', None)
-            learning_rule_config = syn.get('learning_rule_config', 'default')
-
-            props, hp, lhp, is_state, ils = self._get_synapse_properties(
-                breed, config, overrides, learning_rule, learning_rule_config)
-
-            agents.append({
-                'id': syn_id,
-                'breed': self._synapse_breeds[breed],
-                'properties': props,
-            })
-
-            synapse_adjacency(adjacency, syn)
-
-            # Bookkeeping (only what has real readers: config/overrides feed
-            # reset() property recompute; learning_rule feeds STDP setup).
-            self._synapse_ids.add(syn_id)
-            self.agentid2config[syn_id] = config
-            self.agentid2overrides[syn_id] = overrides
-            self.agentid2learning_rule[syn_id] = (learning_rule, learning_rule_config) if learning_rule else None
-
-        # --- Bulk build via SAGESim ---
-        # Pass the adjacency dict directly (SAGESim's dict fast-path). It is
-        # already-directed adjacency; directed=True is passed to match that and
-        # suppress the "directed ignored for dict" warning. defaultdict -> dict
-        # so isinstance(connections, dict) dispatch stays unambiguous.
-        self.build_from_local_data(agents, dict(adjacency), remote_agent_ranks, directed=True)
-        self._built_from_file = True
-
     def load_post_owned(self, partition_file: str,
                         soma_breed: str = "lif_soma",
                         soma_config: str = "config_0",
@@ -1646,17 +1893,27 @@ class NeuromorphicModel(Model):
         :param synapse_config: Default synapse config name
         """
         self._assert_unbuilt("load_post_owned")
-        # Columnar encoding of the SAME post-owned network: same semantics, an
-        # array file instead of a list-of-dicts. Auto-dispatch on the on-disk
-        # schema so the call site is unchanged apart from the extension.
-        if Path(partition_file).suffix.lower() == '.npz':
-            arrays = self._read_columnar_partition_file(partition_file)
-            self._build_post_owned_columnar(arrays)
-            return
-        data = self._read_partition_file(partition_file)
-        self._build_post_owned(
-            data['somas'], data['synapses'], data['remote_ranks'],
-            soma_breed, soma_config, synapse_breed, synapse_config)
+        # Encoding is a READER detail, not a builder: row-oriented records and columnar
+        # arrays describe the same post-owned network and end at the same _build(spec).
+        # `partition_file` may also be the already-loaded data, so a producer that builds
+        # in memory has a public entry point instead of reaching for a private builder.
+        source = partition_file
+        if isinstance(source, (str, Path)):
+            source = (self._read_columnar_partition_file(source)
+                      if Path(source).suffix.lower() == '.npz'
+                      else self._read_partition_file(source))
+        if 'soma_ids' in source:
+            spec = self._spec_from_post_owned_columns(source)
+        elif 'somas' in source:
+            spec = self._spec_from_post_owned_records(
+                source['somas'], source['synapses'], source.get('remote_ranks', {}),
+                soma_breed, soma_config, synapse_breed, synapse_config)
+        else:
+            raise ValueError(
+                "load_post_owned(): expected a path, a columnar array dict (with "
+                "'soma_ids'), or a record dict (with 'somas'/'synapses'); got keys "
+                f"{sorted(source)[:8]}.")
+        self._build(spec)
 
     def create_from_lists(self, somas: list, synapses: list,
                           soma_breed: str = "lif_soma",
@@ -1706,136 +1963,175 @@ class NeuromorphicModel(Model):
         :param synapse_config: Default synapse config name.
         """
         self._assert_unbuilt("create_from_lists")
-        self._build_post_owned(
+        self._build(self._spec_from_post_owned_records(
             list(somas), list(synapses), {},
-            soma_breed, soma_config, synapse_breed, synapse_config)
+            soma_breed, soma_config, synapse_breed, synapse_config))
 
-    def _build_post_owned(self, somas: list, synapses: list, remote_ranks: dict,
-                          soma_breed: str, soma_config: str,
-                          synapse_breed: str, synapse_config: str) -> None:
-        """Derive post-owned adjacency from pre/post synapse lists, then build.
-
-        Shared core of ``load_post_owned`` (from a file) and ``create_from_lists``
-        (from in-memory lists): synapses are listed by ``pre``/``post`` and each
-        post-soma's incoming-synapse list is DERIVED here as a side effect of the
-        synapse loop. Callers differ only in where the lists come from and whether
-        any neighbor is remote (``remote_ranks``).
-        """
-        # Somas and synapses share one agent id namespace. A collision silently
-        # overwrites an agent and only surfaces later as a GPU device-side assert
-        # on mismatched property widths, so reject it at the boundary.
-        seen = set()
-        dupes = set()
-        for entry in somas:
-            (dupes if entry['id'] in seen else seen).add(entry['id'])
-        for entry in synapses:
-            (dupes if entry['id'] in seen else seen).add(entry['id'])
-        if dupes:
-            listed = sorted(dupes)
-            shown = ", ".join(str(i) for i in listed[:10])
-            if len(listed) > 10:
-                shown += f", ... ({len(listed)} total)"
+    def _combo_breed_index(self, combo) -> int:
+        breeds = self._soma_breeds if combo.component_class == "soma" else self._synapse_breeds
+        if combo.breed not in breeds:
             raise ValueError(
-                "soma and synapse ids share one namespace and must be unique "
-                f"across both lists; duplicate ids: {shown}. Somas typically own "
-                "[0, len(somas)) and synapse ids start at len(somas)."
-            )
+                f"{combo.component_class} breed {combo.breed!r} is not registered; "
+                f"known: {sorted(breeds)}")
+        return breeds[combo.breed]._breedidx
 
-        def soma_adj(adjacency, soma):
-            # Post-owned derives the soma's incoming list as a side effect of the
-            # synapse loop (below), so nothing to do per-soma here.
-            pass
+    def _combo_property_rows(self, combo) -> dict:
+        """Property rows for one combo -- computed k times, not n times."""
+        overrides = self._overrides_from_key(combo.overrides_key)
+        if combo.component_class == "soma":
+            hp, is_state = self._get_soma_properties(combo.breed, combo.config, overrides)
+            return {
+                "hyperparameters": hp,
+                "internal_states": is_state,
+                "output_spikes_tensor": [0.0, 0.0],
+            }
+        props, _hp, _lhp, _is, _ils = self._get_synapse_properties(
+            combo.breed, combo.config, overrides,
+            combo.learning_rule, combo.learning_rule_config or "default")
+        return props
 
-        def synapse_adj(adjacency, syn):
-            # The synapse's own neighbor list, in fixed slot order:
-            #   slot 0 = pre-soma (always read, for the incoming spike),
-            #   slot 1 = post-soma (read for STDP).
-            # For an input synapse (pre == -1), -1 occupies slot 0.
-            pre_id = syn['pre']
-            post_id = syn['post']
-            adjacency[syn['id']] = [pre_id]
-            if post_id != -1:
-                # The post-soma must be local: self._soma_ids is complete by now
-                # (soma loop ran first), so a non-local post is a broken network —
-                # fail loud instead of silently dropping the edge.
-                if post_id not in self._soma_ids:
-                    raise ValueError(
-                        f"synapse {syn['id']} has post-soma {post_id}, which is "
-                        "not a local soma. Every synapse's post-soma must be "
-                        "co-located with the synapse (created in the same build). "
-                        "Use load_from_adjacency() to lift this constraint."
-                    )
-                adjacency[syn['id']].append(post_id)
-                # Post-soma claims its incoming synapse (gather all incoming
-                # synapses into the post-soma's neighbor list).
-                adjacency[post_id].append(syn['id'])
+    def _build(self, spec: "BuildSpec") -> None:
+        """Build the whole local model from a BuildSpec. The only bulk builder.
 
-        self._build_from_partition(
-            somas, synapses, dict(remote_ranks),
-            soma_breed, soma_config, synapse_breed, synapse_config,
-            soma_adj, synapse_adj)
-
-    def _build_post_owned_columnar(self, arrays: dict) -> None:
-        """Build a post-owned model from a columnar array dict (no per-agent objects).
-
-        The array-native twin of ``_build_post_owned``. Where that path iterates
-        50M synapse dicts (each spawning a property dict + neighbor list + dedup
-        set), this path builds the SAGESim property columns and the neighbor CSR
-        with vectorized numpy and shared property templates, then hands them to
-        ``build_from_local_columns``. Result is identical to the record path
-        (same property values, same CSR) at a fraction of the host-RAM footprint.
-
-        Local agent order is [somas..., synapses...] (each group already one
-        breed), so setup's breed sort is a verified no-op and the CSR stays
-        row-aligned. Post-owns semantics are unchanged: every synapse's post-soma
-        must be local (enforced here).
+        Encoding-agnostic by construction: every reader (.pkl records, .npz columns,
+        adjacency records) produces a BuildSpec, and the only thing they differ in is
+        whether the neighbour CSR is *derived* from pre/post or *transcribed* verbatim.
         """
-        import numpy as np
         import time
-
-        _load_timings = {}
+        timings = self._load_timings if isinstance(getattr(self, "_load_timings", None), dict) else {}
         _t = time.time()
 
-        def _scalar(name):
-            return np.asarray(arrays[name]).item()
+        agent_ids = np.ascontiguousarray(spec.agent_ids, dtype=np.int64)
+        codes = np.ascontiguousarray(spec.combo_codes, dtype=np.int32)
+        offsets = np.ascontiguousarray(spec.nbr_offsets, dtype=np.int64)
+        values = np.ascontiguousarray(spec.nbr_values, dtype=np.int64)
+        n = agent_ids.size
 
-        soma_ids = np.ascontiguousarray(arrays['soma_ids'], dtype=np.int64)
-        synapse_ids = np.ascontiguousarray(arrays['synapse_ids'], dtype=np.int64)
-        pre = np.ascontiguousarray(arrays['pre'], dtype=np.int64)
-        post = np.ascontiguousarray(arrays['post'], dtype=np.int64)
-        soma_breed = _scalar('soma_breed')
-        soma_config = _scalar('soma_config')
-        synapse_breed = _scalar('synapse_breed')
-        synapse_config = _scalar('synapse_config')
-        lr_name = _scalar('learning_rule')
-        learning_rule = None if lr_name == '' else lr_name
-        learning_rule_config = _scalar('learning_rule_config')
-        hp_keys = [str(k) for k in np.asarray(arrays['syn_hp_keys'])]
-        hp_vals = np.ascontiguousarray(arrays['syn_hp_vals'], dtype=np.float64)
-        remote_ids = np.asarray(arrays.get('remote_ids', np.empty(0, np.int64)))
-        remote_rank_of = np.asarray(arrays.get('remote_rank_of', np.empty(0, np.int64)))
+        if codes.size != n:
+            raise ValueError(f"combo_codes has {codes.size} entries for {n} agents")
+        if offsets.size != n + 1:
+            raise ValueError(f"nbr_offsets has {offsets.size} entries, expected {n + 1}")
+        if n:
+            uniq, counts = np.unique(agent_ids, return_counts=True)
+            if uniq.size != n:
+                dup = uniq[counts > 1]
+                raise ValueError(
+                    f"duplicate agent id(s) in this partition, e.g. {int(dup[0])} "
+                    f"({dup.size} distinct ids repeat). Soma and synapse ids share one "
+                    "namespace and must be unique.")
 
-        N, M = len(soma_ids), len(synapse_ids)
+        # --- Breed order. build_from_local_columns requires non-decreasing breed
+        # indices, and a prebuilt CSR cannot lean on setup's sort_by_breed (reordering
+        # would desync the separately held CSR -- see AgentFactory._agents_prebreed_sorted).
+        # So sort here, permuting ids, codes and the CSR together. Identity check first:
+        # the common somas-then-synapses layout costs one np.diff. ---
+        combo_breed = np.array(
+            [self._combo_breed_index(c) for c in self._combo_table], dtype=np.int64)
+        breed_indices = combo_breed[codes] if n else np.empty(0, dtype=np.int64)
+        if n and np.any(np.diff(breed_indices) < 0):
+            perm = np.argsort(breed_indices, kind="stable")
+            row_counts = np.diff(offsets)[perm]
+            new_off = np.empty(n + 1, dtype=np.int64)
+            new_off[0] = 0
+            np.cumsum(row_counts, out=new_off[1:])
+            total = int(new_off[-1])
+            gather = (np.repeat(offsets[perm], row_counts)
+                      + (np.arange(total, dtype=np.int64)
+                         - np.repeat(new_off[:-1], row_counts)))
+            values = values[gather]
+            offsets = new_off
+            agent_ids = agent_ids[perm]
+            codes = codes[perm]
+            breed_indices = breed_indices[perm]
 
-        # --- Breeds. Local order is somas-then-synapses; that must be
-        # non-decreasing breed order (build_from_local_columns / sort_by_breed
-        # contract). A general (per-agent, multi-breed) producer would sort the
-        # columns first; the uniform Brunel producer only needs this guard. ---
-        soma_breedidx = self._soma_breeds[soma_breed]._breedidx
-        synapse_breedidx = self._synapse_breeds[synapse_breed]._breedidx
-        if soma_breedidx >= synapse_breedidx:
-            raise RuntimeError(
-                f"columnar loader lays out somas (breed {soma_breedidx}) before "
-                f"synapses (breed {synapse_breedidx}); it requires soma breed to "
-                "sort first. Reorder the breed registration or extend the loader "
-                "to sort columns by breed index.")
-
-        _load_timings['decode_arrays'] = time.time() - _t
+        timings.setdefault("assemble", 0.0)
+        timings["assemble"] += time.time() - _t
         _t = time.time()
 
-        # --- Post-owns constraint + soma-incoming grouping (vectorized).
-        # Every synapse's post must be a local soma (post != -1). Map each post to
-        # its local soma index via searchsorted on the sorted soma ids. ---
+        # --- Property columns: one row per COMBO, one int32 code per agent. A property
+        # a combo does not set falls back to its registered default, which is how somas
+        # get the synapse-only columns and vice versa. ---
+        default = self._agent_factory._property_name_2_defaults
+        combo_rows = [self._combo_property_rows(c) for c in self._combo_table]
+        names = set()
+        for rows in combo_rows:
+            names.update(rows)
+        names -= {"breed", "locations"}
+
+        property_columns = {}
+        for name in sorted(names):
+            rows = [[float(x) for x in r.get(name, default.get(name, []))]
+                    for r in combo_rows]
+            width = max((len(r) for r in rows), default=0)
+            table = np.full((max(len(rows), 1), width), np.nan, dtype=np.float32)
+            lengths = np.zeros(max(len(rows), 1), dtype=np.int32)
+            for k, r in enumerate(rows):
+                if r:
+                    table[k, :len(r)] = r
+                lengths[k] = len(r)
+            property_columns[name] = IndexedColumn(table, codes, lengths)
+
+        # History buffers stay dense (N, 1, w) zero arrays: they are 3-D and write-only,
+        # and setup()'s _share_history_buffers re-fills them. lengths 0 reads back as [].
+        for buf_name, src in (("internal_states_buffer", "internal_states"),
+                              ("learning_internal_states_buffer", "learning_internal_states")):
+            col = property_columns.get(src)
+            w = int(col.lengths.max()) if col is not None and len(col.lengths) else 0
+            property_columns[buf_name] = (np.zeros((n, 1, w), dtype=np.float32),
+                                          np.zeros(n, dtype=np.int32))
+
+        timings["property_columns"] = time.time() - _t
+        _t = time.time()
+
+        self.build_from_local_columns(
+            agent_ids, breed_indices, property_columns,
+            offsets.astype(np.int32), values, spec.remote_ranks)
+
+        # Keep the CSR model-side too. SAGESim's set_prebuilt_csr deliberately CLEARS
+        # space._locations (so a wrong-but-plausible empty neighbour list cannot leak),
+        # which leaves get_location and any `locations` read broken for every bulk-built
+        # model. get_neighbors() reads these instead, and unlike the old route through
+        # get_agent_property_value it keeps working after reset() frees the GPU buffers.
+        self._nbr_offsets = offsets
+        self._nbr_values = values
+
+        # --- Bookkeeping: codes by local row, and the vectorized id views callers use
+        # instead of scanning a 50M-element set. ---
+        self._combo_codes = codes
+        self._agent_ids = agent_ids
+        is_syn = np.array([c.component_class == "synapse" for c in self._combo_table],
+                          dtype=bool)[codes] if n else np.zeros(0, dtype=bool)
+        self._soma_ids_set = None          # materialise lazily, see the properties
+        self._synapse_ids_set = None
+        self._num_synapses = int(is_syn.sum())
+        self._built_from_file = True
+
+        timings["bookkeeping"] = time.time() - _t
+        self._load_timings = timings
+
+    @staticmethod
+    def _post_owned_csr(soma_ids, synapse_ids, pre, post):
+        """Derive the post-owned neighbour CSR. Shared by both post-owned readers.
+
+        Row layout is the agent order [somas..., synapses...]. Soma i's neighbours are
+        its incoming synapse ids (post == i) in synapse-array order; synapse j's are
+        [pre] then [post] when post != -1 (positional slot 0 = pre, 1 = post).
+
+        Enforces the post-owns constraint the loader is named for: every synapse's
+        post-soma must be local, because a post-soma discovers its incoming synapses by
+        scanning the synapses listed in its OWN partition.
+
+        Neighbours are emitted VERBATIM -- no dedup. The record path used to route this
+        through space.bulk_connect, which dedups in ordered mode, so an autapse
+        (pre == post) silently lost positional slot 1 and the two builders produced
+        different networks for the same input.
+        """
+        soma_ids = np.ascontiguousarray(soma_ids, dtype=np.int64)
+        synapse_ids = np.ascontiguousarray(synapse_ids, dtype=np.int64)
+        pre = np.ascontiguousarray(pre, dtype=np.int64)
+        post = np.ascontiguousarray(post, dtype=np.int64)
+        N, M = soma_ids.size, synapse_ids.size
+
         order = np.argsort(soma_ids, kind='stable')
         sorted_soma = soma_ids[order]
         has_post = post >= 0
@@ -1849,107 +2145,8 @@ class NeuromorphicModel(Model):
                 f"synapse {int(bad[0])} post {int(post[has_post & ~found][0])}); "
                 "every synapse's post-soma must be co-located (post-owns). Use "
                 "load_from_adjacency() to lift this constraint.")
-        post_local = order[sp_clipped]  # local soma index (0..N-1) per synapse
+        post_local = order[sp_clipped]
 
-        _load_timings['constraint_check'] = time.time() - _t
-        _t = time.time()
-
-        # --- Property columns via shared templates. Somas are uniform (no
-        # overrides in this producer); synapses dedup on their hyperparameter
-        # override row, so identical synapses share the SAME list objects. ---
-        hp_soma, is_soma = self._get_soma_properties(soma_breed, soma_config, {})
-        default = self._agent_factory._property_name_2_defaults
-
-        unique_ov, inverse = np.unique(hp_vals, axis=0, return_inverse=True) \
-            if M else (np.empty((0, len(hp_keys))), np.empty(0, dtype=np.intp))
-        combo_props = []
-        for row in unique_ov:
-            overrides = {"hyperparameters": {k: float(v) for k, v in zip(hp_keys, row)}}
-            props, _hp, _lhp, _is, _ils = self._get_synapse_properties(
-                synapse_breed, synapse_config, overrides,
-                learning_rule, learning_rule_config)
-            combo_props.append(props)
-
-        inverse = np.asarray(inverse, dtype=np.intp).ravel()
-        n_combo = len(combo_props)
-
-        def _padded_column(soma_row, syn_rows):
-            """(values, lengths) for N soma rows then M synapse rows, as one NaN-padded
-            float32 array -- the layout the GPU tensor has anyway. `syn_rows` holds one
-            row per distinct override combo; `inverse` picks each synapse's combo.
-            Handing the framework an array (not a list of M Python rows) is what lets
-            the first tick upload the column in a single copy."""
-            soma_row = [float(x) for x in soma_row]
-            syn_rows = [[float(x) for x in r] for r in syn_rows]
-            w = max([len(soma_row)] + [len(r) for r in syn_rows])
-            values = np.full((N + M, w), np.nan, dtype=np.float32)
-            lengths = np.empty(N + M, dtype=np.int32)
-            if N:
-                values[:N, :len(soma_row)] = soma_row
-                lengths[:N] = len(soma_row)
-            if M:
-                table = np.full((max(n_combo, 1), w), np.nan, dtype=np.float32)
-                tlen = np.zeros(max(n_combo, 1), dtype=np.int32)
-                for k, r in enumerate(syn_rows):
-                    table[k, :len(r)] = r
-                    tlen[k] = len(r)
-                values[N:] = table[inverse]
-                lengths[N:] = tlen[inverse]
-            return values, lengths
-
-        def _combo_rows(prop_name):
-            return [cp[prop_name] for cp in combo_props]
-
-        def _indexed_column(soma_row, syn_rows):
-            """IndexedColumn: table = [soma row, one row per override combo], codes per
-            agent. Parameters are per type, so the framework can keep them on the device
-            as this table + codes when no kernel writes them (see SAGESim interning)."""
-            soma_row = [float(x) for x in soma_row]
-            syn_rows = [[float(x) for x in r] for r in syn_rows]
-            rows = [soma_row] + syn_rows
-            w = max(len(r) for r in rows)
-            table = np.full((len(rows), w), np.nan, dtype=np.float32)
-            lengths = np.empty(len(rows), dtype=np.int32)
-            for k, r in enumerate(rows):
-                table[k, :len(r)] = r
-                lengths[k] = len(r)
-            codes = np.concatenate([np.zeros(N, dtype=np.int32),
-                                    (inverse + 1).astype(np.int32)]) if M else np.zeros(N, dtype=np.int32)
-            return IndexedColumn(table, codes, lengths)
-
-        # Full columns (length N + M): soma rows then synapse rows. Only properties
-        # that either group sets to a non-default value need an explicit column;
-        # anything else build_from_local_columns fills with its registered default.
-        property_columns = {
-            "hyperparameters": _indexed_column(hp_soma, _combo_rows("hyperparameters")),
-            "internal_states": _padded_column(is_soma, _combo_rows("internal_states")),
-            "output_spikes_tensor": _padded_column(
-                [0.0, 0.0], [default["output_spikes_tensor"]] * n_combo),
-            "learning_hyperparameters": _indexed_column(
-                default["learning_hyperparameters"], _combo_rows("learning_hyperparameters")),
-            "learning_internal_states": _padded_column(
-                default["learning_internal_states"], _combo_rows("learning_internal_states")),
-            "synapse_delay_reg": _padded_column(
-                default["synapse_delay_reg"], _combo_rows("synapse_delay_reg")),
-            "input_spikes_tensor": _padded_column(
-                default["input_spikes_tensor"], _combo_rows("input_spikes_tensor")),
-        }
-        # History buffers: one write-only slot per agent while tracking is off
-        # (_share_history_buffers re-fills them); tracking on grows them per row.
-        for buf_name, src in (("internal_states_buffer", "internal_states"),
-                              ("learning_internal_states_buffer", "learning_internal_states")):
-            w = int(property_columns[src][1].max()) if N + M else 0
-            # lengths 0: reads back as [] (the registered default) until setup() fills it
-            property_columns[buf_name] = (np.zeros((N + M, 1, w), dtype=np.float32),
-                                          np.zeros(N + M, dtype=np.int32))
-
-        _load_timings['property_columns'] = time.time() - _t
-        _t = time.time()
-
-        # --- Neighbor CSR (global ids), vectorized. Row layout matches the agent
-        # order [somas..., synapses...]. Soma i's neighbors = incoming synapse ids
-        # (post==i), in synapse-array order (stable). Synapse j's neighbors =
-        # [pre] then [post] when post != -1 (positional slot 0=pre, 1=post). ---
         counts_soma = np.bincount(post_local[has_post], minlength=N)
         soma_offsets = np.empty(N + 1, dtype=np.int64)
         soma_offsets[0] = 0
@@ -1965,46 +2162,210 @@ class NeuromorphicModel(Model):
         syn_values[syn_offsets[:-1]] = pre
         syn_values[syn_offsets[:-1][has_post] + 1] = post[has_post]
 
-        neighbor_offsets = np.concatenate([
-            soma_offsets, int(soma_offsets[-1]) + syn_offsets[1:]]).astype(np.int32)
-        neighbor_values_ids = np.concatenate([soma_values, syn_values]).astype(np.int64)
+        offsets = np.concatenate([soma_offsets, int(soma_offsets[-1]) + syn_offsets[1:]])
+        values = np.concatenate([soma_values, syn_values]).astype(np.int64)
+        return offsets, values
 
-        _load_timings['neighbor_csr'] = time.time() - _t
+    def _spec_from_post_owned_records(self, somas, synapses, remote_ranks,
+                                      soma_breed, soma_config,
+                                      synapse_breed, synapse_config) -> "BuildSpec":
+        """Row-oriented post-owned records (.pkl, or in-memory lists) -> BuildSpec.
+
+        One Python pass over each list to pull out id / pre / post and intern the combo;
+        everything after it is the same vectorized code the .npz reader runs. That pass
+        is the only per-record work in the design and is irreducible for this encoding --
+        the file IS a list of dicts -- but it is paid once at load, not on every GPU
+        buffer rebuild.
+        """
+        import time
+        timings = {}
         _t = time.time()
 
-        # --- Assemble and hand off ---
-        agent_ids = np.concatenate([soma_ids, synapse_ids])
-        breed_indices = np.concatenate([
-            np.full(N, soma_breedidx, dtype=np.int64),
-            np.full(M, synapse_breedidx, dtype=np.int64)])
-        remote_agent_ranks = {int(i): int(r)
-                              for i, r in zip(remote_ids, remote_rank_of)}
+        n_s, n_y = len(somas), len(synapses)
+        soma_ids = np.empty(n_s, dtype=np.int64)
+        synapse_ids = np.empty(n_y, dtype=np.int64)
+        pre = np.empty(n_y, dtype=np.int64)
+        post = np.empty(n_y, dtype=np.int64)
+        codes = np.empty(n_s + n_y, dtype=np.int32)
 
-        _load_timings['assemble'] = time.time() - _t
+        intern = self._intern_combo
+        for i, soma in enumerate(somas):
+            soma_ids[i] = soma['id']
+            codes[i] = intern("soma",
+                              soma.get('breed') or soma_breed,
+                              soma.get('config') or soma_config,
+                              overrides=soma.get('overrides'))
+        for j, syn in enumerate(synapses):
+            synapse_ids[j] = syn['id']
+            pre[j] = syn['pre']
+            post[j] = syn['post']
+            rule = syn.get('learning_rule') or None
+            codes[n_s + j] = intern(
+                "synapse",
+                syn.get('breed') or synapse_breed,
+                syn.get('config') or synapse_config,
+                learning_rule=rule,
+                learning_rule_config=(syn.get('learning_rule_config') or 'default')
+                if rule else None,
+                overrides=syn.get('overrides'))
+
+        timings['property_columns'] = 0.0
+        timings['records_to_columns'] = time.time() - _t
         _t = time.time()
 
-        self.build_from_local_columns(
-            agent_ids, breed_indices, property_columns,
-            neighbor_offsets, neighbor_values_ids, remote_agent_ranks)
-        _load_timings['build_from_local_columns'] = time.time() - _t
-        _t = time.time()
+        neighbor_offsets, neighbor_values_ids = self._post_owned_csr(
+            soma_ids, synapse_ids, pre, post)
+        timings['neighbor_csr'] = time.time() - _t
 
-        # --- SuperNeuroABM bookkeeping (deliberately minimal). Per-soma config is
-        # cheap (N entries) and kept; per-synapse config/overrides dicts are the
-        # very 50M-entry structures this path exists to avoid, so they are NOT
-        # populated (reset() property-recompute and get_agent_config_diff on a
-        # columnar-loaded synapse are unsupported — the scaling run uses neither).
-        # Input-synapse ids and the synapse count are exposed vectorized so callers
-        # never have to scan a 50M-element id set. ---
-        self._soma_ids = set(int(s) for s in soma_ids)
-        for sid in soma_ids:
-            self.agentid2config[int(sid)] = soma_config
-            self.agentid2overrides[int(sid)] = {}
         self._input_synapse_ids = synapse_ids[pre < 0].astype(np.int64)
-        self._num_synapses = int(M)
-        self._built_from_file = True
-        _load_timings['bookkeeping'] = time.time() - _t
-        self._load_timings = _load_timings
+        self._load_timings = timings
+        return BuildSpec(
+            agent_ids=np.concatenate([soma_ids, synapse_ids]),
+            combo_codes=codes,
+            nbr_offsets=neighbor_offsets,
+            nbr_values=neighbor_values_ids,
+            remote_ranks=dict(remote_ranks or {}),
+        )
+
+    def _spec_from_adjacency_records(self, somas, synapses, remote_ranks,
+                                     soma_breed, soma_config,
+                                     synapse_breed, synapse_config) -> "BuildSpec":
+        """Explicit-neighbour records -> BuildSpec.
+
+        The one thing that genuinely differs from post-owned: the CSR is TRANSCRIBED
+        from each entry's ``neighbors`` list, not derived from pre/post. That is what
+        releases the post-owns constraint -- a post-soma names its incoming synapses
+        explicitly, so one of them may live on another rank.
+
+        Slot order is preserved verbatim and nothing is sorted or deduped: a synapse's
+        list is positional (slot 0 = pre, slot 1 = post), so an autapse legitimately
+        reads [x, x].
+        """
+        import time
+        timings = {}
+        _t = time.time()
+
+        n_s, n_y = len(somas), len(synapses)
+        n = n_s + n_y
+        agent_ids = np.empty(n, dtype=np.int64)
+        codes = np.empty(n, dtype=np.int32)
+        counts = np.empty(n, dtype=np.int64)
+        flat = []
+
+        intern = self._intern_combo
+        for i, soma in enumerate(somas):
+            agent_ids[i] = soma['id']
+            codes[i] = intern("soma",
+                              soma.get('breed') or soma_breed,
+                              soma.get('config') or soma_config,
+                              overrides=soma.get('overrides'))
+            nbrs = soma['neighbors']
+            counts[i] = len(nbrs)
+            flat.extend(nbrs)
+        input_ids = []
+        for j, syn in enumerate(synapses):
+            k = n_s + j
+            agent_ids[k] = syn['id']
+            rule = syn.get('learning_rule') or None
+            codes[k] = intern(
+                "synapse",
+                syn.get('breed') or synapse_breed,
+                syn.get('config') or synapse_config,
+                learning_rule=rule,
+                learning_rule_config=(syn.get('learning_rule_config') or 'default')
+                if rule else None,
+                overrides=syn.get('overrides'))
+            nbrs = syn['neighbors']
+            counts[k] = len(nbrs)
+            flat.extend(nbrs)
+            if nbrs and nbrs[0] == -1:
+                input_ids.append(syn['id'])
+
+        offsets = np.empty(n + 1, dtype=np.int64)
+        offsets[0] = 0
+        np.cumsum(counts, out=offsets[1:])
+        values = np.asarray(flat, dtype=np.int64) if flat else np.empty(0, dtype=np.int64)
+
+        timings['records_to_columns'] = time.time() - _t
+        self._input_synapse_ids = np.asarray(input_ids, dtype=np.int64)
+        self._load_timings = timings
+        return BuildSpec(
+            agent_ids=agent_ids,
+            combo_codes=codes,
+            nbr_offsets=offsets,
+            nbr_values=values,
+            remote_ranks=dict(remote_ranks or {}),
+        )
+
+    def _spec_from_post_owned_columns(self, arrays: dict) -> "BuildSpec":
+        """Columnar (.npz) post-owned arrays -> BuildSpec.
+
+        The producer stores breed / config / learning rule as SCALARS because the
+        network it describes is uniform. Those are read here as one-entry categorical
+        axes -- a scalar is the k = 1 case of a combo table -- so a future producer that
+        varies them per agent needs a new reader, not a new builder. The synapse
+        hyperparameter override matrix is the axis that already varies, and np.unique
+        turns it into combos and codes directly.
+        """
+        import time
+        timings = {}
+        _t = time.time()
+
+        def _scalar(name):
+            return np.asarray(arrays[name]).item()
+
+        soma_ids = np.ascontiguousarray(arrays['soma_ids'], dtype=np.int64)
+        synapse_ids = np.ascontiguousarray(arrays['synapse_ids'], dtype=np.int64)
+        pre = np.ascontiguousarray(arrays['pre'], dtype=np.int64)
+        post = np.ascontiguousarray(arrays['post'], dtype=np.int64)
+        soma_breed = _scalar('soma_breed')
+        soma_config = _scalar('soma_config')
+        synapse_breed = _scalar('synapse_breed')
+        synapse_config = _scalar('synapse_config')
+        lr_name = _scalar('learning_rule')
+        learning_rule = None if lr_name == '' else lr_name
+        learning_rule_config = _scalar('learning_rule_config') if learning_rule else None
+        hp_keys = [str(k) for k in np.asarray(arrays['syn_hp_keys'])]
+        hp_vals = np.ascontiguousarray(arrays['syn_hp_vals'], dtype=np.float64)
+        remote_ids = np.asarray(arrays.get('remote_ids', np.empty(0, np.int64)))
+        remote_rank_of = np.asarray(arrays.get('remote_rank_of', np.empty(0, np.int64)))
+
+        N, M = len(soma_ids), len(synapse_ids)
+        timings['decode_arrays'] = time.time() - _t
+        _t = time.time()
+
+        timings['constraint_check'] = 0.0
+
+        # --- Combos: one for the (uniform) somas, one per distinct synapse override row.
+        soma_code = self._intern_combo("soma", soma_breed, soma_config, overrides={})
+        combo_codes = np.empty(N + M, dtype=np.int32)
+        combo_codes[:N] = soma_code
+        if M:
+            distinct, inverse = np.unique(hp_vals, axis=0, return_inverse=True)
+            syn_codes = np.array([
+                self._intern_combo(
+                    "synapse", synapse_breed, synapse_config,
+                    learning_rule=learning_rule,
+                    learning_rule_config=learning_rule_config,
+                    overrides={"hyperparameters": dict(zip(hp_keys, row))})
+                for row in distinct
+            ], dtype=np.int32)
+            combo_codes[N:] = syn_codes[np.asarray(inverse, dtype=np.intp).ravel()]
+
+        neighbor_offsets, neighbor_values_ids = self._post_owned_csr(
+            soma_ids, synapse_ids, pre, post)
+
+        timings['neighbor_csr'] = time.time() - _t
+
+        self._input_synapse_ids = synapse_ids[pre < 0].astype(np.int64)
+        self._load_timings = timings
+        return BuildSpec(
+            agent_ids=np.concatenate([soma_ids, synapse_ids]),
+            combo_codes=combo_codes,
+            nbr_offsets=neighbor_offsets,
+            nbr_values=neighbor_values_ids,
+            remote_ranks={int(i): int(r) for i, r in zip(remote_ids, remote_rank_of)},
+        )
 
     def load_from_adjacency(self, partition_file: str,
                             soma_breed: str = "lif_soma",
@@ -2079,19 +2440,26 @@ class NeuromorphicModel(Model):
                     "neighbor in remote_ranks."
                 )
 
-        # Read each agent's neighbor list verbatim. POSITIONAL slot order is
-        # load-bearing for synapses (slot0=pre, slot1=post) — copy as-is, never
-        # sort/dedup. Soma lists are order-free but copied the same way.
-        def soma_adj(adjacency, soma):
-            adjacency[soma['id']] = list(soma['neighbors'])
+        # A soma's incoming list is a set of distinct synapses; a repeat would double
+        # count that synapse's current every tick. The old path routed through
+        # space.bulk_connect, which deduped in ordered mode and so silently REPAIRED a
+        # producer bug -- while contradicting this loader's documented "never
+        # sorted/deduped" promise. Now the list is transcribed verbatim, so say so.
+        # Synapses are exempt: their [pre, post] is positional and an autapse is [x, x].
+        for soma in data['somas']:
+            nbrs = soma['neighbors']
+            if len(set(nbrs)) != len(nbrs):
+                dupes = sorted({n for n in nbrs if list(nbrs).count(n) > 1})
+                raise ValueError(
+                    f"load_from_adjacency(): soma {soma['id']} lists incoming "
+                    f"synapse(s) {dupes} more than once. A repeated incoming synapse "
+                    "would have its current counted twice every tick.")
 
-        def synapse_adj(adjacency, syn):
-            adjacency[syn['id']] = list(syn['neighbors'])
-
-        self._build_from_partition(
+        # Neighbour lists are read VERBATIM: positional slot order is load-bearing for
+        # synapses (slot 0 = pre, slot 1 = post) and soma lists are copied the same way.
+        self._build(self._spec_from_adjacency_records(
             data['somas'], data['synapses'], dict(remote_ids),
-            soma_breed, soma_config, synapse_breed, synapse_config,
-            soma_adj, synapse_adj)
+            soma_breed, soma_config, synapse_breed, synapse_config))
 
     # ------------------------------------------------------------------
     # External input spikes: a tick-major event list delivered by the kernel

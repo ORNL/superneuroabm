@@ -160,6 +160,33 @@ class TestNamedParameterAPI(unittest.TestCase):
         self.assertAlmostEqual(hp["vthr"], -33.0, places=4)
         self.assertAlmostEqual(hp["tref"], 0.0, places=6)
 
+    def test_write_does_not_leak_through_a_shared_row(self):
+        """A write must copy the row before mutating it.
+
+        get_agent_property_value returns the STORED row object for a list column
+        (sagesim/agent.py:221-224). Agents whose parameters are identical may share one
+        row object -- the bulk builders intern them that way -- so mutating in place
+        would edit every agent sharing it. Here two somas are made to share a row
+        explicitly; writing to one must not move the other.
+        """
+        af = self.model._agent_factory
+        rank_map = af._rank2agentid2agentidx[0]
+        col = af._property_name_2_agent_data_tensor["hyperparameters"]
+        i_pre, i_post = rank_map[self.soma_pre], rank_map[self.soma_post]
+
+        shared = list(col[i_pre])
+        col[i_pre] = shared
+        col[i_post] = shared          # both somas now reference ONE row object
+
+        before = self.model.get_hyperparameters(self.soma_post)["vthr"]
+        self.model.set_hyperparameters(self.soma_pre, {"vthr": -12.5})
+
+        self.assertEqual(self.model.get_hyperparameters(self.soma_pre)["vthr"], -12.5)
+        self.assertEqual(
+            self.model.get_hyperparameters(self.soma_post)["vthr"], before,
+            "writing soma_pre leaked through the shared row into soma_post",
+        )
+
 
 class TestKernelPinnedOrderValidation(unittest.TestCase):
     """weight/synaptic_delay/stdp_type positions are read directly by device code.
@@ -206,7 +233,6 @@ class TestKernelPinnedOrderValidation(unittest.TestCase):
                 config_name="config_0", learning_rule="exp_pair_wise_stdp",
             )
         self.assertIn("stdp_type", str(ctx.exception))
-
 
 if __name__ == "__main__":
     unittest.main()
