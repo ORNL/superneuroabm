@@ -16,71 +16,61 @@ def izh_soma_step_func(
     agent_ids,
     breeds,
     locations,
-    neuron_params,  # k, vth, C, a, b,
+    neuron_params,  # [a, b, c, d, v_peak, I_in]
     learning_params,
-    internal_states,  # v, u
+    internal_states,  # [v, u]
     learning_internal_states,
-    synapse_history,  # Synapse delay
-    input_spikes_tensor,  # input spikes
+    synapse_history,
+    input_spikes_tensor,
     output_spikes_tensor,
     internal_states_buffer,
     learning_internal_states_buffer,
 ):
-    synapse_indices = locations[agent_index]  # network location is defined by neighbors
-
+    synapse_indices = locations[agent_index]
     I_synapse = 0.0
 
     # synapse_indices now contains pre-computed local indices (converted in SAGESim)
     # No linear search needed!
     for i in range(len(synapse_indices)):
         synapse_index = int(synapse_indices[i])
-        if synapse_index >= 0 and not cp.isnan(synapse_indices[i]):
+        if synapse_index >= 0:
             I_synapse += internal_states[synapse_index][0]
 
-    # Get the current time step value:
+    p = neuron_params[agent_index]
+    a = p[0]
+    b = p[1]
+    c = p[2]
+    d = p[3]
+    v_peak = p[4]
+    I_in = p[5]
+
+    v_old = internal_states[agent_index][0]
+    u_old = internal_states[agent_index][1]
+    dt_ms = dt * 1.0e3
+    I_total = I_synapse + I_bias + I_in
+
+    # Canonical Izhikevich model in mV/ms and canonical current units:
+    # dv/dt = 0.04*v^2 + 5*v + 140 - u + I
+    # du/dt = a*(b*v - u)
+    v_new = v_old + dt_ms * (
+        0.04 * v_old * v_old + 5.0 * v_old + 140.0 - u_old + I_total
+    )
+    # Figure1.m updates u after v and uses the new v in this Euler step.
+    u_new = u_old + dt_ms * a * (b * v_new - u_old)
+
+    s = 0
+    # The published figure1.m source uses the strict test V > 30.
+    if v_new > v_peak:
+        s = 1
+        v_new = c
+        u_new = u_new + d
+
+    internal_states[agent_index][0] = v_new
+    internal_states[agent_index][1] = u_new
+
     t_current = int(tick)
-    # dt and I_bias received directly as scalar params
-
-    # NOTE: neuron_params would need to be as long as the max number of params in any spiking neuron model
-    k = neuron_params[agent_index][0]
-    vthr = neuron_params[agent_index][1]
-    C = neuron_params[agent_index][2]
-    a = neuron_params[agent_index][3]
-    b = neuron_params[agent_index][4]
-    vpeak = neuron_params[agent_index][5]
-    vrest = neuron_params[agent_index][6]
-    d = neuron_params[agent_index][7]
-    vreset = neuron_params[agent_index][8]
-    I_in = neuron_params[agent_index][9]
-
-    # From https://www.izhikevich.org/publications/spikes.htm
-    # v' = 0.04v^2 + 5v + 140 -u + I
-    # u' = a(bv - u)
-    # if v=30mV: v = c, u = u + d, spike
-
-    # dv = (k*(internal_states[my_idx]-vrest)*(internal_states[my_idx]-vthr)-u[my_idx]+I) / C
-    # internal_states: [0] - v, [1] - u
-    # NOTE: size of internal_states would need to be set as the maximum possible state variables of any spiking neuron
-
-    v = internal_states[agent_index][0]
-    u = internal_states[agent_index][1]
-
-    dv = (k * (v - vrest) * (v - vthr) - u + I_synapse + I_bias + I_in) / C
-    v = v + dt * dv * 1e3
-
-    u += dt * 1e3 * (a * (b * (v - vrest) - u))
-    # s = 1 * (v >= vthr)  # output spike
-    s = 1 * (v >= vpeak)  # output spike
-    u = u + d * s  # If spiked, update recovery variable
-    v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
-
-    internal_states[agent_index][0] = v
-    internal_states[agent_index][1] = u
-
     output_spikes_tensor[agent_index][t_current % 2] = s
 
-    # Safe buffer indexing: use modulo to prevent out-of-bounds access
-    # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always
     buffer_idx = t_current % len(internal_states_buffer[agent_index])
-    internal_states_buffer[agent_index][buffer_idx][0] = v
-    internal_states_buffer[agent_index][buffer_idx][1] = u
+    internal_states_buffer[agent_index][buffer_idx][0] = v_new
+    internal_states_buffer[agent_index][buffer_idx][1] = u_new

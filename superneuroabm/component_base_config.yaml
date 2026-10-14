@@ -16,37 +16,208 @@ soma:
         tcount: 0.0  # Time counter
         tlast: 0.0  # Last spike time
   izh_soma:
-    config_0:   #intrinsic bursting
-      hyperparameters:
-        k: 1.2
-        vthr: -45
-        C: 150
-        a: 0.01
-        b: 5
-        vpeak: 50
-        vrest: -75
-        d: 130
-        vreset: -56
-        I_in: 420
-      internal_states:
-        v: -75  # Initial membrane voltage
-        u: 0  # Initial recovery variable
+    # Pass the selected protocol's instantaneous current to I_bias each tick;
+    # I_in is an optional constant offset and is zero in these source examples.
+    # dt_s is the source panel's original Euler step (in seconds).
+    config_0:  # A: tonic spiking
+      hyperparameters: {a: 0.02, b: 0.2, c: -65.0, d: 6.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.5e-4}
+      internal_states: {v: -70.0, u: -14.0}
+      #stimulus: {type: step, start_ms: 10.0, baseline: 0.0, value: 14.0}
+    config_1:  # B: phasic spiking
+      hyperparameters: {a: 0.02, b: 0.25, c: -65.0, d: 6.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.5e-4}
+      internal_states: {v: -64.0, u: -16.64}
+      #stimulus: {type: step, start_ms: 20.0, baseline: 0.0, value: 0.5}
+    config_2:  # C: tonic bursting
+      hyperparameters: {a: 0.02, b: 0.2, c: -50.0, d: 2.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.5e-4}
+      internal_states: {v: -70.0, u: -14.0}
+      #stimulus: {type: step, start_ms: 22.0, baseline: 0.0, value: 15.0}
+    config_3:  # D: phasic bursting
+      hyperparameters: {a: 0.02, b: 0.25, c: -55.0, d: 0.05, v_peak: 30.0, I_in: 0.0, dt_s: 2.0e-4}
+      internal_states: {v: -64.0, u: -16.0}
+      #stimulus: {type: step, start_ms: 20.0, baseline: 0.0, value: 0.6}
+    config_4:  # E: mixed mode
+      hyperparameters: {a: 0.02, b: 0.2, c: -55.0, d: 4.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.5e-4}
+      internal_states: {v: -70.0, u: -14.0}
+      #stimulus: {type: step, start_ms: 16.0, baseline: 0.0, value: 10.0}
+    config_5:  # F: spike-frequency adaptation
+      hyperparameters: {a: 0.01, b: 0.2, c: -65.0, d: 8.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.5e-4}
+      internal_states: {v: -70.0, u: -14.0}
+      #stimulus: {type: step, start_ms: 8.5, baseline: 0.0, value: 30.0}
+    config_6:  # G: class 1 excitability; canonical equation used here
+      hyperparameters: {a: 0.02, b: -0.1, c: -55.0, d: 6.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.5e-4}
+      internal_states: {v: -60.0, u: 6.0}
+      #stimulus: {type: ramp, start_ms: 30.0, baseline: 0.0, slope_per_ms: 0.075}
+    config_7:  # H: class 2 excitability
+      hyperparameters: {a: 0.2, b: 0.26, c: -65.0, d: 0.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.5e-4}
+      internal_states: {v: -64.0, u: -16.64}
+      #stimulus: {type: ramp, start_ms: 30.0, baseline: -0.5, slope_per_ms: 0.015}
+    config_8:  # I: spike latency
+      hyperparameters: {a: 0.02, b: 0.2, c: -65.0, d: 6.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.0e-4}
+      internal_states: {v: -70.0, u: -14.0}
+      #stimulus: {type: pulse, start_ms: 10.0, end_ms: 13.0, baseline: 0.0, value: 7.04}
+    config_9:  # J: subthreshold oscillations
+      hyperparameters: {a: 0.05, b: 0.26, c: -60.0, d: 0.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.5e-4}
+      internal_states: {v: -62.0, u: -16.12}
+      #stimulus: {type: pulse, start_ms: 20.0, end_ms: 25.0, baseline: 0.0, value: 2.0}
+    config_10:  # K: resonator
+      hyperparameters: {a: 0.1, b: 0.26, c: -60.0, d: -1.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.5e-4}
+      internal_states: {v: -62.0, u: -16.12}
+      #stimulus: {type: pulses, baseline: 0.0, intervals_ms: [[40.0, 44.0], [60.0, 64.0], [280.0, 284.0], [320.0, 324.0]], value: 0.65}
+    config_11:  # L: integrator; canonical equation used here
+      hyperparameters: {a: 0.02, b: -0.1, c: -55.0, d: 6.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.5e-4}
+      internal_states: {v: -60.0, u: 6.0}
+      #stimulus: {type: pulses, baseline: 0.0, intervals_ms: [[9.0909090909, 11.0909090909], [14.0909090909, 16.0909090909], [70.0, 72.0], [80.0, 82.0]], value: 9.0}
+    config_12:  # M: rebound spike
+      hyperparameters: {a: 0.03, b: 0.25, c: -60.0, d: 4.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.0e-4}
+      internal_states: {v: -64.0, u: -16.0}
+      #stimulus: {type: pulse, start_ms: 20.0, end_ms: 25.0, baseline: 0.0, value: -15.0}
+    config_13:  # N: rebound burst
+      hyperparameters: {a: 0.03, b: 0.25, c: -52.0, d: 0.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.0e-4}
+      internal_states: {v: -64.0, u: -16.0}
+      #stimulus: {type: pulse, start_ms: 20.0, end_ms: 25.0, baseline: 0.0, value: -15.0}
+    config_14:  # O: threshold variability
+      hyperparameters: {a: 0.03, b: 0.25, c: -60.0, d: 4.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.5e-4}
+      internal_states: {v: -64.0, u: -16.0}
+      #stimulus: {type: piecewise, baseline: 0.0, intervals_ms: [[10.0, 15.0, 1.0], [70.0, 75.0, -6.0], [80.0, 85.0, 1.0]]}
+    config_15:  # P: bistability
+      hyperparameters: {a: 0.1, b: 0.26, c: -60.0, d: 0.0, v_peak: 30.0, I_in: 0.0, dt_s: 2.5e-4}
+      internal_states: {v: -61.0, u: -15.86}
+      #stimulus: {type: pulses_on_baseline, baseline: 0.24, intervals_ms: [[37.5, 42.5], [216.0, 221.0]], value: 1.24}
+    config_16:  # Q: depolarizing after-potential
+      hyperparameters: {a: 1.0, b: 0.2, c: -60.0, d: -21.0, v_peak: 30.0, I_in: 0.0, dt_s: 1.0e-4}
+      internal_states: {v: -70.0, u: -14.0}
+      #stimulus: {type: centered_pulse, center_ms: 10.0, half_width_ms: 1.0, baseline: 0.0, value: 20.0}
+    config_17:  # R: accommodation; canonical equation used here
+      hyperparameters: {a: 0.02, b: 1.0, c: -55.0, d: 4.0, v_peak: 30.0, I_in: 0.0, dt_s: 5.0e-4}
+      internal_states: {v: -65.0, u: -16.0}
+      #stimulus: {type: piecewise_ramp, baseline: 0.0, segments: [[0.0, 200.0, 0.0, 8.0], [200.0, 300.0, 0.0, 0.0], [300.0, 312.5, 0.0, 4.0], [312.5, 400.0, 0.0, 0.0]]}
+    config_18:  # S: inhibition-induced spiking
+      hyperparameters: {a: -0.02, b: -1.0, c: -60.0, d: 8.0, v_peak: 30.0, I_in: 0.0, dt_s: 5.0e-4}
+      internal_states: {v: -63.8, u: 63.8}
+      #stimulus: {type: piecewise, segments_ms: [[0.0, 50.0, 80.0], [50.0, 250.0, 75.0], [250.0, 350.0, 80.0]]}
+    config_19:  # T: inhibition-induced bursting
+      hyperparameters: {a: -0.026, b: -1.0, c: -45.0, d: -2.0, v_peak: 30.0, I_in: 0.0, dt_s: 5.0e-4}
+      internal_states: {v: -63.8, u: 63.8}
+      #stimulus: {type: piecewise, segments_ms: [[0.0, 50.0, 80.0], [50.0, 250.0, 75.0], [250.0, 350.0, 80.0]]}
 
-    config_1:       # regular spiking
+  adex_soma:
+    # model Ref: Neuronal Dynamics, Ch. 6, Table 6.1.
+    # All voltage/current/time units: mV, pA, ms. Conductance/capacitance: nS/pF.
+    # Common source values: gL=2 nS (R=500 Mohm), EL=-70 mV, VT=-50 mV,
+    # DeltaT=2 mV. C is tau_m*gL. YAML is parsed on the host; pack each
+    # hyperparameters row as [C,gL,EL,VT,DeltaT,a,tau_w,b,V_reset,V_peak,I_in].
+    config_0:  # Tonic spiking
       hyperparameters:
-        k: 0.7
-        vthr: -40
-        C: 100
-        a: 0.03
-        b: -2
-        vpeak: 35
-        vrest: -60
-        d: 100
-        vreset: -50
-        I_in: 100
-      internal_states:
-        v: -60  # Initial membrane voltage
-        u: 0  # Initial recovery variable
+        C: 40.0
+        gL: 2.0
+        E_L: -70.0
+        V_T: -50.0
+        Delta_T: 2.0
+        a: 0.0
+        tau_w: 30.0
+        b: 60.0
+        V_reset: -55.0
+        V_peak: -30.0
+        I_in: 0.0
+      internal_states: {v: -70.0, w: 0.0}
+      #stimulus: {type: step, start_ms: 10.0, end_ms: 250.0, value_pA: 65.0, baseline_pA: 0.0}
+
+    config_1:  # Adapting spiking
+      hyperparameters:
+        C: 40.0
+        gL: 2.0
+        E_L: -70.0
+        V_T: -50.0
+        Delta_T: 2.0
+        a: 0.0
+        tau_w: 100.0
+        b: 5.0
+        V_reset: -55.0
+        V_peak: -30.0
+        I_in: 0.0
+      internal_states: {v: -70.0, w: 0.0}
+      #stimulus: {type: step, start_ms: 10.0, end_ms: 250.0, value_pA: 65.0, baseline_pA: 0.0}
+
+    config_2:  # Initial bursting
+      hyperparameters:
+        C: 10.0
+        gL: 2.0
+        E_L: -70.0
+        V_T: -50.0
+        Delta_T: 2.0
+        a: 0.5
+        tau_w: 100.0
+        b: 7.0
+        V_reset: -51.0
+        V_peak: -30.0
+        I_in: 0.0
+      internal_states: {v: -70.0, w: 0.0}
+      #stimulus: {type: step, start_ms: 10.0, end_ms: 250.0, value_pA: 65.0, baseline_pA: 0.0}
+
+    config_3:  # Regular bursting
+      hyperparameters:
+        C: 10.0
+        gL: 2.0
+        E_L: -70.0
+        V_T: -50.0
+        Delta_T: 2.0
+        a: -0.5
+        tau_w: 100.0
+        b: 7.0
+        V_reset: -46.0
+        V_peak: -30.0
+        I_in: 0.0
+      internal_states: {v: -70.0, w: 0.0}
+      #stimulus: {type: step, start_ms: 10.0, end_ms: 250.0, value_pA: 65.0, baseline_pA: 0.0}
+
+    config_4:  # Irregular firing
+      hyperparameters:
+        C: 19.8
+        gL: 2.0
+        E_L: -70.0
+        V_T: -50.0
+        Delta_T: 2.0
+        a: -0.5
+        tau_w: 100.0
+        b: 7.0
+        V_reset: -46.0
+        V_peak: -30.0
+        I_in: 0.0
+      internal_states: {v: -70.0, w: 0.0}
+      #stimulus: {type: step, start_ms: 10.0, end_ms: 250.0, value_pA: 65.0, baseline_pA: 0.0}
+
+    config_5:  # Transient spiking
+      hyperparameters:
+        C: 20.0
+        gL: 2.0
+        E_L: -70.0
+        V_T: -50.0
+        Delta_T: 2.0
+        a: 1.0
+        tau_w: 100.0
+        b: 10.0
+        V_reset: -60.0
+        V_peak: -30.0
+        I_in: 0.0
+      internal_states: {v: -70.0, w: 0.0}
+      #stimulus: {type: step, start_ms: 10.0, end_ms: 250.0, value_pA: 65.0, baseline_pA: 0.0}
+
+    config_6:  # Delayed spiking
+      hyperparameters:
+        C: 10.0
+        gL: 2.0
+        E_L: -70.0
+        V_T: -50.0
+        Delta_T: 2.0
+        a: -1.0
+        tau_w: 100.0
+        b: 10.0
+        V_reset: -60.0
+        V_peak: -30.0
+        I_in: 0.0
+      internal_states: {v: -70.0, w: 0.0}
+      #stimulus: {type: step, start_ms: 10.0, end_ms: 250.0, value_pA: 25.0, baseline_pA: 0.0}
+
 
   hg_lif_soma:
     config_0:
@@ -183,3 +354,53 @@ learning_rule:
         pre_trace: 0 # Pre-synaptic trace
         post_trace: 0 # Post-synaptic trace
         dW: 0 # Weight change accumulator
+
+  triplet_stdp:
+    default:
+      # Reference: Pfister-Gerstner model, 2006. The hyperparameters below are the default values used in the paper.
+      # Units for tau are seconds, matching dt passed to the step function.
+      # Pack learning_params as:
+      # [stdp_type,tau_plus,tau_minus,A2_plus,A2_minus,history_length,
+      #  tau_x,tau_y,A3_plus,A3_minus]
+      learning_hyperparameters:
+        stdp_type: 4.0
+        tau_pre_stdp: 16.8e-3       # tau_plus; r1 fast presynaptic trace
+        tau_post_stdp: 33.7e-3      # tau_minus; o1 fast postsynaptic trace
+        a_exp_pre: 7.5e-10          # A2_plus
+        a_exp_post: 7.0e-3          # A2_minus
+        stdp_history_length: 100    # buffer length for state recording
+        tau_pre_slow_stdp: 1.01e-1 # tau_x; r2 slow presynaptic trace
+        tau_post_slow_stdp: 1.25e-1 # tau_y; o2 slow postsynaptic trace
+        a_triplet_pre: 9.3e-3       # A3_plus
+        a_triplet_post: 2.3e-4      # A3_minus
+      learning_internal_states:
+        pre_trace_fast: 0.0         # r1
+        pre_trace_slow: 0.0         # r2
+        post_trace_fast: 0.0        # o1
+        post_trace_slow: 0.0        # o2
+        dW: 0.0
+
+  suppression_stdp:
+    default:
+      # Reference: Froemke-Dan suppression rule. The example
+      # suppression constants 28 ms and 88 ms are reported in the cited model
+      # analysis; replace them with values fitted for the target synapse/model.
+      # Pack learning_params as:[stdp_type,tau_plus,tau_minus,A_plus,A_minus,history_length,
+      #  tau_supp_pre,tau_supp_post]
+      learning_hyperparameters:
+        stdp_type: 5.0
+        tau_pre_stdp: 1.0e-2      # tau_plus; potentiation window
+        tau_post_stdp: 1.0e-2     # tau_minus; depression window
+        a_exp_pre: 0.005          # A_plus
+        a_exp_post: 0.005         # A_minus
+        stdp_history_length: 100  # buffer length for state recording
+        tau_supp_pre_stdp: 2.8e-2 # suppression time constant for pre spikes
+        tau_supp_post_stdp: 8.8e-2 # suppression time constant for post spikes
+      learning_internal_states:
+        pre_eligibility: 0.0
+        post_eligibility: 0.0
+        last_pre_tick: 0.0
+        last_post_tick: 0.0
+        has_pre: 0.0
+        has_post: 0.0
+        dW: 0.0
