@@ -459,6 +459,16 @@ slightly faster than NEST GPU. With 2001 nodes there is nothing for a GPU to par
 both GPU simulators pay launch and barrier overhead 100,000 times. Masquelier-scale work does
 not belong on a GPU; that is a property of the problem, not a defect in SuperNeuroABM.
 
+> **Correction (2026-10-15).** The paragraph above was wrong about the cause, and the
+> conclusion with it. The tick was not launch-bound: measured, 83 % of it (144 us of 174 us)
+> was the single output neuron's thread summing its 2,000 afferent synapses one after the
+> other, a serial loop in a one-thread-per-soma kernel, and the tick time was linear in the
+> number of afferents (1,338 us at 20,000). Pushing (each synapse deposits into the soma's
+> inbox, an atomic add in parallel) removed it: 10 s in 1.66 s, and with event-woken synapses
+> 1.07 s, i.e. faster than Brian2 (5.2 s) and NEST GPU (11.0 s) on this problem; 100 s in
+> 9.5 s against Brian2's 16.5 s. Same 414 / 671 output spikes. The details and the
+> measurements are in `docs/EVENT_DRIVEN_NOTES.md` (sections 1, 3, 8 and 10).
+
 So SuperNeuroABM's remaining gap to NEST GPU here is 2.7x, not the 5,400x seen on Brunel
 construction. The two questions have genuinely different answers.
 

@@ -539,3 +539,25 @@ regenerated (the Brunel benchmark cache, `brunel_partition` now writes
 The two steppings deposit in a different thread order, so after a few hundred ticks the
 chaotic network has diverged (section 8; they agree to the bit on the test networks and
 for the first tens of ticks here). For reference the removed pull path was 7.66 ms/tick.
+
+### Step 5 done: tutorials and Diehl-Cook (2026-10-15)
+
+Tutorials 00 and 01 run on `delivery_synapse` with the time constant on the soma and were
+re-executed in place (nbconvert + ipykernel are now in the dev env). Tutorial 01's custom
+LIF reads the inbox through `synaptic_current`; its custom STDP rule decays traces on wake
+and is registered `event_capable=True`. One semantic detail mattered: the rule cuts a trace
+to zero once it is below `a/5`, and stepped every tick that cut happens on the first tick
+below the window. Decaying on wake and cutting afterwards changed the learned weights (max
+0.64 -> 0.70); applying the cut to the trace's value on the tick before the wake, then
+again after the update, reproduces 0.64 exactly. A custom event-capable rule must preserve
+per-tick side effects of this kind, not only the exponential decay.
+
+Diehl-Cook duplicate (ns-applications): conductances `ge`/`gi` are two channels on
+`dc_cond_soma`, `dc_cond_synapse` deposits its weight and keeps only `pre_arrived`. It
+runs `synapse_stepping="clocked"` on purpose: its kernels read the pre spike of the same
+tick to reproduce Brian 1's one-tick recurrent hop, and an event-woken synapse runs the
+tick after its pre fires (the exc -> inh -> exc loop would take 2 ms instead of 1 ms). A
+SAGESim option to wake dependants right after the emitting priority of the same tick would
+lift that; noted, not built. Sanity run 300/300: 36.33 %, retries 26/25/46, identical to
+before; 2.6x faster (65 s whole run; the exc soma no longer gathers 883 afferents serially).
+`test_brian1_semantics.py` passes against its CPU reference (|dv| 5e-5 mV).
