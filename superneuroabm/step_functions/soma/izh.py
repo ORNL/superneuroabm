@@ -75,3 +75,4 @@ def izh_soma_step_func(
     buffer_idx = t_current % len(internal_states_buffer[agent_index])
     internal_states_buffer[agent_index][buffer_idx][0] = v
     internal_states_buffer[agent_index][buffer_idx][1] = u
+    internal_states_buffer[agent_index][buffer_idx][2] = I_synapse

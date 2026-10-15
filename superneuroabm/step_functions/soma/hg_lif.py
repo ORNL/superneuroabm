@@ -103,3 +103,4 @@ def hg_lif_soma_step_func(
     internal_states_buffer[agent_index][buffer_idx][1] = tcount + 1
     internal_states_buffer[agent_index][buffer_idx][2] = tlast
     internal_states_buffer[agent_index][buffer_idx][3] = a
+    internal_states_buffer[agent_index][buffer_idx][4] = x_total

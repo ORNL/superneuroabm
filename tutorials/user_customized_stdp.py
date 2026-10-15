@@ -16,12 +16,23 @@ Learning rule
    depress the synapse by a_exp_post.
 
 3. Clip the updated weight to [wmin, wmax].
+
+When the rule runs
+------------------
+Synapses and their learning rules are stepped only on the ticks their pre or post
+neuron fires (``synapse_stepping="event"``, the default), so between two runs
+this kernel may have slept for many ticks. It therefore decays its traces over
+the ticks since it last ran -- ``trace_decay(dt, tau, n)`` is ``(1 - dt/tau)^n``,
+the same single factor as before when ``n == 1`` -- applies the below-window cut
+the way a per-tick run would have, and keeps the tick it last ran in
+``learning_internal_states[3]`` (``last_tick`` in the config). Registering it
+with ``event_capable=True`` tells the model the rule does this.
 """
 
 import cupy as cp
 from cupyx import jit
 
-from superneuroabm.step_functions.synapse.util import get_soma_spike
+from superneuroabm.step_functions.synapse.util import get_soma_spike, trace_decay
 from sagesim.math_utils import clamp
 
 
@@ -110,8 +121,28 @@ def user_customized_stdp(
     )
 
     # ------------------------------------------------------------
-    # Update traces using current spikes
+    # Update traces using current spikes. The rule is event-woken, so this
+    # covers every tick since it last ran (n_ticks == 1 when that was the
+    # previous tick). A trace that has decayed below its active window is
+    # cut to zero; stepped every tick, that cut happens the first tick the
+    # trace is below the threshold, so it is applied to the value the trace
+    # had on the tick BEFORE this one, then to the updated value.
     # ------------------------------------------------------------
+    n_ticks = t_current - int(learning_internal_states[agent_index][3])
+    if n_ticks < 1:
+        n_ticks = 1
+
+    trace_threshold_pre = a_exp_pre / 5.0
+    trace_threshold_post = a_exp_post / 5.0
+
+    if n_ticks > 1:
+        pre_trace = pre_trace * trace_decay(dt, tau_pre_stdp, n_ticks - 1)
+        post_trace = post_trace * trace_decay(dt, tau_post_stdp, n_ticks - 1)
+        if pre_trace <= trace_threshold_pre:
+            pre_trace = 0.0
+        if post_trace <= trace_threshold_post:
+            post_trace = 0.0
+
     pre_trace = (
         pre_trace * (1.0 - dt / tau_pre_stdp)
         + pre_soma_spike * a_exp_pre
@@ -121,12 +152,6 @@ def user_customized_stdp(
         post_trace * (1.0 - dt / tau_post_stdp)
         + post_soma_spike * a_exp_post
     )
-
-    # ------------------------------------------------------------
-    # Remove traces that have decayed below their active windows
-    # ------------------------------------------------------------
-    trace_threshold_pre = a_exp_pre / 5.0
-    trace_threshold_post = a_exp_post / 5.0
 
     if pre_trace <= trace_threshold_pre:
         pre_trace = 0.0
@@ -166,6 +191,7 @@ def user_customized_stdp(
     learning_internal_states[agent_index][0] = pre_trace
     learning_internal_states[agent_index][1] = post_trace
     learning_internal_states[agent_index][2] = dW
+    learning_internal_states[agent_index][3] = 1.0 * t_current   # last tick run
 
     # ------------------------------------------------------------
     # State tracking buffer

@@ -30,6 +30,15 @@ corrections come with it:
   again at exactly ``ts + tref``, and the test is naturally True while ``tlast``
   is ``-inf``, so no ``tlast > 0`` sentinel is needed.
 
+How the synaptic input arrives
+------------------------------
+A soma does not read its synapses. Each synapse deposits ``spike * weight * scale``
+into one channel of the soma's inbox (the two trailing kernel arguments,
+``synaptic_input, synaptic_input_idx``), and ``synaptic_current()`` turns the inbox
+into the soma's current: one exponential filter per channel, decayed with the
+soma's own ``tau_syn_<c>`` and kept in ``I_syn_<c>``. The digits config sets
+``tau_syn == dt``, so every input is a one-tick pulse.
+
 Registration
 ------------
 Before ``setup()`` -- ``register_soma_type`` raises ``RuntimeError`` afterwards::
@@ -50,6 +59,7 @@ breed, so a file called ``lif.py`` or a function called ``lif_soma_step_func``
 would shadow the built-in. See ``docs/CUSTOM_COMPONENTS.md``.
 
 Hyperparameters -- the YAML key order *is* the index order read here:
+
     [0] C                        membrane capacitance (F)
     [1] R                        leak resistance (Ohm)
     [2] vthr                     spike threshold (mV)
@@ -59,15 +69,20 @@ Hyperparameters -- the YAML key order *is* the index order read here:
     [6] tref_allows_integration  non-zero: keep integrating while refractory
     [7] I_in                     constant input current (A)
     [8] scaling_factor           multiplier on the summed synaptic current
+    [9 + c] tau_syn_c            synaptic time constant of inbox channel c (s)
 
 Internal states:
+
     [0] v       membrane potential (mV)
     [1] tcount  ticks elapsed since the start of the simulation
     [2] tlast   time of the last spike (s); may start at -inf
+    [3 + c] I_syn_c  synaptic current of inbox channel c
 """
 
 import cupy as cp
 from cupyx import jit
+
+from superneuroabm.step_functions.synaptic_input import synaptic_current
 
 
 @jit.rawkernel(device="cuda")
@@ -88,20 +103,16 @@ def user_customized_lif(
     output_spikes_tensor,
     internal_states_buffer,
     learning_internal_states_buffer,
+    synaptic_input,
+    synaptic_input_idx,
 ):
-    # Sum the current published by every incoming synapse at its slot 0.
-    # SAGESim rewrites these lines into CSR form by pattern-matching, so the
-    # idiom `synapse_indices = locations[agent_index]` followed by
-    # `for i in range(len(synapse_indices))` has to be kept literally.
-    synapse_indices = locations[agent_index]
-
-    I_synapse = 0.0
-    for i in range(len(synapse_indices)):
-        synapse_index = int(synapse_indices[i])
-        if synapse_index >= 0 and not cp.isnan(synapse_indices[i]):
-            I_synapse += internal_states[synapse_index][0]
-
     t_current = int(tick)
+
+    # The synaptic current: last tick's deposits from every incoming synapse,
+    # filtered per inbox channel with tau_syn_c (hyperparameters from index 9)
+    # into I_syn_c (internal states from index 3).
+    I_synapse = synaptic_current(agent_index, dt, neuron_params, 9, internal_states, 3,
+                                 synaptic_input, synaptic_input_idx)
 
     # ------------------------------------------------------------------
     # Hyperparameters
@@ -138,7 +149,6 @@ def user_customized_lif(
     # tref_allows_integration lets v evolve during the refractory period.
     # It deliberately does NOT let the neuron spike again inside it.
     integration_allowed = refractory_complete or tref_allows_integration != 0.0
-
     if integration_allowed:
         v += dv * dt
 
@@ -146,7 +156,6 @@ def user_customized_lif(
     # Spike generation and reset
     # ------------------------------------------------------------------
     s = 0.0
-
     if refractory_complete and v >= vthr:
         s = 1.0
         tlast = current_time
@@ -156,7 +165,6 @@ def user_customized_lif(
     # Store updated state
     # ------------------------------------------------------------------
     next_tcount = tcount + 1.0
-
     internal_states[agent_index][0] = v
     internal_states[agent_index][1] = next_tcount
     internal_states[agent_index][2] = tlast
@@ -169,3 +177,4 @@ def user_customized_lif(
     internal_states_buffer[agent_index][buffer_idx][0] = v
     internal_states_buffer[agent_index][buffer_idx][1] = next_tcount
     internal_states_buffer[agent_index][buffer_idx][2] = tlast
+    internal_states_buffer[agent_index][buffer_idx][3] = I_synapse

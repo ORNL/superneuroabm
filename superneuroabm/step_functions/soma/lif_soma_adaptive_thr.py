@@ -88,3 +88,4 @@ def lif_soma_adaptive_thr_step_func(
     internal_states_buffer[agent_index][buffer_idx][1] = internal_states[agent_index][1] + 1
     internal_states_buffer[agent_index][buffer_idx][2] = tlast
     internal_states_buffer[agent_index][buffer_idx][3] = vthr
+    internal_states_buffer[agent_index][buffer_idx][4] = I_synapse

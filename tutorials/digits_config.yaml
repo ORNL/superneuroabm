@@ -16,6 +16,12 @@
 # runtime. A custom soma needs a matching block here, keyed by the name passed
 # to register_soma_type(). A custom learning rule does not -- see the
 # `learning_rule:` section at the bottom.
+#
+# Where the synaptic time constant lives: on the SOMA. A synapse delivers
+# spike * weight * scale into one channel of its post soma's inbox, and the soma
+# filters channel c with tau_syn_<c> into I_syn_<c>. tau_syn == dt (1e-3 here)
+# is a decay factor of zero: every input is a one-tick current pulse, which is
+# what this classifier wants.
 # ==============================================================================
 
 
@@ -42,6 +48,8 @@ soma:
         tref_allows_integration: 0
         I_in: 0
         scaling_factor: 1e-6
+        tau_syn_0: 1e-3     # == dt: one-tick input pulses (channel 0)
+        tau_syn_1: 1e-3     # channel 1, unused by this network
       internal_states:
         v: -60.0
         tcount: 0.0
@@ -50,6 +58,8 @@ soma:
         # handles the sentinel; the built-in lif_soma turns it into NaN on the
         # first spike and loses the refractory period thereafter.
         tlast: -.inf
+        I_syn_0: 0.0        # channel 0 synaptic current, filtered on the soma
+        I_syn_1: 0.0
 
     # Output layer LIF neurons (one per class)
     digits_output_config:
@@ -63,18 +73,26 @@ soma:
         tref_allows_integration: 0
         I_in: 0
         scaling_factor: 1e-6
+        tau_syn_0: 1e-3
+        tau_syn_1: 1e-3
       internal_states:
         v: -60.0
         tcount: 0.0
         tlast: -.inf
+        I_syn_0: 0.0
+        I_syn_1: 0.0
 
 
 # ==============================================================================
 # SYNAPSE CONFIGURATIONS
 # ==============================================================================
+# The built-in delivery_synapse: weight, scale and the inbox channel it deposits
+# into. (synaptic_delay is pinned at index 1 by the framework; delivery takes
+# one tick.)
+# ==============================================================================
 
 synapse:
-  single_exp_synapse:
+  delivery_synapse:
 
     # External -> input somas (no learning)
     digits_input_synapse_config:
@@ -82,10 +100,9 @@ synapse:
         weight: 1.0
         synaptic_delay: 1.0
         scale: 1.0
-        tau_fall: 1e-3
-        tau_rise: 0
+        channel: 0
       internal_states:
-        I_synapse: 0.0
+        unused: 0.0
 
     # Input -> output somas (bounded STDP; learning rule attached at creation)
     digits_learning_synapse_config:
@@ -93,10 +110,9 @@ synapse:
         weight: 1.0
         synaptic_delay: 1.0
         scale: 1.0
-        tau_fall: 1e-3
-        tau_rise: 0
+        channel: 0
       internal_states:
-        I_synapse: 0.0
+        unused: 0.0
 
     # External -> output somas (target/supervision spikes, no learning)
     digits_target_synapse_config:
@@ -104,10 +120,9 @@ synapse:
         weight: 1.0
         synaptic_delay: 1.0
         scale: 1.0
-        tau_fall: 1e-3
-        tau_rise: 0
+        channel: 0
       internal_states:
-        I_synapse: 0.0
+        unused: 0.0
 
 
 # ==============================================================================
@@ -140,3 +155,6 @@ learning_rule:
         pre_trace: 0
         post_trace: 0
         dW: 0
+        # The tick the rule last ran. A rule is stepped only on the ticks its pre
+        # or post neuron fires, so it decays its traces over the ticks it slept.
+        last_tick: -1
