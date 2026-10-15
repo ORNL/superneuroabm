@@ -83,7 +83,7 @@ class TestRegistrationAPI(unittest.TestCase):
             event_capable=True,
         )
 
-        self.assertEqual(rule_id, 4, "First user rule should get ID 4")
+        self.assertEqual(rule_id, 6, "First user rule should get ID 6 (built-ins hold 0-5)")
 
         # Create network
         soma_pre = model.create_soma(breed="lif_soma", config_name="config_0")

@@ -183,7 +183,8 @@ These ship in `superneuroabm/component_base_config.yaml`. Pass your own YAML via
 | breed                   | configs            | key hyperparameters |
 |-------------------------|--------------------|---------------------|
 | `lif_soma`              | `config_0`         | `C, R, vthr, tref, vrest, vreset, I_in, scaling_factor` |
-| `izh_soma`              | `config_0`, `config_1` | `k, vthr, C, a, b, vpeak, vrest, d, vreset, I_in` |
+| `izh_soma`              | `config_0` .. `config_19` (figure 1 panels A-T) | `a, b, c, d, v_peak, I_in, dt_s, tau_syn_0, tau_syn_1` |
+| `adex_soma`             | `config_0` .. `config_6` (firing patterns) | `C, gL, E_L, V_T, Delta_T, a, tau_w, b, V_reset, V_peak, I_in, tau_syn_0, tau_syn_1` |
 | `hg_lif_soma`           | `config_0`         | `T, tref, X, A, taus, taum, deltaa, I_in` |
 | `lif_soma_adaptive_thr` | `config_0`         | `…, vthr_initial, delta_thr, tau_decay_thr` |
 

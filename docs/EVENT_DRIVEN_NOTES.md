@@ -591,3 +591,26 @@ before (the 1000-paper total is in the gate log below). Lesson re-learned: profi
 loop, not the step one expects to be slow.
 Gate (2026-10-15): SAGESim 115 passed + MPI 1/2/3/4; SNA 238 passed + MPI 1/2/3/4; Cora
 1000 papers **7.7 s** (was 50-58 s), 699/1000 correct, 221 ties; Diehl-Cook sanity 36.33 %.
+
+## 14. Step 6: the coworker's step functions merged (2026-10-15)
+
+`origin/new-step-functions` (27e2003: canonical Izhikevich rewrite with the 20 figure-1
+panel configs, AdEx soma with 7 firing-pattern configs, Pfister-Gerstner triplet STDP,
+Froemke-Dan suppression STDP) merged into perf/event-driven and brought onto the single
+input path:
+
+* `izh_soma` is now the canonical `0.04 v^2 + 5 v + 140 - u + I` model in the paper's
+  units (the old `k, vthr, C, ...` form is gone; configs that used it must move to the
+  panel configs, e.g. tutorial 00 drives panel A with `I_in: 14` instead of the old 500).
+  Both somas take their input from the inbox (`synaptic_current`, `tau_syn_<c>` /
+  `I_syn_<c>` added to every config; the soma records the summed current at [2]).
+* Both rules decay their traces on wake (`trace_decay`, `last_tick` slot) and are
+  built-in event-capable rules with ids 4 (`triplet_stdp`) and 5 (`suppression_stdp`);
+  the first user rule is therefore 6 (tests, tutorial 01 and CUSTOM_COMPONENTS updated).
+  The suppression factors use stored spike ticks, so waking changes nothing there.
+* Tests: `tests/test_new_step_functions.py` (10: each soma fires under its documented
+  drive and on delivered input, each rule learns, clocked == event spikes with weights to
+  1e-4, rules on both new somas, stable ids). The Izhikevich spike-time baseline of
+  test_synapse_and_soma_models was regenerated for the new model (lif baselines unchanged).
+  Tutorials re-executed: 00 (Izhikevich panel A, 21 spikes, STDP weight 0.50 -> 0.75),
+  01 unchanged (weight range 0.64, custom rule id 6).

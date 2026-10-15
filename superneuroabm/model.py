@@ -19,6 +19,7 @@ from superneuroabm.step_functions.soma.izh import izh_soma_step_func
 from superneuroabm.step_functions.soma.lif import lif_soma_step_func
 from superneuroabm.step_functions.soma.lif_soma_adaptive_thr import lif_soma_adaptive_thr_step_func
 from superneuroabm.step_functions.soma.hg_lif import hg_lif_soma_step_func
+from superneuroabm.step_functions.soma.adex import adex_soma_step_func
 from superneuroabm.step_functions.synapse.delivery import delivery_synapse_step_func
 from superneuroabm.util import load_component_configurations
 
@@ -84,6 +85,7 @@ def _default_soma_breeds():
         "lif_soma": (lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif.py"),
         "lif_soma_adaptive_thr": (lif_soma_adaptive_thr_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif_soma_adaptive_thr.py"),
         "hg_lif_soma": (hg_lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "hg_lif.py"),
+        "adex_soma": (adex_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "adex.py"),
     }
 
 
@@ -101,7 +103,8 @@ EVENT_CAPABLE_SYNAPSES = {"delivery_synapse"}
 # Built-in learning rules that catch their traces up on wake (trace_decay + last_tick slot),
 # so the learning-rule selector can be event-woken by pre or post spikes.
 EVENT_CAPABLE_RULES = {"exp_pair_wise_stdp", "exp_pair_wise_stdp_bounded",
-                       "exp_pair_wise_stdp_quantized", "exp_pair_wise_stdp_memristive"}
+                       "exp_pair_wise_stdp_quantized", "exp_pair_wise_stdp_memristive",
+                       "triplet_stdp", "suppression_stdp"}
 
 
 def _default_learning_rules():
@@ -121,6 +124,14 @@ def _default_learning_rules():
         3: {
             "func_name": "exp_pair_wise_stdp_memristive",
             "import_line": "from superneuroabm.step_functions.synapse.stdp.exp_pair_wise_stdp_memristive import *",
+        },
+        4: {
+            "func_name": "triplet_stdp",
+            "import_line": "from superneuroabm.step_functions.synapse.stdp.triplet_stdp import triplet_stdp",
+        },
+        5: {
+            "func_name": "suppression_stdp",
+            "import_line": "from superneuroabm.step_functions.synapse.stdp.suppression_stdp import suppression_stdp",
         },
     }
 

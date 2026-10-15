@@ -416,7 +416,7 @@ def bounded_stdp(
 ```
 
 **Step 2 — register it.** The id is assigned at runtime, not by you. The four
-built-in rules hold 0–3, so the first custom rule is 4:
+built-in rules hold 0–5, so the first custom rule is 6:
 
 ```python
 RULE_ID = model.register_learning_rule(

@@ -118,90 +118,85 @@ soma_id = model.create_soma(
 
 **Breed Name**: `izh_soma`
 
-**Description**: A biologically realistic neuron model that can reproduce various spiking patterns (regular spiking, bursting, fast spiking, etc.) using only 4 parameters.
+**Description**: The canonical Izhikevich model (Izhikevich 2003/2004, `figure1.m`): two
+variables and four parameters reproduce the known cortical firing patterns. The packaged
+config has the paper's 20 figure-1 panels as `config_0` (A, tonic spiking) to `config_19`
+(T, inhibition-induced bursting); the commented `stimulus` line of each config is the
+drive that reproduces the panel, to be passed as `I_in` (constant) or `I_bias`.
 
-**Mathematical Model**:
+**Mathematical Model** (mV, ms, the paper's current units; forward Euler, `u` updated
+with the new `v`):
 ```
-dv/dt = (k*(v - v_rest)*(v - v_thr) - u + I) / C
-du/dt = a * (b*(v - v_rest) - u)
+dv/dt = 0.04 v^2 + 5 v + 140 - u + I
+du/dt = a (b v - u)
 
-if v ≥ v_peak:
+if v > v_peak:
     emit spike
-    v ← c
-    u ← u + d
+    v <- c
+    u <- u + d
 ```
 
-**Parameters** (from `component_base_config.yaml`):
+**Parameters** (from `component_base_config.yaml`, `config_0`):
 
-| Parameter | Symbol | Default Value | Description |
-|-----------|--------|---------------|-------------|
-| `k` | k | 0.7 | Scaling factor for voltage dynamics |
-| `vth` | v_thr | -40 mV | Instantaneous threshold |
-| `C` | C | 100 pF | Membrane capacitance |
-| `a` | a | 0.03 | Recovery time constant |
-| `b` | b | -2.0 | Sensitivity of recovery to voltage |
-| `c` | c | -50 mV | Reset voltage |
-| `d` | d | 100 | Recovery variable reset increment |
-| `vrest` | v_rest | -60 mV | Resting potential |
-| `vpeak` | v_peak | 35 mV | Spike cutoff value |
-| `I_in` | I_in | 0 | Constant input current |
-| `scaling_factor` | - | 1.0 | Scaling factor for synaptic input |
+| Parameter | Default Value | Description |
+|-----------|---------------|-------------|
+| `a` | 0.02 | Recovery time scale |
+| `b` | 0.2 | Sensitivity of recovery to voltage |
+| `c` | -65 mV | Reset voltage |
+| `d` | 6.0 | Recovery increment after a spike |
+| `v_peak` | 30 mV | Spike cutoff |
+| `I_in` | 0 | Constant input current (the panel's step current, e.g. 14 for A) |
+| `dt_s` | 2.5e-4 | The panel's original Euler step (s); informational, the model uses the global `dt` |
+| `tau_syn_0`, `tau_syn_1` | 1e-2 s | Synaptic current time constant per inbox channel |
 
 **Internal State Variables**:
 ```python
-[v, u, tcount, tlast]
+[v, u, I_syn_0, I_syn_1]
 # v: membrane potential (mV)
 # u: recovery variable
-# tcount: number of ticks since simulation start
-# tlast: time of last spike (ms)
+# I_syn_c: synaptic current of inbox channel c (what the afferents delivered, filtered)
 ```
 
 **Step Functions**:
 1. `izh_soma_step_func` (Priority 0) - Computes membrane dynamics and spike generation
 
-**Neuron Types** (by parameter tuning):
-
-| Type | Parameters | Behavior |
-|------|------------|----------|
-| Regular Spiking | a=0.02, b=0.2, c=-65, d=8 | Adapting spike train |
-| Intrinsically Bursting | a=0.02, b=0.2, c=-55, d=4 | Burst of spikes then adaptation |
-| Fast Spiking | a=0.1, b=0.2, c=-65, d=2 | Non-adapting rapid firing |
-| Chattering | a=0.02, b=0.2, c=-50, d=2 | Stereotypical bursting |
-
-**Use Cases**:
-- Biologically realistic cortical networks
-- Temporal coding and spike-timing research
-- Multi-modal spiking behavior (bursting, adaptation, resonance)
-
 **Example**:
 ```python
-# Create a regular spiking neuron
 model = NeuromorphicModel()
+# Tonic spiking under the panel's step current
 rs_neuron = model.create_soma(
     breed="izh_soma",
     config_name="config_0",
-    overrides={"hyperparameters": {
-            "a": 0.02,
-            "b": 0.2,
-            "c": -65.0e-3,
-            "d": 8.0
-        }}
+    overrides={"hyperparameters": {"I_in": 14.0}},
 )
-
-# Create a fast spiking neuron
-fs_neuron = model.create_soma(
-    breed="izh_soma",
-    config_name="config_0",
-    overrides={"hyperparameters": {
-            "a": 0.1,
-            "b": 0.2,
-            "c": -65.0e-3,
-            "d": 2.0
-        }}
-)
+# Tonic bursting (panel C)
+burst_neuron = model.create_soma(breed="izh_soma", config_name="config_2",
+                                 overrides={"hyperparameters": {"I_in": 15.0}})
 ```
 
----
+#### 3. AdEx Soma (Adaptive Exponential Integrate-and-Fire)
+
+**Breed Name**: `adex_soma`
+
+**Description**: The AdEx neuron (Neuronal Dynamics, Ch. 6, Table 6.1): an exponential
+spike-initiation term plus an adaptation current `w`. The packaged configs `config_0`
+(tonic spiking) to `config_6` (delayed spiking) are the table's firing patterns; the
+commented `stimulus` line gives the step current (pA) that reproduces each one.
+
+**Mathematical Model** (mV, pA, ms; forward Euler):
+```
+C dV/dt = -gL (V - E_L) + gL Delta_T exp((V - V_T) / Delta_T) - w + I
+tau_w dw/dt = a (V - E_L) - w
+
+if V >= V_peak:
+    emit spike
+    V <- V_reset
+    w <- w + b
+```
+
+**Parameters**: `C` (pF), `gL` (nS), `E_L`, `V_T`, `Delta_T`, `V_reset`, `V_peak` (mV),
+`a` (nS), `tau_w` (ms), `b` (pA), `I_in` (pA), `tau_syn_0`, `tau_syn_1` (s).
+**Internal state**: `[v, w, I_syn_0, I_syn_1]`.
 
 ### Synapse Breeds (Connection Types)
 

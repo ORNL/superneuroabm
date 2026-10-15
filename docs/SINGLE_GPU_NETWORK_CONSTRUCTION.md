@@ -234,8 +234,9 @@ partition-aware loaders described in
 Default parameter presets live in `superneuroabm/component_base_config.yaml`,
 keyed by breed and config name.
 
-- **Somas:** `lif_soma`, `izh_soma`, `hg_lif_soma`, `lif_soma_adaptive_thr` — each
-  has a `config_0`, with one synaptic time constant per inbox channel
+- **Somas:** `lif_soma`, `izh_soma` (20 configs, the Izhikevich figure-1 panels),
+  `adex_soma` (7 configs, the AdEx firing patterns), `hg_lif_soma`,
+  `lif_soma_adaptive_thr` — each with one synaptic time constant per inbox channel
   (`tau_syn_0`, `tau_syn_1`).
 - **Synapses:** `delivery_synapse` (`config_0` weight 14, `config_1` weight 100); its
   `channel` picks which `tau_syn_<c>` of the post soma filters the input.
