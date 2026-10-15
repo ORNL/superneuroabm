@@ -1,7 +1,10 @@
 """synaptic_input="push": synapses deposit their current into the post soma's inbox.
 
-Runs under mpirun too (tests/run_mpi_tests.sh): post-owns placement keeps every deposit
-local, so push must match pull at any rank count.
+Runs under mpirun too (tests/run_mpi_tests.sh): create_synapse places a synapse with its
+post soma, so every deposit here is local; a synapse on another rank than its post soma
+deposits into the soma's ghost row and SAGESim sums it back to the owner (see
+test_load_from_adjacency's push and event cases). Either way push must match pull at any
+rank count.
 
 The soma then reads one row instead of looping over its afferents. The values are the
 same as the pull loop's, so spike times and soma state must agree with a pull-mode

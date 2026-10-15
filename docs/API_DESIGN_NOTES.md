@@ -39,3 +39,14 @@ double count. When a soma reads presynaptic somas directly (synapses folded into
 the onchip-learning-crosstalk column design), a repeat is a multapse, which Brunel's
 `allow_multapses=True` default produces (~4 % of edges at K = 1000). Workaround: generate without
 multapses, or dedupe and carry a multiplicity per edge.
+
+## Generated learning-rule selector is one shared file per package (2026-10-15)
+
+`_generate_learning_rule_selector()` writes `superneuroabm/_generated/learning_rule_selector.py`
+and imports it. Two SuperNeuroABM processes on one machine (a pytest run and a benchmark,
+or two benchmarks) overwrite each other's file: a model that registered a rule named
+`my_rule` in the test suite made a concurrently starting benchmark fail at JIT with
+`NameError: Unbound name: my_rule`. MPI ranks are safe only because they generate the
+same text. Fix later: name the file by a hash of its content, as SAGESim now does for the
+fused kernel (`step_func_code_<sha1[:12]>.py`), or generate it into the model's own
+temp directory. Workaround: do not run two SNA processes with different rule sets at once.

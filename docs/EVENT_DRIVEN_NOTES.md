@@ -374,7 +374,7 @@ What pull/clocked still buys, measured or by construction:
 | property | pull/clocked | push (clocked or event) |
 |---|---|---|
 | run-to-run reproducibility | bitwise (fixed summation order) | **not bitwise**: atomic-add order varies. Brunel 2000/K=100, 400 ticks, two runs: push/clocked 1,381 of 2,000 somas differ in `v` (max 2e-3); event identical with Brunel's two uniform weights, but with per-synapse jittered weights 1,541 somas differ (max 1e-3). Spike counts matched in all cases at this length; a chaotic net will diverge later. NEST GPU and GeNN have the same property. Fix if wanted: ordered segmented reduction instead of atomics (SAGESim `reduce="sum", ordered=True`). |
-| partition freedom on multi-rank | any (synapse reads ghost spike; soma reads ghost synapse) | post-owned only until the reverse ghost exchange exists (`load_from_adjacency` refused at >1 rank) |
+| partition freedom on multi-rank | any (synapse reads ghost spike; soma reads ghost synapse) | any, since step 3 (section 11): a deposit into a ghost soma is summed back to its owner |
 | soma-side integration | soma iterates its afferents: any function of them | sum per inbox channel only (2 channels today; should be configurable, Cora needs 2 taus, AMPA/NMDA/GABA 3-4) |
 | per-synapse current readout | `I_synapse` per synapse recorded | per-soma `I_syn` per channel |
 | synapse types with continuous per-tick state not driven by spikes | stepped every tick | refused in event mode (`event_capable=False`); would need a per-type "always wake" or a separate clocked breed |
@@ -422,3 +422,77 @@ About 10-12 working days. Steps 1-2 first (they unblock the apps on one GPU and 
 measurable within two days); step 3 before step 4 so nothing is deleted while push is
 still partition-dependent; 5-8 in any order. Every step ends with the standard gate
 (both suites, MPI 1/2/3/4, bitwise dump where applicable) and a commit by the user.
+
+## 10. Step 1 done: N-channel synaptic input (2026-10-15)
+
+`NeuromorphicModel(synaptic_channels=K)` sets the inbox width (default 2, unchanged).
+`delivery_synapse` gained a `channel` hyperparameter (the slot it deposits into);
+`lif_psc_soma` filters each slot with its own `tau_syn_<c>` into `I_syn_<c>` and sums
+them (NEST `iaf_psc_exp_multisynapse`, GeNN's per-synapse-group accumulator). Setup
+refuses a psc config missing a channel's tau/state and a channel outside 0..K-1
+(`_check_synaptic_channels`, also per-agent overrides and loader columns via
+`_intern_combo`). Tests: `tests/test_synaptic_channels.py` (9: two-tau net equals the
+per-synapse single_exp model's spikes with v to 1e-5; clocked == event bitwise; swapped
+channels differ; the four refusals; one-channel model), in the MPI runner at 1/2/3/4.
+`test_event_stepping.test_reset_then_rerun` pins that reset() clears wake state.
+
+Verification: SNA 233 passed, MPI 1/2/3/4 ok. Brunel 12.5k event 400 ticks: 162,561
+spikes with the old and the new kernels; per tick old 1.10-1.25 vs new 1.19-1.30 ms
+(same GPU state; the 0.96 earlier was a faster clock state). Masquelier event 10 s:
+same 414 spikes, weights bitwise identical. Brunel 2000/K=100 400 ticks: spike counts and
+I_syn identical to the pre-change dump; v differs in 477/2000 somas by <=1e-3 (2.6e-6
+relative): the compiler contracts the unchanged membrane arithmetic differently around
+the new loop; the new kernel is itself run-to-run bitwise.
+
+### Step 2a: SGNN Cora on push/event (2026-10-15)
+
+`~/superneuroabm_sgnn` (branch distributed_model_creation): `configs/cora/sna_cora_event_config.yaml`
+(same numbers; `lif_psc_soma`, `delivery_synapse`, `synaptic_input: push`,
+`synapse_stepping: event`, `synaptic_channels: 2`, `input_synapse_breed`),
+`build_snn_from_data.assign_channels` (per post soma, distinct taus in first-appearance
+order -> channels; soma gets `tau_syn_<c>`; refuses more taus than channels; YAML 1.1
+gives `1e-3` as a string, so taus are compared as floats), runner reads the three mode
+keys from the config. Partition `partitions/cora_event_np1`. Result 699/1000 correct,
+221 ties == clocked. Time 1000 papers back to back: clocked 58.5 s, event 59.5 s (both
+~50 ms/paper of which the post-reset rebuild dominates; the 44.7 s earlier was a faster
+GPU state). As predicted: event mode is not where SGNN's time goes (in-place reset is).
+
+### Step 2b: Masquelier duplicate on push/event (2026-10-15)
+
+`~/ns-applications/duplicates/masquelier_2008`: `run_experiment_hg.py --stepping event`
+(default stays clocked), kernels `masq_psc_hg_lif_soma.py` and
+`exp_pair_wise_stdp_bounded_nn_ev.py`, event breeds added to `masquelier_config.yaml`
+(sources backed up to the scratchpad first). Full 100 s run, continuous mode, both
+steppings back to back: 671 spikes at identical ticks, hit rate 96.0 %, false alarms
+4.56 Hz, final weights within 2.2e-6; elapsed 147.1 s clocked vs 13.7 s event (10.7x).
+
+## 11. Step 3 done: reduce-back-to-owner exchange (2026-10-15)
+
+SAGESim: a reduce breed-local array may now be `neighbor_visible` (and multi-breed).
+Ghost rows get rows in both buffers (a ghost of still-unknown breed too: loader-built
+partitions learn remote breeds only when the communication maps are built); the
+end-of-tick drain already covered ghost rows. `CommunicationManager._reverse_exchange`
+sends every ghost row of a reduce array to its owner and the owner adds the arrivals
+into its own row before its agents read, using the forward request maps with the roles
+swapped (one extra message per peer, tag 2, no new topology discovery). Reduce arrays
+are excluded from the forward owner->ghost copy. Two latent bugs fixed on the way: the
+breed-local exchange maps were only built on ranks that needed ghosts themselves (a
+serving-only rank never packed its arrays: wrong values or a shorter message), and a
+model whose only visible data is a breed-local array never exchanged at all.
+`tests/test_reduce_bla.py` (15: cross-rank senders, mixed local+remote senders, two
+receiver breeds, chunked launches) passes at 1/2/3/4 ranks.
+
+SuperNeuroABM: the soma inbox is registered `neighbor_visible` in push mode and
+`load_from_adjacency` no longer refuses push at >1 rank. `test_load_from_adjacency`
+gained the split-synapse case in push/clocked (vs the pull reference) and push/event
+(delivery synapse on the pre's rank, psc soma on the other): same spike trains at 1 and
+2 ranks. Correctness no longer depends on where a synapse lives; post-owns stays the
+default placement because it keeps deposits local (no reverse traffic).
+
+Found by the new tests: an adjacency file may list a synapse with its pre only (the
+external-input synapse `[-1]`), which pull mode never needed, but a synapse must know
+its post to deposit (push) and to see post spikes (rules). `load_from_adjacency` now
+fills the missing post slot from the local soma that names the synapse as incoming; a
+synapse whose post is on another rank must list it. Also: a whole-network file loaded
+on every rank of an MPI run makes every rank an owner, so a collective getter reports
+each spike once per rank; a reference model in an MPI test is built with create_*.

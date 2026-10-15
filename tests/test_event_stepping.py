@@ -98,6 +98,23 @@ class TestEventEqualsClocked(unittest.TestCase):
                 chunked[i] += twice.get_spike_times(soma_id=s)
         self.assertEqual([once.get_spike_times(soma_id=s) for s in so], chunked)
 
+    def test_reset_then_rerun(self):
+        """reset() between runs (the per-sample inference pattern): the second run must
+        equal a fresh model's, so no wake stamp, queue or inbox content survives a reset."""
+        fresh, sf = _recurrent("event")
+        fresh.simulate(ticks=100)
+        reused, sr = _recurrent("event")
+        reused.simulate(ticks=60)                       # a different, shorter first run
+        reused.reset(retain_parameters=False)
+        rng = np.random.default_rng(0)
+        ext = [s for s in reused._synapse_ids if reused.get_synapse_connectivity(s)[0] == -1]
+        for s in ext:
+            ticks = np.sort(rng.choice(np.arange(2, 70), size=12, replace=False))
+            reused.add_spike_list(s, [[int(t), 1.0] for t in ticks])
+        reused.simulate(ticks=100)
+        self.assertEqual([fresh.get_spike_times(soma_id=s) for s in sf],
+                         [reused.get_spike_times(soma_id=s) for s in sr])
+
 
 class TestEventLearning(unittest.TestCase):
 

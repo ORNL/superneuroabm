@@ -169,6 +169,65 @@ class TestLoadFromAdjacency(unittest.TestCase):
                 f"{sorted(expected)}. Method-2 split load did not reproduce the "
                 "create_* topology (post-soma failed to integrate the remote synapse).")
 
+    def test_split_synapse_push_matches_reference(self):
+        """Push mode across the split: S (rank 0, with its pre) deposits its current into
+        B's ghost row, and SAGESim's reduce-back-to-owner exchange sums it into B's row
+        on rank 1. Same spike train as the pull reference; the partition does not matter."""
+        comm, rank, size = _get_mpi()
+        if size not in (1, 2):
+            self.skipTest(f"fixture supports 1 or 2 ranks, got {size}")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            paths = _split_synapse_files(tmpdir, size)
+            model = NeuromorphicModel(enable_internal_states_tracking=False,
+                                      synaptic_input="push")
+            model.load_from_adjacency(paths[rank])
+            model.setup()
+            model.add_spike(synapse_id=S_EXT, tick=INPUT_TICK, value=1)
+            model.simulate(ticks=SIM_TICKS, update_data_ticks=1)
+            got = model.get_spike_times(B)
+        expected = _reference_spike_times()
+        if rank == 0:
+            self.assertEqual(sorted(got), sorted(expected))
+            self.assertGreater(len(expected), 0)
+
+    def test_split_synapse_event_matches_reference(self):
+        """Event stepping across the split: the delivery synapse on rank 0 is woken by
+        A's spike and deposits weight into B's ghost row; B's psc soma on rank 1 reads
+        the reduced total. Reference: the same model built single-rank."""
+        comm, rank, size = _get_mpi()
+        if size not in (1, 2):
+            self.skipTest(f"fixture supports 1 or 2 ranks, got {size}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            m = NeuromorphicModel(enable_internal_states_tracking=False,
+                                  synaptic_input="push", synapse_stepping="event")
+            m.load_from_adjacency(_split_synapse_files(tmpdir, size)[rank],
+                                  soma_breed="lif_psc_soma", synapse_breed="delivery_synapse")
+            m.setup()
+            m.add_spike(synapse_id=S_EXT, tick=INPUT_TICK, value=1)
+            m.simulate(ticks=SIM_TICKS, update_data_ticks=1)
+            got = m.get_spike_times(B)
+
+        # Reference: the same event model built with create_* (post-owns placement, so
+        # S lives with B). Every rank takes part (collective setup/simulate/getter);
+        # loading one whole-network file on each rank instead would make every rank an
+        # owner of B and the collective getter would report its spikes once per rank.
+        ref = NeuromorphicModel(enable_internal_states_tracking=False,
+                                synaptic_input="push", synapse_stepping="event")
+        a = ref.create_soma(breed="lif_psc_soma", config_name="config_0")
+        b = ref.create_soma(breed="lif_psc_soma", config_name="config_0")
+        ext = ref.create_synapse(breed="delivery_synapse", pre_soma_id=-1,
+                                 post_soma_id=a, config_name="config_0")
+        ref.create_synapse(breed="delivery_synapse", pre_soma_id=a,
+                           post_soma_id=b, config_name="config_0")
+        ref.setup()
+        ref.add_spike(synapse_id=ext, tick=INPUT_TICK, value=1)
+        ref.simulate(ticks=SIM_TICKS, update_data_ticks=1)
+        expected = ref.get_spike_times(b)
+        if rank == 0:
+            self.assertEqual(sorted(got), sorted(expected))
+            self.assertGreater(len(expected), 0)
+
     def test_post_owned_matches_reference(self):
         """load_post_owned (Method 1) reproduces the create_* reference (refactor guard).
 

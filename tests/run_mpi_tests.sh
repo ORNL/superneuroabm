@@ -32,6 +32,7 @@ FILES=(
     tests/test_lif_mixed_synapses_stdp_mpi.py
     tests/test_synaptic_input_push.py
     tests/test_event_stepping.py
+    tests/test_synaptic_channels.py
 )
 
 printf '%-42s' "test"

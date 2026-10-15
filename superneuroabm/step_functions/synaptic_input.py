@@ -7,11 +7,16 @@ a single neuron with 2,000 afferents spends 83 % of the tick in that loop
 (docs/EVENT_DRIVEN_NOTES.md).
 
 push: each synapse deposits its final current for the tick into the post soma's inbox
-(a SAGESim reduce breed-local array, ``synaptic_input``, shape (2,) per soma: slot 0 is
-the current every built-in soma reads, slot 1 a second component for double-exponential
-synapses). The soma reads one row. Deposits are atomic adds into the inbox's write
-buffer; SAGESim copies and clears it at the end of the tick, so the soma sees the
-previous tick's total, exactly what the pull loop summed.
+(a SAGESim reduce breed-local array, ``synaptic_input``, one row per soma of
+``NeuromorphicModel(synaptic_channels=K)`` slots, default 2). A slot is a channel: the
+delivery synapse's ``channel`` hyperparameter picks it and the psc soma decays each
+channel with its own ``tau_syn_<c>``, so one soma can receive afferents with K distinct
+time constants (NEST's receptor ports). The clocked kinetic synapses use slot 0 (and the
+double-exponential one slot 1 for its slow component). The soma reads one row. Deposits
+are atomic adds into the inbox's write buffer; SAGESim copies and clears it at the end
+of the tick, so the soma sees the previous tick's total, exactly what the pull loop
+summed. The add order is not fixed, so push runs are not bitwise reproducible
+(docs/EVENT_DRIVEN_NOTES.md section 8).
 
 The mode is carried by the inbox's index map, not by a constant: in push mode every
 soma has an inbox row, in pull mode the inbox is registered with no member breeds and

@@ -167,6 +167,7 @@ class NeuromorphicModel(Model):
         enable_internal_states_tracking: bool = True,
         synaptic_input: str = "pull",
         synapse_stepping: str = "clocked",
+        synaptic_channels: int = 2,
     ) -> None:
         """
         Creates an SNN Model and provides methods to create, simulate,
@@ -198,6 +199,11 @@ class NeuromorphicModel(Model):
             and register_synapse_type needs event_capable=True. Learning rules are woken
             by their pre or post spike and must be event-capable (decay-on-wake traces,
             see the built-in rules or register_learning_rule(..., event_capable=True)).
+        :param synaptic_channels: width of the soma inbox in push mode: the number of
+            distinct synaptic time constants one soma can receive. A delivery_synapse
+            picks a channel with its ``channel`` hyperparameter and the psc soma filters
+            channel c with ``tau_syn_c`` (NEST's receptor ports). Default 2 (slot 1 is
+            also the slow component of the double-exponential synapse).
         """
         super().__init__(space=NetworkSpace(ordered=True),
                          agent_slack_factor=1.0, csr_slack_factor=1.0)
@@ -210,6 +216,9 @@ class NeuromorphicModel(Model):
         if synapse_stepping == "event" and synaptic_input != "push":
             raise ValueError("synapse_stepping='event' needs synaptic_input='push'")
         self._synapse_stepping = synapse_stepping
+        if int(synaptic_channels) < 1 or int(synaptic_channels) != synaptic_channels:
+            raise ValueError(f"synaptic_channels must be a positive int, got {synaptic_channels!r}")
+        self._synaptic_channels = int(synaptic_channels)
 
         if soma_breed_info is None:
             soma_breed_info = _default_soma_breeds()
@@ -388,6 +397,10 @@ class NeuromorphicModel(Model):
     def _intern_combo(self, component_class, breed, config,
                       learning_rule=None, learning_rule_config=None, overrides=None) -> int:
         """Return the code for this agent description, adding it to the table if new."""
+        if component_class == "synapse" and overrides:
+            ch = (overrides.get("hyperparameters") or {}).get("channel")
+            if ch is not None:   # per-agent channel (create_synapse override or loader column)
+                self._check_channel(ch, f"synapse {breed}/{config} override")
         combo = Combo(component_class, breed, config, learning_rule,
                       learning_rule_config, self._overrides_key(overrides))
         code = self._combo_index.get(combo)
@@ -1354,6 +1367,46 @@ class NeuromorphicModel(Model):
         self._input_next_tick = 0
         # self._agent_factory._prev_agent_data.clear()
         
+    def _check_synaptic_channels(self) -> None:
+        """A soma config that filters per channel (keys tau_syn_0..) must declare every
+        channel, and a synapse config that picks a channel must pick an existing one.
+        Checked here rather than in the kernels: a missing key would read NaN padding, an
+        out-of-range slot would index past the inbox row."""
+        n_ch = self._synaptic_channels
+        for breed_name, configs in self._component_configurations.get("soma", {}).items():
+            if breed_name not in self._soma_breeds:
+                continue
+            for cfg_name, cfg in configs.items():
+                hp = cfg.get("hyperparameters", {}) or {}
+                if not any(str(k).startswith("tau_syn_") for k in hp):
+                    continue
+                states = cfg.get("internal_states", {}) or {}
+                missing = ([f"tau_syn_{c}" for c in range(n_ch) if f"tau_syn_{c}" not in hp]
+                           + [f"I_syn_{c}" for c in range(n_ch) if f"I_syn_{c}" not in states])
+                if missing:
+                    raise ValueError(
+                        f"soma config {breed_name}/{cfg_name} filters per inbox channel but "
+                        f"lacks {missing} for synaptic_channels={n_ch}")
+        for breed_name, breed in self._synapse_breeds.items():
+            delivers = any(f.__name__ == "delivery_synapse_step_func"
+                           for f, _p in breed.step_funcs.values())
+            for cfg_name, cfg in self._component_configurations.get("synapse", {}).get(
+                    breed_name, {}).items():
+                hp = cfg.get("hyperparameters", {}) or {}
+                if "channel" in hp:
+                    self._check_channel(hp["channel"], f"synapse config {breed_name}/{cfg_name}")
+                elif delivers:
+                    raise ValueError(
+                        f"synapse config {breed_name}/{cfg_name} uses the delivery kernel and "
+                        "needs a 'channel' hyperparameter (the inbox slot it deposits into)")
+
+    def _check_channel(self, value, where: str) -> None:
+        ch = float(value)
+        if ch != int(ch) or not 0 <= int(ch) < self._synaptic_channels:
+            raise ValueError(
+                f"{where}: channel {value!r} is not in 0..{self._synaptic_channels - 1} "
+                f"(NeuromorphicModel(synaptic_channels={self._synaptic_channels}))")
+
     def setup(self) -> None:
         """
         One-time heavy initialization: code gen, JIT, priority analysis.
@@ -1397,10 +1450,15 @@ class NeuromorphicModel(Model):
         # index map: in push mode every soma breed is a member (each soma has a row); in
         # pull mode it has no members, every index is -1, somas loop over their
         # afferents and a synapse's deposit is a no-op (step_functions/synaptic_input.py).
+        self._check_synaptic_channels()
         if not any(b['name'] == "synaptic_input" for b in self._breed_local_arrays):
             members = list(self._soma_breeds.values()) if self._synaptic_input == "push" else []
+            # neighbor_visible: a synapse whose post soma lives on another rank deposits
+            # into the soma's ghost row and SAGESim sums it back into the owner's row
+            # (reduce-back-to-owner), so push works for any partition, not only post-owns.
             self.register_breed_local_array(
-                "synaptic_input", members, shape_per_agent=(2,), reduce="sum")
+                "synaptic_input", members, shape_per_agent=(self._synaptic_channels,),
+                neighbor_visible=bool(members), reduce="sum")
         if self._synaptic_input == "push":
             for name, breed in self._synapse_breeds.items():
                 for priority, (func, _path) in breed.step_funcs.items():
@@ -2387,7 +2445,10 @@ class NeuromorphicModel(Model):
 
         Slot order is preserved verbatim and nothing is sorted or deduped: a synapse's
         list is positional (slot 0 = pre, slot 1 = post), so an autapse legitimately
-        reads [x, x].
+        reads [x, x]. A synapse listed with its pre only gets its post filled in from
+        the local soma that names it as incoming: a synapse must know its post to
+        deposit into it (push mode) and to see its spikes (learning rules). A synapse
+        whose post lives on another rank must list it in the file.
         """
         import time
         timings = {}
@@ -2410,6 +2471,11 @@ class NeuromorphicModel(Model):
             nbrs = soma['neighbors']
             counts[i] = len(nbrs)
             flat.extend(nbrs)
+        # post soma of each locally listed synapse, from the somas' incoming lists
+        post_of = {}
+        for soma in somas:
+            for sid in soma['neighbors']:
+                post_of[int(sid)] = soma['id']
         input_ids = []
         for j, syn in enumerate(synapses):
             k = n_s + j
@@ -2423,7 +2489,9 @@ class NeuromorphicModel(Model):
                 learning_rule_config=(syn.get('learning_rule_config') or 'default')
                 if rule else None,
                 overrides=syn.get('overrides'))
-            nbrs = syn['neighbors']
+            nbrs = list(syn['neighbors'])
+            if len(nbrs) == 1 and int(syn['id']) in post_of:
+                nbrs.append(post_of[int(syn['id'])])
             counts[k] = len(nbrs)
             flat.extend(nbrs)
             if nbrs and nbrs[0] == -1:
@@ -2565,12 +2633,6 @@ class NeuromorphicModel(Model):
         :param synapse_config: Default synapse config name
         """
         self._assert_unbuilt("load_from_adjacency")
-        if self._synaptic_input == "push" and MPI.COMM_WORLD.Get_size() > 1:
-            raise NotImplementedError(
-                "synaptic_input='push' needs every synapse on its post-soma's rank "
-                "(post-owns); load_from_adjacency releases that, and a current deposited "
-                "into a ghost soma would be dropped. Use load_post_owned / create_synapse, "
-                "or synaptic_input='pull'.")
         data = self._read_neighbor_partition_file(partition_file)
 
         # Validate the partition BEFORE building anything (cheap, local). These are

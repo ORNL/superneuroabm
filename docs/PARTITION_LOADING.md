@@ -328,9 +328,12 @@ the loader builds exactly what is listed.
 ```
 
 - **Synapse `neighbors` is positional and load-bearing**: slot 0 = `pre`, slot 1 =
-  `post` (the synapse kernel reads slot 0 for the incoming spike, slot 1 for STDP).
-  `[-1]` is an external-input synapse (pre = -1, no post). The loader copies the list
-  **verbatim** — it never sorts or dedups it.
+  `post` (the synapse kernel reads slot 0 for the incoming spike, slot 1 to deposit its
+  current in push mode and for STDP). `[-1]` is an external-input synapse (pre = -1).
+  The loader copies the list **verbatim** — it never sorts or dedups it — with one
+  addition: a one-slot list gets its `post` filled in from the local soma whose
+  `neighbors` names the synapse, so `[-1]` and `[pre]` are enough when the post is on
+  the same rank. A synapse whose post lives on another rank must list it.
 - **Soma `neighbors`** is its set of incoming synapse ids, order-free (the soma sums over
   them). This is the list Method 1 *derives*; here you state it.
 - **`remote_ranks`** now names **any** non-local neighbor — a synapse's remote pre soma
