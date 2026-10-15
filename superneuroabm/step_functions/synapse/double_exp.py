@@ -13,6 +13,7 @@ import numpy as np
 from cupyx import jit
 
 from superneuroabm.step_functions.synapse.util import get_soma_spike
+from superneuroabm.step_functions.synaptic_input import deliver_synaptic_current
 
 # Flush-to-zero floor for the synaptic currents; 0.0 = exact (see single_exp.I_FLOOR).
 I_FLOOR = 0.0
@@ -36,10 +37,19 @@ def synapse_double_exp_step_func(
     output_spikes_tensor,
     internal_states_buffer,
     learning_internal_states_buffer,
+    synaptic_input,
+    synaptic_input_idx,
 ):
     t_current = int(tick)
 
-    pre_soma_index = locations[agent_index][0]
+    # one alias of the neighbour list (the CSR transform rewrites exactly one);
+    # the post slot is optional (an adjacency file may list only the pre), and
+    # deposit_to_agent ignores a negative target
+    _nbrs = locations[agent_index]
+    pre_soma_index = _nbrs[0]
+    post_soma_index = -1
+    if len(_nbrs) > 1:
+        post_soma_index = _nbrs[1]
 
     spike = get_soma_spike(
         tick,
@@ -77,6 +87,9 @@ def synapse_double_exp_step_func(
 
     internal_states[agent_index][0] = I_fast
     internal_states[agent_index][1] = I_slow
+    # push mode: inbox slot 0 = fast component, slot 1 = slow component
+    deliver_synaptic_current(synaptic_input, synaptic_input_idx, post_soma_index, 0, I_fast)
+    deliver_synaptic_current(synaptic_input, synaptic_input_idx, post_soma_index, 1, I_slow)
 
     # Record synapse state to history buffer. Only [0] (I_fast) and [1]
     # (I_slow) are computational state — buffer width is shared across

@@ -38,6 +38,10 @@ Internal state:
 from cupyx import jit
 import cupy as cp
 
+from superneuroabm.step_functions.synaptic_input import (
+    has_inbox, read_synaptic_input,
+)
+
 
 @jit.rawkernel(device="cuda")
 def hg_lif_soma_step_func(
@@ -57,15 +61,21 @@ def hg_lif_soma_step_func(
     output_spikes_tensor,
     internal_states_buffer,
     learning_internal_states_buffer,
+    synaptic_input,
+    synaptic_input_idx,
 ):
     synapse_indices = locations[agent_index]
 
     # Sum synaptic currents (x_total) from all connected single_exp synapses
     x_total = 0.0
-    for i in range(len(synapse_indices)):
-        synapse_index = int(synapse_indices[i])
-        if synapse_index >= 0 and not cp.isnan(synapse_indices[i]):
-            x_total += internal_states[synapse_index][0]  # I_synapse
+    if has_inbox(agent_index, synaptic_input_idx):
+        # Afferent synapses deposited their currents into this soma's inbox last tick
+        x_total = read_synaptic_input(agent_index, synaptic_input, synaptic_input_idx, 0)
+    else:
+        for i in range(len(synapse_indices)):
+            synapse_index = int(synapse_indices[i])
+            if synapse_index >= 0 and not cp.isnan(synapse_indices[i]):
+                x_total += internal_states[synapse_index][0]  # I_synapse
 
     t_current = int(tick)
     # dt and I_bias received directly as scalar params

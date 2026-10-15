@@ -182,3 +182,26 @@ precedes `simulate()` and never runs between chunks.
   no arguments since commit `bf17a22`.~~ Fixed — both docs now use `enable_internal_states_tracking`,
   and the stale `setup(use_gpu=True)` is gone from the docs and from both tutorials.
 - Neither doc mentions `set_recorded_somas` or `get_all_spike_times`.
+
+---
+
+## Finding 4 — the record buffer is sized for every local agent, not the recorded subset (2026-10-01)
+
+Found while building `poc/hetero_chip/run_learning_poc.py`; not fixed, recorded for later.
+
+`_prepare_kernel_extras` sizes the record as `max(10000, num_local_agents * sync_ticks // 100)` slots
+(`superneuroabm/model.py`, the `max_slots` line). Two consequences:
+
+- **Size ignores `set_recorded_somas`.** It scales with all local agents — synapses included, which
+  never spike — rather than with the recorded somas. A 1-rank launch of 2.1 M agents x 200 k ticks
+  would ask for 4.2 G slots (34 GB) to record 1 120 output somas. Recording a subset is exactly when
+  the user knows the bound, and it is not used.
+- **The 1 % guess fails the other way for dense recorded subsets.** A 2-instance learning PoC run
+  records 140 output somas out of 10.6 k agents (1.3 %); when those somas fired near every tick, a
+  20 k-tick call produced 2.53 M spikes against 2.13 M slots (`RuntimeError: spike record overflow`). Workaround used: record nothing
+  during training (`set_recorded_somas([])`), chunk the test phase.
+
+A bound of `n_recorded_somas * sync_ticks` is exact (a soma spikes at most once per tick) and is never
+larger than needed by more than the firing fraction; with `recorded = None` it is `n_local_somas *
+sync_ticks`. Related: `simulate()` clears `_recorded_spikes` on entry, so a chunked run must read
+spikes after every call — worth one sentence in the `simulate()` docstring.

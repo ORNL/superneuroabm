@@ -7,7 +7,7 @@ Same as exp_pair_wise_stdp but clips weights to [wmin, wmax] after each update.
 import cupy as cp
 from cupyx import jit
 
-from superneuroabm.step_functions.synapse.util import get_soma_spike
+from superneuroabm.step_functions.synapse.util import get_soma_spike, trace_decay
 from sagesim.math_utils import clamp
 
 
@@ -92,8 +92,13 @@ def exp_pair_wise_stdp_bounded(
     wmax = learning_params[agent_index][7]
 
 
-    pre_trace = pre_trace * (1 - dt / tau_pre_stdp) + pre_soma_spike * a_exp_pre
-    post_trace = post_trace * (1 - dt / tau_post_stdp) + post_soma_spike * a_exp_post
+    # decay-on-wake: ticks since this rule last ran (1 when stepped every tick;
+    # an event-woken rule catches its traces up over the ticks it slept)
+    _n = t_current - int(learning_internal_states[agent_index][3])
+    if _n < 1:
+        _n = 1
+    pre_trace = pre_trace * trace_decay(dt, tau_pre_stdp, _n) + pre_soma_spike * a_exp_pre
+    post_trace = post_trace * trace_decay(dt, tau_post_stdp, _n) + post_soma_spike * a_exp_post
     dW = pre_trace * post_soma_spike - post_trace * pre_soma_spike
 
 
@@ -105,6 +110,7 @@ def exp_pair_wise_stdp_bounded(
     learning_internal_states[agent_index][0] = pre_trace
     learning_internal_states[agent_index][1] = post_trace
     learning_internal_states[agent_index][2] = dW
+    learning_internal_states[agent_index][3] = 1.0 * t_current
 
     # Safe buffer indexing: use modulo to prevent out-of-bounds access
     # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always

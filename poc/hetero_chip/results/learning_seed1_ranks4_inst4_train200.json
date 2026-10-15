@@ -1,0 +1,116 @@
+{
+  "chip_seed": 1,
+  "ranks": 4,
+  "instances": 4,
+  "n_train": 200,
+  "n_test": 60,
+  "t_on": 50,
+  "t_off": 20,
+  "somas": 354,
+  "synapses": 20794,
+  "ticks": 18200,
+  "build_s": 0.24668335914611816,
+  "train_s": 37.508721351623535,
+  "test_s": 11.695558309555054,
+  "digest": "f4cc22eec331aa4bac53ae2fc493aef81e604a09ac66902dde53bbb5d56c7beb",
+  "designs": [
+    {
+      "design": "ideal",
+      "acc_mean": 16.666666666666664,
+      "acc_sd": 0.0,
+      "acc_min": 16.666666666666664,
+      "acc_max": 16.666666666666664,
+      "acc": [
+        16.666666666666664,
+        16.666666666666664,
+        16.666666666666664,
+        16.666666666666664
+      ],
+      "nestgpu": "a new C++ rule (fits its plasticity hook)"
+    },
+    {
+      "design": "linear",
+      "acc_mean": 16.666666666666664,
+      "acc_sd": 0.0,
+      "acc_min": 16.666666666666664,
+      "acc_max": 16.666666666666664,
+      "acc": [
+        16.666666666666664,
+        16.666666666666664,
+        16.666666666666664,
+        16.666666666666664
+      ],
+      "nestgpu": "a new C++ rule (fits its plasticity hook)"
+    },
+    {
+      "design": "d2d",
+      "acc_mean": 16.666666666666664,
+      "acc_sd": 1.1785113019775788,
+      "acc_min": 15.0,
+      "acc_max": 18.333333333333332,
+      "acc": [
+        15.0,
+        16.666666666666664,
+        18.333333333333332,
+        16.666666666666664
+      ],
+      "nestgpu": "per-synapse parameters: not passed to the hook"
+    },
+    {
+      "design": "c2c",
+      "acc_mean": 16.666666666666664,
+      "acc_sd": 0.0,
+      "acc_min": 16.666666666666664,
+      "acc_max": 16.666666666666664,
+      "acc": [
+        16.666666666666664,
+        16.666666666666664,
+        16.666666666666664,
+        16.666666666666664
+      ],
+      "nestgpu": "a random number per pulse: not passed to the hook"
+    },
+    {
+      "design": "levels16",
+      "acc_mean": 20.0,
+      "acc_sd": 5.400617248673218,
+      "acc_min": 11.666666666666666,
+      "acc_max": 26.666666666666668,
+      "acc": [
+        26.666666666666668,
+        20.0,
+        11.666666666666666,
+        21.666666666666668
+      ],
+      "nestgpu": "a random number per pulse: not passed to the hook"
+    },
+    {
+      "design": "levels4",
+      "acc_mean": 19.999999999999996,
+      "acc_sd": 2.6352313834736503,
+      "acc_min": 16.666666666666664,
+      "acc_max": 23.333333333333332,
+      "acc": [
+        16.666666666666664,
+        21.666666666666668,
+        18.333333333333332,
+        23.333333333333332
+      ],
+      "nestgpu": "a random number per pulse: not passed to the hook"
+    },
+    {
+      "design": "rram_full",
+      "acc_mean": 10.416666666666668,
+      "acc_sd": 4.4682522061515035,
+      "acc_min": 3.3333333333333335,
+      "acc_max": 15.0,
+      "acc": [
+        3.3333333333333335,
+        10.0,
+        15.0,
+        13.333333333333334
+      ],
+      "nestgpu": "both of the above"
+    }
+  ]
+}

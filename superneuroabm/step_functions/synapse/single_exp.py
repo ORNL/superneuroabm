@@ -8,6 +8,7 @@ import numpy as np
 from cupyx import jit
 
 from superneuroabm.step_functions.synapse.util import get_soma_spike
+from superneuroabm.step_functions.synaptic_input import deliver_synaptic_current
 from sagesim.utils import get_neighbor_data_from_tensor
 
 # Flush-to-zero floor for the synaptic current. 0.0 (default) = exact dynamics. A
@@ -37,12 +38,21 @@ def synapse_single_exp_step_func(
     output_spikes_tensor,
     internal_states_buffer,
     learning_internal_states_buffer,
+    synaptic_input,
+    synaptic_input_idx,
 ):
     t_current = int(tick)
 
     # locations[agent_index] = [pre_soma_index, post_soma_index]
     # SAGESim has already converted agent IDs to local indices
-    pre_soma_index = locations[agent_index][0]
+    # one alias of the neighbour list (the CSR transform rewrites exactly one);
+    # the post slot is optional (an adjacency file may list only the pre), and
+    # deposit_to_agent ignores a negative target
+    _nbrs = locations[agent_index]
+    pre_soma_index = _nbrs[0]
+    post_soma_index = -1
+    if len(_nbrs) > 1:
+        post_soma_index = _nbrs[1]
 
     spike = get_soma_spike(
         tick,
@@ -75,6 +85,8 @@ def synapse_single_exp_step_func(
         I_synapse = 0.0
 
     internal_states[agent_index][0] = I_synapse
+    # push mode: the post soma reads this from its inbox next tick instead of pulling it
+    deliver_synaptic_current(synaptic_input, synaptic_input_idx, post_soma_index, 0, I_synapse)
 
     # Safe buffer indexing: use modulo to prevent out-of-bounds access
     # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always

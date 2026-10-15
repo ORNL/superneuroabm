@@ -15,6 +15,26 @@ soma:
         v: -60.0  # Initial membrane voltage
         tcount: 0.0  # Time counter
         tlast: 0.0  # Last spike time
+  lif_psc_soma:
+    # lif_soma with the synaptic current filtered on the soma (push mode, pair with
+    # delivery_synapse); same numbers as lif_soma config_0 plus tau_syn
+    config_0:
+      hyperparameters:
+        C: 10e-9
+        R: 1e6
+        vthr: -45
+        tref: 5e-3
+        vrest: -60
+        vreset: -60
+        tref_allows_integration: 1
+        I_in: 0
+        scaling_factor: 1e-5
+        tau_syn: 1e-2  # Synaptic current decay (s); = single_exp_synapse tau_fall
+      internal_states:
+        v: -60.0
+        tcount: 0.0
+        tlast: 0.0
+        I_syn: 0.0  # Summed synaptic current, filtered here instead of per synapse
   izh_soma:
     config_0:   #intrinsic bursting
       hyperparameters:
@@ -98,6 +118,17 @@ synapse:
       internal_states:
         I_synapse: 0.0  # Initial synaptic current
 
+  delivery_synapse:
+    # no per-tick state: deposits spike * scale * weight into the post soma's inbox
+    # (push mode; the kinetics are on the soma, see lif_psc_soma). Event-capable.
+    config_0:
+      hyperparameters:
+        weight: 14.0
+        synaptic_delay: 1.0
+        scale: 1.0
+      internal_states:
+        unused: 0.0
+
   weighted_synapse:
     config_0:
       hyperparameters:
@@ -131,6 +162,7 @@ learning_rule:
         pre_trace: 0 # Pre-synaptic trace
         post_trace: 0 # Post-synaptic trace
         dW: 0 # Weight change accumulator
+        last_tick: -1 # Tick the rule last ran (decay-on-wake); -1 = never
 
   three_bit_exp_pair_wise_stdp:
     default:
@@ -148,6 +180,7 @@ learning_rule:
         pre_trace: 0 # Pre-synaptic trace
         post_trace: 0 # Post-synaptic trace
         dW: 0 # Weight change accumulator
+        last_tick: -1 # Tick the rule last ran (decay-on-wake); -1 = never
 
   exp_pair_wise_stdp_bounded:
     default:
@@ -164,6 +197,7 @@ learning_rule:
         pre_trace: 0 # Pre-synaptic trace
         post_trace: 0 # Post-synaptic trace
         dW: 0 # Weight change accumulator
+        last_tick: -1 # Tick the rule last ran (decay-on-wake); -1 = never
 
   memristive_exp_pair_wise_stdp:
     default:
@@ -183,3 +217,4 @@ learning_rule:
         pre_trace: 0 # Pre-synaptic trace
         post_trace: 0 # Post-synaptic trace
         dW: 0 # Weight change accumulator
+        last_tick: -1 # Tick the rule last ran (decay-on-wake); -1 = never

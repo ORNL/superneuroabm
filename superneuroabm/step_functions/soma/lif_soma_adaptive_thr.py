@@ -6,6 +6,10 @@ LIF Neuron and weighted synapse step functions for spiking neural networks
 from cupyx import jit
 import cupy as cp
 
+from superneuroabm.step_functions.synaptic_input import (
+    has_inbox, read_synaptic_input,
+)
+
 
 @jit.rawkernel(device="cuda")
 def lif_soma_adaptive_thr_step_func(  # NOTE: update the name to soma_step_func from neuron_step_func
@@ -25,17 +29,23 @@ def lif_soma_adaptive_thr_step_func(  # NOTE: update the name to soma_step_func 
     output_spikes_tensor,
     internal_states_buffer,
     learning_internal_states_buffer,
+    synaptic_input,
+    synaptic_input_idx,
 ):
     synapse_indices = locations[agent_index]  # Now contains local indices instead of IDs
 
     I_synapse = 0.0
 
-    # synapse_indices now contains pre-computed local indices (converted in SAGESim)
-    # No linear search needed!
-    for i in range(len(synapse_indices)):
-        synapse_index = int(synapse_indices[i])
-        if synapse_index >= 0 and not cp.isnan(synapse_indices[i]):
-            I_synapse += internal_states[synapse_index][0]
+    if has_inbox(agent_index, synaptic_input_idx):
+        # Afferent synapses deposited their currents into this soma's inbox last tick
+        I_synapse = read_synaptic_input(agent_index, synaptic_input, synaptic_input_idx, 0)
+    else:
+        # synapse_indices now contains pre-computed local indices (converted in SAGESim)
+        # No linear search needed!
+        for i in range(len(synapse_indices)):
+            synapse_index = int(synapse_indices[i])
+            if synapse_index >= 0 and not cp.isnan(synapse_indices[i]):
+                I_synapse += internal_states[synapse_index][0]
 
     # Get the current time step value:
     t_current = int(tick)  # Check if tcount is needed or if we ca use this directly.

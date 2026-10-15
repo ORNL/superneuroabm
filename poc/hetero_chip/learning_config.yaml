@@ -1,0 +1,90 @@
+# =============================================================================
+# On-chip learning PoC -- parameter sets for learning_devices.py.
+# Key order is index order. Device values are illustrative orders of magnitude:
+# nonlinear SET/RESET steps, write noise comparable to the step, ~30 % device-to-device
+# step variation, 4-16 conductance levels and a few % stuck cells are all typical of
+# reported RRAM/PCM synapse arrays; none is fitted to one device.
+# =============================================================================
+
+soma:
+  learn_relay:
+    default:
+      hyperparameters:
+        thr: 0.5
+      internal_states:
+        v: 0.0
+        x: 0.0
+
+  learn_lif:
+    default:
+      hyperparameters:
+        vthr: 1.0
+        tau_m: 20e-3
+        v_floor: -1.0
+        tau_x: 10e-3
+      internal_states:
+        v: 0.0
+        x: 0.0
+
+synapse:
+  learn_wire:
+    default:
+      hyperparameters:
+        weight: 1.0
+        synaptic_delay: 1.0
+      internal_states:
+        I: 0.0
+
+  learn_device:
+    ideal:                    # analog, deterministic, conductance-dependent (soft-bounded) steps
+      hyperparameters: &dev
+        weight: 0.0           # pinned key #0, unused: the weight is the state g
+        synaptic_delay: 1.0
+        w_scale: 2.0          # membrane step per spike at g - g_ref = 1
+        g_min: 0.0
+        alpha_p: 0.0005       # SET step at g = g_min (larger steps learn faster but noisier)
+        alpha_d: 0.000075     # RESET step at g = g_max
+        nl: 1.0               # step shrinks as the device nears its bound
+        sigma_c2c: 0.0
+        sigma_d2d: 0.0
+        n_levels: 0
+        p_stuck: 0.0
+        theta: 1.0            # post trace above which a pulse is SET
+        t_learn_end: 0        # set by the driver
+        g_ref: 0.45           # reference column conductance (devices start here: no drive)
+      internal_states:
+        I: 0.0
+        g: 0.45
+    linear:                   # constant steps, hard bounds (abrupt, state-independent switching)
+      hyperparameters:
+        <<: *dev
+        nl: 0.0
+      internal_states: {I: 0.0, g: 0.45}
+    d2d:                      # every device its own SET and RESET step size (30 %)
+      hyperparameters:
+        <<: *dev
+        sigma_d2d: 0.3
+      internal_states: {I: 0.0, g: 0.45}
+    c2c:                      # write noise as large as the step
+      hyperparameters:
+        <<: *dev
+        sigma_c2c: 1.0
+      internal_states: {I: 0.0, g: 0.45}
+    levels16:                 # 16 states, stochastic switching
+      hyperparameters:
+        <<: *dev
+        n_levels: 16
+      internal_states: {I: 0.0, g: 0.45}
+    levels4:                  # 4 states, stochastic switching
+      hyperparameters:
+        <<: *dev
+        n_levels: 4
+      internal_states: {I: 0.0, g: 0.45}
+    rram_full:                # d2d + c2c + 16 levels + 2 % stuck cells
+      hyperparameters:
+        <<: *dev
+        sigma_c2c: 1.0
+        sigma_d2d: 0.3
+        n_levels: 16
+        p_stuck: 0.02
+      internal_states: {I: 0.0, g: 0.45}

@@ -30,6 +30,8 @@ FILES=(
     tests/test_load_from_adjacency.py
     tests/test_mpi_comparison.py
     tests/test_lif_mixed_synapses_stdp_mpi.py
+    tests/test_synaptic_input_push.py
+    tests/test_event_stepping.py
 )
 
 printf '%-42s' "test"

@@ -1,0 +1,136 @@
+# =============================================================================
+# Heterogeneous neuromorphic chip -- device and circuit parameter sets.
+#
+# Passed as user_config=, so it REPLACES the packaged defaults: every breed used by
+# run_chip_poc.py is declared here and nothing else. Key order is index order (the
+# kernels in chip_devices.py read parameters positionally); see that file's
+# docstring for the layouts.
+#
+# Values are illustrative, chosen at the order of magnitude reported in the device
+# literature, not fitted to one device:
+#   - RRAM on/off ~10, programming error and read noise of a few % of the range,
+#     stuck-at faults at the % level (fault-tolerance studies commonly cite
+#     ~1.75 % SA0 / ~9 % SA1 for HfOx arrays; we use a milder 1 % / 1 %).
+#   - PCM power-law drift G(t) = G0 (t/t0)^-nu with nu ~ 0.06 +- 0.02, t0 = 20 s,
+#     and global drift compensation as in Joshi et al., Nat. Commun. 11, 2473 (2020).
+#   - Analog neuron threshold / time-constant mismatch of 10-20 %, typical of
+#     subthreshold mixed-signal neuromorphic circuits.
+# Membrane voltage is in units of the firing threshold; conductances in units of G_max.
+# =============================================================================
+
+soma:
+  chip_poisson_encoder:
+    default:
+      hyperparameters:
+        rate: 0.0            # Hz; set per encoder from the pixel intensity
+      internal_states:
+        v: 0.0
+
+  chip_digital_lif:
+    ideal:                   # float membrane: the reference the hardware is measured against
+      hyperparameters:
+        vthr: 1.0
+        tau_m: 50e-3
+        bias: 0.0            # per neuron, from the classifier intercept
+        v_floor: -1.0
+        frac_bits: 0
+      internal_states:
+        v: 0.0
+    fixed8:                  # 8 fractional bits
+      hyperparameters:
+        vthr: 1.0
+        tau_m: 50e-3
+        bias: 0.0
+        v_floor: -1.0
+        frac_bits: 8
+      internal_states:
+        v: 0.0
+
+  chip_analog_lif:
+    default:
+      hyperparameters:
+        vthr: 1.0
+        tau_m: 50e-3
+        bias: 0.0
+        v_floor: -1.0
+        sigma_vth: 0.10      # frozen threshold mismatch (relative)
+        sigma_tau: 0.20      # frozen leak mismatch (relative)
+        sigma_noise: 0.01    # thermal noise on the membrane, per tick
+      internal_states:
+        v: 0.0
+
+synapse:
+  chip_sram_synapse:
+    float:
+      hyperparameters:
+        weight: 0.0          # pinned key #0; set per synapse from the classifier
+        synaptic_delay: 1.0  # pinned key #1
+        w_max: 0.5
+        n_bits: 0            # 0 = float weights
+      internal_states:
+        I: 0.0
+    int4:
+      hyperparameters:
+        weight: 0.0
+        synaptic_delay: 1.0
+        w_max: 0.5
+        n_bits: 4
+      internal_states:
+        I: 0.0
+
+  chip_rram_synapse:
+    1t1r:                    # access transistor: conducts only while its row is pulsed
+      hyperparameters: &rram_hp
+        weight: 0.0
+        synaptic_delay: 1.0
+        w_max: 0.5
+        g_min: 0.1           # on/off ratio 10
+        sigma_prog: 0.05     # programming error, fraction of the conductance range
+        sigma_read: 0.03     # read noise, relative
+        p_sa0: 0.01          # stuck at g_min
+        p_sa1: 0.01          # stuck at g_max
+        passive: 0
+        v_swing: 0.01        # membrane threshold relative to the read voltage (--v-swing)
+        v_nl: 0.0            # selector nonlinearity (0 = linear I-V)
+        sigma_nl: 0.0
+        dynamic: 1           # 0 = static-only ablation (--static-only)
+      internal_states:
+        I: 0.0
+    passive:                 # selector-less crossbar: every cell leaks the membrane every tick
+      hyperparameters:
+        <<: *rram_hp
+        passive: 1
+      internal_states:
+        I: 0.0
+    passive_sel:             # passive crossbar with a sinh-type selector
+      hyperparameters:
+        <<: *rram_hp
+        passive: 1
+        v_nl: 0.1
+        sigma_nl: 0.1
+      internal_states:
+        I: 0.0
+
+  chip_pcm_synapse:
+    month1:
+      hyperparameters: &pcm_hp
+        weight: 0.0
+        synaptic_delay: 1.0
+        w_max: 0.5
+        g_min: 0.05
+        sigma_prog: 0.03
+        sigma_read: 0.02
+        nu_mean: 0.06
+        nu_sigma: 0.02
+        t0: 20.0             # s
+        t_deploy: 2.6e6      # s since programming (~1 month)
+        gdc: 0
+        dynamic: 1           # 0 = static-only ablation (--static-only)
+      internal_states:
+        I: 0.0
+    month1_gdc:
+      hyperparameters:
+        <<: *pcm_hp
+        gdc: 1
+      internal_states:
+        I: 0.0

@@ -63,7 +63,10 @@ def build_parser():
     p.add_argument("--g", type=float, default=5.0)
     p.add_argument("--psp-mv", type=float, default=0.1,
                    help="Excitatory PSP peak the weight is calibrated to.")
-    p.add_argument("--firing-rate", type=float, default=10.0)
+    p.add_argument("--external-rate", type=float, default=14.53,
+                   help="Per-external-afferent Poisson rate in Hz. The single generator "
+                        "runs at C_E * this, the aggregate, matching brunel_sna_local.py "
+                        "and NEST GPU's own brunel_net.py convention.")
     p.add_argument("--csv", default=str(SCRIPT_DIR / "results" / "brunel_nestgpu.csv"))
     return p
 
@@ -98,8 +101,14 @@ def run_once(args, repeat):
         "Theta_rel": V_TH_MV - E_L_MV, "V_reset_rel": V_RESET_MV - E_L_MV,
         "tau_ex": TAU_SYN_MS, "tau_in": TAU_SYN_MS, "t_ref": T_REF_MS,
     })
+    # One generator standing in for each neuron's C_E external afferents, so its rate is
+    # the AGGREGATE C_E * nu_ext -- NEST GPU's own brunel_net.py:29 does the same thing
+    # (poiss_rate = 20000.0 for CE = 800). Setting it to the per-afferent rate instead
+    # leaves the drive C_E times too weak and the network silent: at 10 Hz the mean
+    # depolarisation is nu*tau_m*tau_syn*J/C = 0.027 mV against Theta_rel = 15 mV.
+    poiss_rate = C_E * args.external_rate
     pg = ngpu.Create("poisson_generator")
-    ngpu.SetStatus(pg, "rate", args.firing_rate)
+    ngpu.SetStatus(pg, "rate", poiss_rate)
     log.add("create", time.time() - t0)
 
     exc = neurons[0:NE]
@@ -151,13 +160,19 @@ def run_once(args, repeat):
     except Exception:
         pass
 
+    log.add("firing_rate_hz", rate if rate == rate else 0.0)
     log.add("total", time.time() - t_pipeline)
 
     bc.print_table(log.rows, f"NEST GPU Brunel  N={args.neurons} "
                              f"K={args.in_degree} synapses={n_syn:,}")
     print(f"\n  J_E = {J_E:.2f} pA  (PSP peak {args.psp_mv} mV), "
           f"J_I = {J_I:.2f} pA, delay = {delay_ms} ms")
+    print(f"  drive: {C_E} external afferents x {args.external_rate} Hz "
+          f"-> generator rate {poiss_rate:,.0f} Hz")
     print(f"  mean firing rate: {rate:.3f} Hz")
+    if rate == 0.0:
+        print("  WARNING: network is SILENT -- per-tick timings describe an empty "
+              "event loop only.")
     return log
 
 

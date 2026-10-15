@@ -34,6 +34,32 @@ constraint at the cost of the producer writing connectivity in full.
 §§1–6 below describe Method 1 (post-owns) in detail — the common case — then §7 covers
 Method 2 as the constraint-releasing alternative.
 
+### One builder; the encoding is a reader detail
+
+Both loaders, and `create_from_lists()`, produce a **`BuildSpec`** — agent ids, one combo
+code per agent, the neighbour CSR and the remote ranks — and hand it to the single
+`_build(spec)`. The only thing that differs is where the CSR comes from: post-owned
+**derives** it from `pre`/`post`, adjacency **transcribes** the given neighbour lists.
+
+A `Combo` is `(component_class, breed, config, learning_rule, learning_rule_config,
+overrides)`. Property rows are computed **once per combo**, not once per agent, and each
+column is stored as a small table of distinct rows plus one `int32` code per agent. A
+network whose agents are all identical has one combo; one where every agent differs has
+one combo per agent, which is no more than storing a row each.
+
+This is why `load_post_owned()` accepts **either** encoding:
+
+* `.pkl` — a list of per-agent dicts (§2). Readable, and what most producers emit.
+* `.npz` — the same network as typed arrays, written by
+  `save_brunel_partition(output_format="columns")`. Use it when the `.pkl` will not fit:
+  a row-oriented file inflates roughly 30x in host RAM while it is being read, which
+  OOM-kills at Brunel scale (12.5M synapses).
+
+Both go through the same builder and produce the same model, so the choice is about
+whether your network fits in RAM as a list of dicts — nothing else. `load_post_owned()`
+also accepts an already-loaded dict of either shape, for a producer that builds in memory
+and never touches disk.
+
 ---
 
 ## 1. Responsibility boundary

@@ -6,6 +6,7 @@ from collections import defaultdict, namedtuple
 from collections.abc import Mapping
 from typing import Dict, List, Set
 from pathlib import Path
+import inspect
 
 import numpy as np
 import cupy as cp
@@ -18,8 +19,10 @@ from superneuroabm.step_functions.soma.izh import izh_soma_step_func
 from superneuroabm.step_functions.soma.lif import lif_soma_step_func
 from superneuroabm.step_functions.soma.lif_soma_adaptive_thr import lif_soma_adaptive_thr_step_func
 from superneuroabm.step_functions.soma.hg_lif import hg_lif_soma_step_func
+from superneuroabm.step_functions.soma.lif_psc import lif_psc_soma_step_func
 from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
 from superneuroabm.step_functions.synapse.weighted_synapse import weighted_synapse_step_func
+from superneuroabm.step_functions.synapse.delivery import delivery_synapse_step_func
 from superneuroabm.util import load_component_configurations
 
 
@@ -84,6 +87,7 @@ def _default_soma_breeds():
         "lif_soma": (lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif.py"),
         "lif_soma_adaptive_thr": (lif_soma_adaptive_thr_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif_soma_adaptive_thr.py"),
         "hg_lif_soma": (hg_lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "hg_lif.py"),
+        "lif_psc_soma": (lif_psc_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif_psc.py"),
     }
 
 
@@ -91,7 +95,19 @@ def _default_synapse_breeds():
     return {
         "single_exp_synapse": (synapse_single_exp_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "single_exp.py"),
         "weighted_synapse": (weighted_synapse_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "weighted_synapse.py"),
+        "delivery_synapse": (delivery_synapse_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "delivery.py"),
     }
+
+
+# Synapse kinds with no per-tick state, so they may be event-woken (synapse_stepping="event"):
+# stepped only on the tick after their pre fired or an input event arrived.
+EVENT_CAPABLE_SYNAPSES = {"delivery_synapse"}
+# Soma kinds that take their input from the inbox only (no pull loop): push mode only.
+PUSH_ONLY_SOMAS = {"lif_psc_soma"}
+# Built-in learning rules that catch their traces up on wake (trace_decay + last_tick slot),
+# so the learning-rule selector can be event-woken by pre or post spikes.
+EVENT_CAPABLE_RULES = {"exp_pair_wise_stdp", "exp_pair_wise_stdp_bounded",
+                       "exp_pair_wise_stdp_quantized", "exp_pair_wise_stdp_memristive"}
 
 
 def _default_learning_rules():
@@ -130,6 +146,17 @@ def _compute_max_property_sizes(configurations: dict) -> dict:
     return property_maxes
 
 
+SYNAPTIC_INPUT_PARAMS = ("synaptic_input", "synaptic_input_idx")
+
+
+def _synaptic_input_arrays(step_func) -> List[str]:
+    """Breed-local arrays a soma/synapse kernel declares: ["synaptic_input"] when its
+    parameter list ends with the inbox pair, else [] (the kernel keeps its old
+    signature and pulls). See superneuroabm/step_functions/synaptic_input.py."""
+    params = list(inspect.signature(step_func).parameters)
+    return ["synaptic_input"] if tuple(params[-2:]) == SYNAPTIC_INPUT_PARAMS else []
+
+
 class NeuromorphicModel(Model):
     def __init__(
         self,
@@ -138,6 +165,8 @@ class NeuromorphicModel(Model):
         learning_rule_info=None,
         user_config=None,
         enable_internal_states_tracking: bool = True,
+        synaptic_input: str = "pull",
+        synapse_stepping: str = "clocked",
     ) -> None:
         """
         Creates an SNN Model and provides methods to create, simulate,
@@ -153,14 +182,46 @@ class NeuromorphicModel(Model):
             internal states history for all agents during simulation.
             If False, disables tracking to reduce memory usage and improve
             performance. Default is True for backward compatibility.
+        :param synaptic_input: "pull" (default): each soma sums its afferent
+            synapses' currents, one thread per soma. "push": each synapse deposits
+            its current into the post soma's inbox (a reduce breed-local array) and
+            the soma reads one row; O(1) per soma instead of O(fan-in), same values.
+            Every synapse kernel in the model must then take the ``synaptic_input,
+            synaptic_input_idx`` parameters (all built-in ones do); a soma kernel
+            without them keeps pulling. See superneuroabm/step_functions/synaptic_input.py.
+        :param synapse_stepping: "clocked" (default): every synapse is stepped every
+            tick. "event": a synapse is stepped only on the tick after its pre-soma fired
+            or an injected input event arrived, so the synapse phase costs O(spikes x
+            fan-out) instead of O(synapses). Needs synaptic_input="push" and synapse
+            kinds with no per-tick state (EVENT_CAPABLE_SYNAPSES, e.g. delivery_synapse
+            with lif_psc_soma); the default synapse kinds are then restricted to those,
+            and register_synapse_type needs event_capable=True. Learning rules are woken
+            by their pre or post spike and must be event-capable (decay-on-wake traces,
+            see the built-in rules or register_learning_rule(..., event_capable=True)).
         """
         super().__init__(space=NetworkSpace(ordered=True),
                          agent_slack_factor=1.0, csr_slack_factor=1.0)
 
+        if synaptic_input not in ("pull", "push"):
+            raise ValueError(f"synaptic_input must be 'pull' or 'push', got {synaptic_input!r}")
+        self._synaptic_input = synaptic_input
+        if synapse_stepping not in ("clocked", "event"):
+            raise ValueError(f"synapse_stepping must be 'clocked' or 'event', got {synapse_stepping!r}")
+        if synapse_stepping == "event" and synaptic_input != "push":
+            raise ValueError("synapse_stepping='event' needs synaptic_input='push'")
+        self._synapse_stepping = synapse_stepping
+
         if soma_breed_info is None:
             soma_breed_info = _default_soma_breeds()
+            if synaptic_input == "pull":
+                # a soma that only reads the inbox would get nothing in pull mode
+                soma_breed_info = {k: v for k, v in soma_breed_info.items()
+                                   if k not in PUSH_ONLY_SOMAS}
         if synapse_breed_info is None:
             synapse_breed_info = _default_synapse_breeds()
+            if synapse_stepping == "event":
+                synapse_breed_info = {k: v for k, v in synapse_breed_info.items()
+                                      if k in EVENT_CAPABLE_SYNAPSES}
 
         self.enable_internal_states_tracking = enable_internal_states_tracking
         self._config_list_cache = {}
@@ -374,6 +435,19 @@ class NeuromorphicModel(Model):
     def _combo_of(self, agent_id: int):
         code = self._combo_code_of(agent_id)
         return self._combo_table[code] if code is not None else None
+
+    def _synapses_with_rule(self, rows, agent_ids):
+        """Wake-eligibility mask for the learning-rule phase: True where the synapse
+        was created with a learning rule. Bulk builds index the per-row combo codes
+        directly (buffer rows of local agents are the local rows); the incremental path
+        looks each id up."""
+        has_rule = np.array([c.learning_rule is not None for c in self._combo_table], dtype=bool)
+        codes = self._combo_codes
+        if codes is not None and len(rows) and int(rows.max()) < len(codes):
+            return has_rule[np.asarray(codes)[np.asarray(rows)]]
+        return np.array([
+            (lambda c: c is not None and c.learning_rule is not None)(self._combo_of(int(a)))
+            for a in agent_ids], dtype=bool)
 
     def _combo_agent_ids(self):
         """Every locally known agent id that has a combo. Used only by the views."""
@@ -735,6 +809,7 @@ class NeuromorphicModel(Model):
             module_fpath=step_func_path,
             priority=0,
             no_double_buffer=self._soma_no_double_buffer,
+            breed_local_arrays=_synaptic_input_arrays(step_func),
         )
         return breed
 
@@ -747,6 +822,10 @@ class NeuromorphicModel(Model):
             module_fpath=step_func_path,
             priority=100,
             no_double_buffer=self._synapse_no_double_buffer,
+            breed_local_arrays=_synaptic_input_arrays(step_func),
+            # event stepping: woken by neighbour 0 (the pre-soma) raising a spike, and
+            # by injected input events (see _get_extra_kernel_config)
+            wake_on_roles=[0] if self._synapse_stepping == "event" else None,
         )
         return breed
 
@@ -771,7 +850,8 @@ class NeuromorphicModel(Model):
         self._soma_breeds[name] = soma_breed
         self._breed_names = list(self._agent_factory._breeds.keys())
 
-    def register_synapse_type(self, name: str, step_func, step_func_path: Path) -> None:
+    def register_synapse_type(self, name: str, step_func, step_func_path: Path,
+                              event_capable: bool = False) -> None:
         """Register a custom synapse type with its step function.
 
         Must be called before setup(). The learning rule selector is
@@ -780,6 +860,8 @@ class NeuromorphicModel(Model):
         :param name: Unique name for the synapse type.
         :param step_func: The step function callable.
         :param step_func_path: Path to the module containing the step function.
+        :param event_capable: The kernel keeps no per-tick state, so it may be stepped
+            only when woken (synapse_stepping="event"). Required in event mode.
         """
         if self._setup_called:
             raise RuntimeError(
@@ -787,6 +869,10 @@ class NeuromorphicModel(Model):
             )
         if name in self._synapse_breeds:
             raise ValueError(f"Synapse type '{name}' is already registered.")
+        if self._synapse_stepping == "event" and not event_capable:
+            raise ValueError(
+                f"synapse_stepping='event': synapse type '{name}' must be event_capable "
+                "(no per-tick state; stepped only on the tick after its pre fired)")
 
         synapse_breed = self._make_synapse_breed(name, step_func, step_func_path)
         self.register_breed(synapse_breed)
@@ -794,9 +880,15 @@ class NeuromorphicModel(Model):
         self._breed_names = list(self._agent_factory._breeds.keys())
 
     def register_learning_rule(
-        self, step_func, step_func_path: Path
+        self, step_func, step_func_path: Path, event_capable: bool = False
     ) -> int:
         """Register a custom learning rule; returns auto-assigned integer ID.
+
+        :param event_capable: The rule catches its traces up with
+            ``trace_decay(dt, tau, t_current - last_tick)`` and records the tick it ran
+            in ``learning_internal_states[agent_index][3]`` (see the built-in rules), so
+            it may be stepped only when woken by a pre or post spike. Required in
+            synapse_stepping="event".
 
         Must be called before setup().
 
@@ -823,6 +915,7 @@ class NeuromorphicModel(Model):
             "func_name": func_name,
             "import_line": f"from {module_stem} import {func_name}",
             "sys_path_entry": sys_path_entry,
+            "event_capable": bool(event_capable),
         }
         self._learning_rule_names[func_name] = rule_id
 
@@ -901,6 +994,10 @@ class NeuromorphicModel(Model):
         # Only rank 0 writes to avoid race conditions on shared filesystems
         gen_dir = CURRENT_DIR_ABSPATH / "_generated"
         gen_file = gen_dir / "learning_rule_selector.py"
+        # regenerated in place: drop any cached source text (loader-sourced linecache
+        # entries are never invalidated) so the JIT reads the new file
+        import linecache
+        linecache.cache.pop(str(gen_file), None)
         comm = MPI.COMM_WORLD
         if comm.Get_rank() == 0:
             gen_dir.mkdir(exist_ok=True)
@@ -1265,9 +1362,20 @@ class NeuromorphicModel(Model):
         self._setup_called = True
         self._breed_names = list(self._agent_factory._breeds.keys())
 
-        # Always generate selector from registry, attach to all synapse breeds
+        # Generate the selector from the registry and attach it to all synapse breeds.
+        # With no rules registered (learning_rule_info={}) there is nothing to select:
+        # attaching it would still step every synapse once more per tick (12.5 M idle
+        # agents on Brunel) at priority 101.
         new_func, new_path = self._generate_learning_rule_selector()
-        for breed in self._synapse_breeds.values():
+        if self._synapse_stepping == "event":
+            not_capable = [r["func_name"] for r in self._learning_rules.values()
+                           if not (r.get("event_capable") or r["func_name"] in EVENT_CAPABLE_RULES)]
+            if not_capable:
+                raise ValueError(
+                    f"synapse_stepping='event': learning rules {not_capable} are not "
+                    "event-capable (register_learning_rule(..., event_capable=True) after "
+                    "converting them to trace_decay + last_tick, see the built-in rules)")
+        for breed in (self._synapse_breeds.values() if self._learning_rules else ()):
             # Priority = one after the last synapse step func
             max_priority = max(breed.step_funcs.keys())
             breed.register_step_func(
@@ -1275,7 +1383,35 @@ class NeuromorphicModel(Model):
                 module_fpath=new_path,
                 priority=max_priority + 1,
                 no_double_buffer=self._synapse_no_double_buffer,
+                breed_local_arrays=[],  # the selector does not touch the soma inbox
+                # event stepping: a rule runs on the tick after its pre (role 0) or its
+                # post (role 1) fired, or after an input event (pre-tick code)
+                wake_on_roles=[0, 1] if self._synapse_stepping == "event" else None,
             )
+            if self._synapse_stepping == "event":
+                # only synapses that carry a rule have anything to do at this priority
+                self.set_wake_eligibility(max_priority + 1, self._synapses_with_rule)
+
+        # Synaptic input: the soma inbox (reduce breed-local array) exists in both modes
+        # so kernel signatures do not depend on the mode. The mode is carried by its
+        # index map: in push mode every soma breed is a member (each soma has a row); in
+        # pull mode it has no members, every index is -1, somas loop over their
+        # afferents and a synapse's deposit is a no-op (step_functions/synaptic_input.py).
+        if not any(b['name'] == "synaptic_input" for b in self._breed_local_arrays):
+            members = list(self._soma_breeds.values()) if self._synaptic_input == "push" else []
+            self.register_breed_local_array(
+                "synaptic_input", members, shape_per_agent=(2,), reduce="sum")
+        if self._synaptic_input == "push":
+            for name, breed in self._synapse_breeds.items():
+                for priority, (func, _path) in breed.step_funcs.items():
+                    if priority == 100 and breed.step_func_blas.get(priority) != ["synaptic_input"]:
+                        raise ValueError(
+                            f"synaptic_input='push' needs every synapse kernel to deliver its "
+                            f"current, but synapse type '{name}' ({func.__name__}) does not take "
+                            "the 'synaptic_input, synaptic_input_idx' parameters")
+        if self._synapse_stepping == "event":
+            # a soma raises the event by writing its spike into output_spikes_tensor[t % 2]
+            self.configure_wake(event_property="output_spikes_tensor")
 
         # Skip redundant reset on first setup — agents already have defaults from creation.
         # Only needed on subsequent setup() calls (after simulate() has run).
@@ -1553,8 +1689,15 @@ class NeuromorphicModel(Model):
         # but carries no payload: no built-in or duplicate kernel indexes it, and a
         # 12.5 M-synapse network paid 50 MB on the GPU for the zeros.
         delay_reg = []
+        # Post-owns placement: the synapse lives on its post-soma's rank, like the
+        # loaders build it. Somas are round-robin; a synapse follows its post. This keeps
+        # the soma's afferent reads local (no ghost synapse rows) and is what push-mode
+        # delivery needs (a current deposited into a ghost soma would be dropped).
+        post_rank = (self._agent_factory._agent2rank.get(int(post_soma_id))
+                     if post_soma_id != -1 else None)
         synapse_id = self.create_agent_of_breed(
             breed=self._synapse_breeds[breed],
+            rank=post_rank,
             agent_id=agent_id,
             hyperparameters=hyperparameters,
             learning_hyperparameters=learning_hyperparameters,
@@ -2208,6 +2351,11 @@ class NeuromorphicModel(Model):
                 learning_rule_config=(syn.get('learning_rule_config') or 'default')
                 if rule else None,
                 overrides=syn.get('overrides'))
+        if self._synapse_stepping == "event" and n_y:
+            # same layout rule as the columnar builder: synapse rows by pre-soma
+            order = np.argsort(pre, kind="stable")
+            synapse_ids, pre, post = synapse_ids[order], pre[order], post[order]
+            codes[n_s:] = codes[n_s:][order]
 
         timings['property_columns'] = 0.0
         timings['records_to_columns'] = time.time() - _t
@@ -2329,6 +2477,14 @@ class NeuromorphicModel(Model):
         hp_vals = np.ascontiguousarray(arrays['syn_hp_vals'], dtype=np.float64)
         remote_ids = np.asarray(arrays.get('remote_ids', np.empty(0, np.int64)))
         remote_rank_of = np.asarray(arrays.get('remote_rank_of', np.empty(0, np.int64)))
+        if self._synapse_stepping == "event" and len(pre):
+            # Event stepping: lay synapse rows out by pre-soma so an emitter's woken
+            # efferents are one contiguous run and the queue loop's reads coalesce
+            # (Brunel 12.5k: 2.1 -> 0.9 ms/tick). External synapses (pre == -1) first;
+            # stable, so the file's order survives within a run.
+            order = np.argsort(pre, kind="stable")
+            synapse_ids, pre, post, hp_vals = (synapse_ids[order], pre[order],
+                                               post[order], hp_vals[order])
 
         N, M = len(soma_ids), len(synapse_ids)
         timings['decode_arrays'] = time.time() - _t
@@ -2409,6 +2565,12 @@ class NeuromorphicModel(Model):
         :param synapse_config: Default synapse config name
         """
         self._assert_unbuilt("load_from_adjacency")
+        if self._synaptic_input == "push" and MPI.COMM_WORLD.Get_size() > 1:
+            raise NotImplementedError(
+                "synaptic_input='push' needs every synapse on its post-soma's rank "
+                "(post-owns); load_from_adjacency releases that, and a current deposited "
+                "into a ghost soma would be dropped. Use load_post_owned / create_synapse, "
+                "or synaptic_input='pull'.")
         data = self._read_neighbor_partition_file(partition_file)
 
         # Validate the partition BEFORE building anything (cheap, local). These are
@@ -2674,6 +2836,11 @@ class NeuromorphicModel(Model):
                 '\t\twhile _k < _e1:',
                 f'\t\t\ta{in_idx}[int(ev_syn[_k])][0] = 1.0 * thread_local_tick',
                 f'\t\t\ta{in_idx}[int(ev_syn[_k])][1] = ev_val[_k]',
+                # event stepping: an input event wakes its synapse at every woken
+                # priority (the synapse kernel, and the learning rule if rules exist)
+                *[line for p in sorted(self._wake_config)
+                  for line in (f'\t\t\t_wb{p} = jit.atomic_add(wake_count_{p}, 0, 1)',
+                               f'\t\t\twake_queue_{p}[_wb{p}] = int(ev_syn[_k])')],
                 '\t\t\t_k = _k + int(total_threads)',
                 '\t\t__GRID_BARRIER__',
             ],

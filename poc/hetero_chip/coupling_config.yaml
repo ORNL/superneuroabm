@@ -1,0 +1,22 @@
+soma:
+  r9_relay:
+    default:
+      hyperparameters: {thr: 0.5}
+      internal_states: {v: 0.0}
+  r9_lif:
+    default:
+      hyperparameters: {vthr: 1.0, tau_m: 20e-3}
+      internal_states: {v: 0.0}
+synapse:
+  r9_wire:
+    default:
+      hyperparameters: {weight: 1.0, synaptic_delay: 1.0}
+      internal_states: {I: 0.0}
+  r9_heater:
+    default:
+      hyperparameters: {weight: 0.3, synaptic_delay: 1.0}
+      internal_states: {I: 0.0, h_even: 0.0, h_odd: 0.0}
+  r9_sensor:
+    default:
+      hyperparameters: {weight: 0.0, synaptic_delay: 1.0, k: 0.002}
+      internal_states: {I: 0.0, g: 0.0}

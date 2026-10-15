@@ -48,3 +48,18 @@ def get_soma_spike(
         else:
             spike = 0.0
     return spike
+
+
+@jit.rawkernel(device="cuda")
+def trace_decay(dt, tau, n_ticks):
+    """Forward-Euler decay of a trace over n_ticks ticks: (1 - dt/tau)^n.
+
+    n_ticks == 1 is the single multiply the STDP rules always did (bit for bit, so
+    clocked stepping is unchanged). A rule that was event-woken after sleeping catches
+    its traces up in closed form; the rule keeps the tick it last ran in
+    learning_internal_states[agent_index][3] and passes t_current - that.
+    """
+    f = 1.0 - dt / tau
+    if n_ticks <= 1:
+        return f
+    return f ** n_ticks

@@ -698,6 +698,153 @@ in the section above is present in the continuous run too, so it is the implemen
 the resets. (The new code's chunked arm also reproduces the old `output_hg/` run exactly.)
 Chunking is now unnecessary and the continuous mode is the default.
 
+## Implemented: the first tick of `simulate()` (2026-09-10, second round)
+
+Measured on the 12,500-neuron / 12.5 M-synapse Brunel network, single GPU, columnar load, zero
+ghosts, `brunel_sna_local.py --ticks 10`. Before this round `simulate()` for 10 ticks was
+**26.4 s ours vs 0.08 s NEST GPU**, 26.3 s of it the first tick. What that first tick did, and
+what replaced it — all of it in SAGESim, all of it general (nothing keys on an SNN property):
+
+| phase | before | after | change |
+|---|---|---|---|
+| `discover_ghost_topology` | 12.74 s | 0.00 s | single-rank exit; on several ranks the owner lookup is a numpy set-difference against the local ids and the Python dict is consulted only for the remote boundary (`gpu_kernels.py:_resolve_neighbor_ranks`) |
+| id maps (`id_hashmap`) | 5.51 s | 0.77 s | reuse the ownership map as `agent_id_to_index` (ghosts appended), no `GPUHashMap` (nothing read it), ids padded/cast on the device |
+| property tensors | 5.32 s | 0.34 s | columns held as padded arrays (`ArrayColumn`) are one `set()` each; see below |
+| `combined_data` (CSR + zero-ghost copies) | 1.74 s | 0.99 s | no `local + []` copies on one rank; dense id table built from the id array; CSR padded on the device |
+| breed ranges | 0.20 s | 0.03 s | breed column is an int32 array |
+| **first tick** | **26.3 s** | **3.2 s** | remaining: CSR conversion + uploads ~1 s, ids 0.8 s, kernel JIT + extras ~0.7 s |
+| `simulate()` 10 ticks | 26.4 s | **3.4 s** | NEST GPU: 0.08 s |
+| `simulate()` 100 ticks | 29.7-31.5 s | **4.2-4.3 s** | NEST GPU: 0.06 s; ticks 2-100 unchanged at 1.0-1.2 s |
+| `reset()` + first tick after it | OOM-killed on this machine (`.tolist()` of 125 M values) | 1.95 s + 1.2 s | the downloaded rectangle stays an array |
+| host RSS / GPU | 9.9 GB / 2927 MB | 8.1 GB / 2733 MB | |
+
+End-to-end the run went 82 -> 37 s as a side effect: the loader no longer expands its columns
+into 12.5 M-element Python lists.
+
+**`ArrayColumn` (`SAGESim/sagesim/columns.py`).** A property column stored as one NaN-padded
+array (float32 here; the dtype is the caller's) plus per-row lengths, behaving like the list it
+replaces at every access the framework makes (index/slice read and write, `len`, truthiness,
+iteration, `append`, `+ [rows]`, pickling). Reads return copies at the row's own width; a wider
+write grows the array in place; a write that is not array-like degrades the column to list
+storage inside the same object, so cached references stay valid. `build_from_local_columns`
+keeps numpy columns as `ArrayColumn`s (`(values, lengths)` tuples set per-row widths),
+`_sync_gpu_to_agent_factory` stores what it downloads as one, `sort_by_breed` permutes in place,
+the MPI width sync pads the array, and `convert_to_padded_gpu_tensor` uploads it with one copy.
+This is the general fix for rectangular data: it pays the same for heterogeneous per-agent
+values as for shared ones. The identity-dedup fast path from the first round stays for list
+columns only (create_agent-built models), and a caller-supplied "dedup hint" API was rejected
+as encoding the shared-parameter special case into the framework.
+
+**SuperNeuroABM's part** is small: the bulk builder (`_build`, then named
+`_build_post_owned_columnar`) hands over padded float32
+arrays instead of `[row] * M` lists (and a `(N+M, 1, w)` zero array for each history buffer, read
+back as `[]` until `setup()` fills it); `_share_history_buffers` uses `fill_rows`/`max_length`
+instead of walking rows; `_write_stdp_type` writes the row back instead of mutating the alias
+(on a list column shared between synapses that alias write changed every synapse of a combo).
+Pre-tick reads of a columnar-loaded model now return float32 values (`1e-08` ->
+`9.99999994e-09`), which is what every kernel ever saw; after the first tick reads were float32
+already. Two test fixes fell out: `test_load_from_adjacency.py` built its reference model on
+rank 0 only (its `setup()`/`simulate()` contain barriers, so the whole file deadlocked under
+`mpirun -n 2` and the split-synapse assertion had never actually run), and the single-rank
+injection tests now skip under MPI.
+
+**Equivalence:** every device tensor, CSR array and spike count of the driven Brunel network
+bitwise identical before/after (`dump_tensors_for_diff.py`); Masquelier 10 s (414 spikes, 2000
+weights) identical; the chunked Masquelier run through nine `reset()` calls identical in every
+spike and every weight snapshot; Diehl-Cook `test_brian1_semantics.py` passes; 169 + 71 tests and
+the 2-rank tests pass, including the split-synapse ghost test that now really runs.
+
+**What is left in the first tick** is ~3 s of genuinely necessary work at this scale (2.6 GB of
+uploads, the CSR index conversion over 37.5 M ids, kernel JIT); the 80x per-tick gap to NEST
+GPU (11 ms vs 0.16 ms per tick) is decision D0, every synapse an agent stepped every tick.
+
+## Implemented: cheaper agent synapses — interning, idle skipping, narrower rows (2026-09-10, third round)
+
+**Decision first.** Synapses stay first-class agents. Folding them into the soma (connection
+tables, receptor ports) is exact only for linear synapses with shared kinetics and event-only
+state; a biologically faithful SNN needs per-synapse continuous state (spine Ca and Ca-based
+plasticity, spine voltage, second-messenger cascades, modulator fields, tripartite and retrograde
+signalling, vesicle pools with spontaneous release, branch-level nonlinear integration, gap
+junctions), and S-GATs already relies on it (per-edge TM state and attention `h` integrated every
+tick, pool somas summing synapses that are not their afferents). So this round makes the agent
+kind cheaper without limiting what a synapse can be. Three levers, all measured on the same
+12,500-neuron / 12.5 M-synapse Brunel network as the earlier rounds.
+
+**1. Parameter interning (SAGESim, general).** A property that no kernel writes, that is not
+neighbor-visible, and whose rows are mostly duplicates is held on the device as a small
+`table (k, w)` of distinct rows plus one int32 `code` per agent; the code generator rewrites
+every read `p[X]` to `p_table[p_codes[X]]` — the same rewrite it applies to `locations` for CSR —
+in the step function and, recursively, in every device helper the tensor is forwarded to.
+Eligibility is decided once in `setup()`. Two things had to become true for that decision to be
+safe: the write analysis now follows forwarded helpers (before, `analyze_step_function_for_writes`
+saw only the step function's own body, so the STDP kernels' `synapse_params[agent_index][0] = w`
+behind the generated selector were invisible — which also left double buffering blind to them),
+and a subclass declares writes its injected code makes (`'writes_properties'` in
+`_get_extra_kernel_config`; SuperNeuroABM: `input_spikes_tensor`). Host side, `IndexedColumn`
+(`sagesim/columns.py`) is the table + codes form with the same list protocol as `ArrayColumn`; the
+columnar loader emits it for `hyperparameters` and `learning_hyperparameters`, a dense
+`ArrayColumn` is compressed by a hashed row test (`try_intern`), and list columns use the identity
+groups the converter already computed. The form is fixed at `setup()`; per-agent writes grow the
+table. Exact: every device tensor bitwise identical (`dump_tensors_for_diff.py`, interned tensors
+expanded as `table[codes]`), Masquelier 10 s identical, S-GATs' 52 bit-match tests pass.
+`Model.enable_property_interning = False` keeps everything dense.
+
+Which columns intern here: `learning_hyperparameters` (11 wide, 551 MB -> 50 MB) always;
+`hyperparameters` (9 wide, 451 MB -> 50 MB) only when no STDP kernel is registered, because the
+registered STDP rules write the weight in column 0 (`brunel_sna_local.py --no-learning-rules`
+builds the static-synapse network Brunel actually is); `learning_internal_states` likewise when
+no rule can write it. Splitting a row into its written and read-only columns would let plastic
+networks intern the eight constant parameter columns too — not done.
+
+**2. Idle skipping (SuperNeuroABM kernels).** `single_exp`, `double_exp` and the four STDP kernels
+now read the incoming spike and their own state first and return before touching parameter rows
+when nothing is happening (no spike and state exactly zero; for STDP also zero traces and zero
+last `dW`). Exact by construction: every skipped write would have rewritten the same value. The
+one deliberate exception is the write-only history slot while tracking is off, which is no longer
+refreshed (nobody reads it; with tracking on the buffer is written every tick as before). An
+optional flush-to-zero floor (`single_exp.I_FLOOR`, default 0.0 = exact; set before `setup()`)
+snaps decaying tails to zero so a synapse reaches the idle path in a few time constants instead of
+the 150-900 ticks float32 needs to underflow. It could not be exercised here: the 12.5 M benchmark
+is silent (everything idle regardless) and the small driven network saturates at ~150 Hz (1.7 % of
+currents ever reach zero), so it stays a documented switch whose regime — sparse activity — is
+untested.
+
+**3. Narrow rows.** `synapse_delay_reg` carries no payload any more (registered, positional slot
+unchanged, read by no kernel): -50 MB. The soma-row width fixes from D3 are moot with interning.
+
+**Two hazards found and fixed on the way.** The spike record was sized once, at the first
+`simulate()`, and written through an unguarded atomic index: a later, longer or busier call
+overran it (`cudaErrorIllegalAddress`). It is now sized per launch, grown when needed, guarded in
+the kernel, and an overflow raises with the count instead of corrupting memory. And `_inject_seed`
+added `_seed`/`logical_ids` to a transformed helper's definition but not to its call sites, so only
+hand-written dispatchers (the generated selector) could forward tensors to transformed helpers;
+call sites are now rewritten to match.
+
+### Measured (median of 2, GPU otherwise idle; "start of round" = after the first-tick round)
+
+| Brunel 12,500 / 12.5 M, single GPU | start of round | default learning rules | `--no-learning-rules` (static synapses) |
+|---|---|---|---|
+| interned columns | — | `learning_hyperparameters` | `hyperparameters`, `learning_hyperparameters`, `learning_internal_states` |
+| GPU memory | 2733 MB | **2207 MB** | **1727 MB** |
+| host RSS | 8.1 GB | 7.1 GB | 7.0 GB |
+| first tick | 3.2 s | **2.6 s** | 2.6-2.8 s (one 4.2 s outlier = kernel JIT of a new variant) |
+| ticks 2-100 | 1.0-1.2 s (10-12 ms/tick) | **0.69-0.72 s (7 ms/tick)** | **0.55-0.59 s (5.5-6 ms/tick)** |
+| `simulate()` 10 ticks | 3.4 s | 2.65 s | 2.8 s |
+| `simulate()` 100 ticks | 4.2-4.3 s | 3.35 s | 3.2 s |
+| NEST GPU | 0.08 s / 0.06 s | | |
+
+Since the morning: first tick 26.3 -> 2.6 s, per tick 11.6 -> 5.5-7 ms, GPU 3597 -> 1727-2207 MB.
+Unchanged elsewhere: Masquelier 10 s 14.2-14.7 s (all 2000 synapses active every tick, nothing
+to skip), Diehl-Cook 186 ms/presentation, `test_brian1_semantics` PASS.
+
+**What the remaining 5-7 ms per tick is.** With every recurrent synapse idle, each still costs the
+reads that decide it is idle: its pre-soma's spike slot (a gather), its own current, its CSR entry,
+and (priority 101) its learning-rule code — a few hundred MB per tick, plus the soma phase's 12.5 M
+gathers over 12,500 threads and the grid barriers. Taking that to NEST's 0.16 ms means not
+touching idle synapses at all: a framework-level active set (agents woken by a neighbour's event,
+stepped only while awake), which is the general "event-driven agents" feature and the natural
+next step — it keeps the agent model and would also serve S-GATs' sparse-activity regime.
+
 ## Ranked levers
 
 Each is measured on the 12.5 M synapse point above and tagged with its deferred item below.
@@ -706,16 +853,16 @@ Each is measured on the 12.5 M synapse point above and tagged with its deferred 
 |---|---|---|---|---|
 | ~~1~~ | ~~Share one buffer row object across agents~~ | **done**, see above | | |
 | 2 | Replace the per-agent buffer-shrink loop in `NeuromorphicModel.setup()` | **-18.8 s** | low | D3 |
-| **1** | Profile and vectorise `build_from_local_columns` | up to -31 s, now the largest single item | unknown, unprofiled | new |
+| ~~1~~ | ~~Profile and vectorise `build_from_local_columns`~~ | loading is out of scope; the columnar loader now emits arrays (side effect -45 s end to end) | | |
 | ~~4~~ | ~~Identity fast path in `convert_to_padded_gpu_tensor`~~ | **done**: with lever 1, property tensors 141.3 s -> 5.46 s | | |
-| **2** | Skip ghost-topology discovery when there are no ghosts | -13.9 s single-GPU | low | new |
+| ~~2~~ | ~~Skip ghost-topology discovery when there are no ghosts~~ | **done** (2026-09-10): -12.7 s | | |
 | 6 | `property_columns` in the columnar loader | up to -9.2 s | low | new |
-| 7 | Per-class `_compute_max_property_sizes`: soma `learning_hyperparameters` -> `[-1.0]` | -551 MB GPU, -5.9 s | low | D3 |
-| 8 | Drop `synapse_delay_reg` payload (no kernel reads it) | -50 MB GPU, -5.4 s | low | D3 |
+| ~~7~~ | ~~Per-class `_compute_max_property_sizes`~~ | moot: `learning_hyperparameters` is interned (551 -> 50 MB) | | |
+| ~~8~~ | ~~Drop `synapse_delay_reg` payload~~ | **done** (third round): -50 MB | | |
 | ~~9~~ | ~~Spike-read cursor (Masquelier)~~ | **done differently**: tick-major event list, see below. The "no effect on the 10 s chunk" guess was wrong: 32.2 s -> 15.5 s | | |
 | 10 | Choose fused vs unfused ticks by network size instead of by `verbose_timing` | 2.5x on Masquelier, and it is currently accidental | low | new |
 | 11 | Typed id maps instead of the four bookkeeping dicts | host RSS | medium | D5 |
-| 12 | Parameter interning into shared tables | ~1 GB GPU at 50 M synapses | high, breaks kernel signature | D6 |
+| ~~12~~ | ~~Parameter interning into shared tables~~ | **done** (third round) without any signature change: table + codes with a codegen rewrite | | |
 
 Items 1, 2, 7 and 8 are all inside `superneuroabm`, all low risk, and together account for
 137.7 s of the 237.6 s. They should be measured again after each change with the same
@@ -755,6 +902,29 @@ branch in `agent.py:387-391`, `Breed._prop2maxdims`.
 
 **D5. Typed id maps.** Accessors `rank_of / breed_of / local_index / local_ids`, then freeze
 the four bookkeeping dicts into sorted-array maps at `setup()`. MPI tests are the gate.
+
+**D7. Host memory is not released when a second model is built in the same process
+(2026-09-16).** `brunel_sna_local.py --repeat N` builds N models in one process. Measured on
+the 12,500 / 12.5 M network, one RTX 3000 Ada, four repeats:
+
+| repeat | baseline `fec6bd2`+`dd059a2` RSS | staged (rounds 2-3) RSS | both, GPU |
+|---|---|---|---|
+| 0 | 9,882 MB | 7,152 MB | 2,927 / 2,207 MB |
+| 1 | 13,260 MB | 12,992 MB | +144 MB |
+| 2 | 13,260 MB | 17,944 MB | flat |
+| 3 | 13,260 MB | 22,896 MB | flat |
+
+The +144 MB of GPU memory on the second model is identical in both trees, so it is pre-existing.
+Host RSS is not: the baseline pays +3.4 GB once and then plateaus, while the staged tree grows
+~5 GB per repeat and does not plateau — a fifth or sixth repeat would exhaust this 31 GiB host.
+Cause not diagnosed; the plausible suspect is that a model's `ArrayColumn` / `IndexedColumn`
+buffers are large contiguous allocations retained per instance where the old list columns were
+reclaimed, but that is unverified.
+
+Not a concern for any recorded result: every measurement in this file and in
+`FIRST_TICK_SCRATCHPAD.md` was taken with one model per process (every row in
+`results/brunel_sna_interning.csv` carries `repeat=0`), and the experiment drivers all run one
+network per invocation. It matters for a driver that sweeps configurations in a loop.
 
 **D6. Parameter interning, design only.** No clean non-breaking variant exists: globals are
 positional kernel arguments. Would need a v2 18-argument signature with `hp_table` and

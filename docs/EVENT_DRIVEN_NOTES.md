@@ -1,0 +1,424 @@
+# Event-driven SuperNeuroABM: design notes and measurements
+
+Branch `perf/event-driven` in both repos (created 2026-10-14 from `dev`). Working notes; the
+numbers are from the laptop GPU (RTX 3000 Ada) unless stated.
+
+## 1. Why: the per-tick cost is O(synapses), and one soma thread can be the whole tick
+
+Two measurements decided the direction.
+
+**Brunel, N = 12,500, K = 1,000, 30 Hz, dt = 1 ms (2026-09-17).** NEST GPU does ~343,000
+spike deliveries per tick; we step 12,512,500 synapse agents. 36.5x more work for 40.7x the
+time, so per unit of work we are within ~12 % of NEST and the whole gap is O(synapses) vs
+O(spikes).
+
+**Masquelier, 2,000 afferents onto one neuron, dt = 0.1 ms (2026-10-14).** Not launch-bound,
+as `PERFORMANCE_NOTES.md` assumed: the tick is linear in the afferent count because the single
+soma thread pulls all K afferent currents serially (~60-65 ns per load).
+
+| afferents | as is | soma gather stubbed to one read | gather's share |
+|---|---|---|---|
+| 2,000 | 143.7 us/tick | 24.0 us/tick | 83 % |
+| 20,000 | 1,338 us/tick | 45.0 us/tick | 97 % |
+
+The remaining 24 us is three grid barriers, event stamping, one soma step and two
+2,000-thread synapse phases (one GPU wave).
+
+## 2. What "event-driven" has to mean here
+
+Two separate changes, not one:
+
+1. **Delivery is pushed, not pulled** (round 1). A synapse deposits its current into the post
+   soma's inbox; the soma reads one value instead of looping over K afferents. Fixes the hub
+   problem above and is the prerequisite for everything else.
+2. **Synapses with no per-tick state are stepped only when woken** (round 2). An active set on
+   its own gives ~nothing with the built-in synapses: Brunel's `tau_fall` is 10 ms against a
+   33 ms ISI, so every synapse's current is non-zero on every tick (a floor of 1e-3 needs
+   70 ms). The event path needs a delivery-only synapse kind with the kinetics on the soma
+   (one per-receptor variable, the NEST layout, and what a pulse-deposits-charge device model
+   is anyway). Synapses that genuinely carry per-tick state (drift, thermal, write disturb)
+   stay agents, woken on events or on a slow clock.
+
+The coworker's `new-step-functions` kernels (AdEx, Izh, triplet, suppression) are all
+compatible: both somas are pull-gather somas (one loop to replace), both rules change weight
+only at pre/post spikes and only decay traces in between.
+
+## 3. Push prototype (no framework change) and the one bug it found
+
+Scratchpad copies of the Masquelier kernels: the synapse does
+`jit.atomic_add(internal_states, (post_soma_index, 4), I_synapse)` into a fifth soma slot, the
+soma consumes and clears it.
+
+| Masquelier, 2,000 afferents | pull | push | speedup | spikes |
+|---|---|---|---|---|
+| 10 s (100k ticks) | 14.2-14.4 s | 1.54-1.57 s (15.5 us/tick, 3 repeats) | 9.2x | 414 = 414 |
+| 100 s (1M ticks) | 141 s | 13.96 s | 10.1x | 639 = 639 |
+| 20,000 afferents, 10 s | 133.8 s | 7.3 s | 18x | |
+
+Brian2 CPU: 5.2 s / 16.5 s; NEST GPU 11.0 s (10 s). Results are **bitwise identical** to the
+pull run (spike times and weights). Two push runs were bitwise identical to each other.
+
+**The bug.** The first push run fired 1-2 ticks early from the third spike on. Not float
+order: re-associating the pull sum (even/odd partial sums) was bitwise identical. The
+Masquelier STDP kernel (priority 101) zeroes the synapse current at a post spike *after* the
+synapse kernel (priority 100) had already pushed it. Rule: **a pushed value must be the tick's
+final value.** The EPSP reset now lives in the synapse kernel, where it belongs physically.
+Diagnostic that found it: a soma computing both sums, driving with the pull sum, recording the
+first tick where they differ.
+
+## 4. Round 1 design: a reduce inbox as a breed-local array
+
+Why not just let kernels write neighbour rows: an agent's state must stay written only by
+itself, or step functions stop being trivially parallel. The sanctioned exception is an
+**inbox**: other agents may deposit into it through commutative atomic reductions, into a
+buffer the framework owns and swaps. This is the design every parallel ABM/graph engine
+converges on (FLAME GPU 2 macro properties with layer boundaries; HASH next-step messages;
+NEST GPU / GeNN `atomicAdd` delivery; PyG/DGL scatter-reduce).
+
+SAGESim already has the two halves: breed-local arrays with per-breed double buffering and an
+end-of-tick write-back. The inbox is a BLA with `reduce="sum"`:
+
+```python
+model.register_breed_local_array("synaptic_input", breed=[lif, izh, ...], shape_per_agent=(1,),
+                                 reduce="sum")
+# sender kernel (any breed that declares the array):
+deposit_to_agent(synaptic_input, synaptic_input_idx, post_soma_index, 0, I_synapse)
+# receiver kernel, next tick:
+I = synaptic_input[synaptic_input_idx[agent_index]][0]
+```
+
+- deposits are `atomic_add` into the **write buffer**; the receiver reads the **read buffer**;
+  the end-of-tick write-back becomes *copy then zero* (drain). Reader and writers never touch
+  the same buffer, whatever the priorities.
+- `deposit_to_agent` is the only sanctioned depositor; the write analysis counts it as a write
+  of the array, and the transform rewrites its first argument to the write buffer.
+- a BLA may span several breeds (all soma kinds share one inbox).
+- a breed's step function declares which BLAs it takes (`breed_local_arrays=[...]`), so
+  kernels that do not use the inbox keep their signature. Default None = all, as before.
+- the host-side post-launch copy skips reduce BLAs (it would overwrite the read buffer with
+  the drained zeros).
+
+Known limits in round 1, each its own later round:
+- `neighbor_visible=True` with `reduce` raises `NotImplementedError`: depositing into a ghost
+  needs a reduce-back-to-owner exchange (the mirror of `exchange_ghost_data`). Deposits to a
+  non-local target are dropped (`idx_map == -1`); SNN post-owns partitioning never produces
+  one. Detection needs an injected error-flag argument.
+- float atomics sum in arrival order; bit-exactness across runs is observed, not guaranteed.
+  Deterministic mode = integer/fixed-point accumulation or a segmented ordered reduction.
+- `sum` only; `max`/`min`/`or` are the same code path with a different atomic.
+
+## 5. Round 1 in SuperNeuroABM (implemented 2026-10-14)
+
+- `NeuromorphicModel(..., synaptic_input="pull" | "push")`; default `"pull"` in this round so
+  no existing app changes behaviour. The inbox (`synaptic_input`, shape (2,) per soma, over
+  every soma breed) is registered in `setup()` either way, so kernel signatures do not depend
+  on the mode; the mode is a compile-time constant (`step_functions/synaptic_input.PUSH`, set
+  in `setup()`, read like `single_exp.I_FLOOR`).
+- A soma or synapse kernel takes part by ending its parameter list with
+  `synaptic_input, synaptic_input_idx` (detected from the signature, so it works for
+  built-ins, `register_*_type` and `soma_breed_info` alike). Somas call
+  `synaptic_input_pushed()` / `read_synaptic_input(...)`, synapses
+  `deliver_synaptic_current(...)` after their last write to the current. A kernel without
+  the pair keeps its signature and pulls; in push mode a *synapse* kernel without it is
+  refused at `setup()` (the soma would receive nothing). `load_from_adjacency` with more than
+  one rank is refused in push mode (it releases post-owns, so a deposit could target a
+  ghost).
+- Converted: lif, izh, hg_lif, lif_soma_adaptive_thr; single_exp, double_exp (slot 0 fast,
+  slot 1 slow), weighted_synapse. The generated `learning_rule_selector` declares no arrays.
+  The coworker's AdEx/Izh (`new-step-functions`) need the same two-line change on merge.
+- Benchmarks: `brunel_sna_local.py --synaptic-input push`; `dump_tensors_for_diff.py` with
+  `SNA_SYNAPTIC_INPUT=push`.
+
+### Verification so far
+
+| check | result |
+|---|---|
+| SAGESim `tests/test_reduce_bla.py` (inbox: next-tick sum, resume, bystander breed, multi-breed, 4096 senders, validation) | 10 passed |
+| SAGESim suite / MPI tests at 2 and 4 ranks | 87 passed / all ok |
+| SNA suite, pull default | 216 passed, 1 skipped, 1 xfailed |
+| SNA `tests/test_synaptic_input_push.py` (chain bit-exact, fan-in to round-off, weighted, resume, validation) | 6 passed |
+| Masquelier 2,000 afferents, 10 s, framework push vs pull (app kernels with the two params and the EPSP reset in the synapse) | **bitwise identical**: 414 spikes, all weights |
+| Brunel 2,000 / K=100 / 30 ticks tensor dump, push vs pull | every tensor and the spike counts bitwise identical except soma `internal_states`: 1,188 of 612,000 entries differ, max relative 3.3e-7 (float32 order of 100-term sums) |
+
+| Brunel 12.5k / K=1000 / 100 ticks, `brunel_sna_local.py` | push 38,026 spikes / 36.69 Hz steady = pull; ticks 2-100 0.998 s -> 0.860 s (10.1 -> 8.7 ms/tick, -14 %) |
+| 8-soma recurrent network, 1 vs 2 vs 4 ranks, push vs pull | bitwise identical after the placement fix below |
+
+### A partitioning bug the two-rank run exposed
+
+The incremental `create_synapse` path placed agents round-robin by id under MPI, not
+post-owns as its comment said. In pull mode that is invisible (ghost synapse rows are
+exchanged every tick); in push mode one recurrent synapse per soma sat on the other rank,
+its post soma was a ghost there, and the deposit was dropped. The spike trains did not show
+it (the test network fires refractory-locked); the membrane potentials did, by ~20 mV.
+`create_synapse` now passes `rank=<post soma's rank>` to `create_agent_of_breed`, so the
+incremental path is post-owns like the loaders. Side effect for pull mode: no ghost synapse
+rows any more, only ghost pre-somas.
+
+Lesson for the framework: a dropped deposit must become an error, not a silent zero. That
+needs an error-flag argument injected into the kernels (same mechanism as `_seed`); it is
+the first item of the ghost-reduce round.
+
+### ... and a second one: a rank with no agents
+
+Post-owns placement of a 2-soma test network on 4 ranks leaves ranks 2 and 3 empty, which
+SAGESim never supported: `worker_coroutine` raised `KeyError` (no `_rank2agentid2agentidx`
+entry), the launch had zero blocks, and the empty rank's property tensors were 1-D where
+the shared kernel expected 2-D/3-D, so the other ranks hung in a collective. Fixed in
+SAGESim: every rank gets a dict entry at construction, a launch is at least one block, and
+the ranks agree each property's full trailing shape (`Allreduce` MAX) so an empty rank
+allocates what the kernel was compiled for. `tests/test_empty_rank.py` runs 2 agents with
+scalar, 2-D, 3-D and breed-local tensors at 1/2/4 ranks.
+
+Brunel reading: the soma gather is a small share of a 12.5 M-synapse tick, so push alone
+gives 14 %; the remaining 8.7 ms is the synapse phase, which is what round 2 removes.
+
+## 6a. Round-2 go/no-go: two measurements on the 12.5 M-synapse Brunel network
+
+Event-driven means two things, and they were measured separately so each half's payoff is
+known before any framework work (scratchpad `delivery_floor.py`, `brunel_delivery/`):
+
+| variant | per-synapse state | every synapse stepped | ms/tick |
+|---|---|---|---|
+| today, pull | yes | yes | 10.1 (100 ticks) / 9.85 (400 ticks) |
+| round 1, push | yes | yes | 8.7 / 8.2 |
+| **B. delivery-only synapses, current filtered on the soma** (SNA kernels, push, no wake list) | no | yes: each idle synapse reads its pre's spike slot and returns | **4.9 / 4.66** |
+| **A. true event delivery** (standalone CuPy kernel on the real CSR: spiking neurons add `w` to each target's inbox, one LIF step per neuron) | no | no | **0.28** = delivery 0.074 + LIF 0.008 + spike compaction 0.197 (823 k deliveries/tick at 63.6 Hz; NEST GPU's whole tick is 0.19) |
+
+So removing per-synapse state is worth 1.8-2.1x and not visiting idle synapses another
+~10-15x: 20-30x in total is attainable, and the larger share is the wake list.
+
+Equivalence of B: spike totals identical to pull through 60 ticks (8,631 and 21,555 at 12.5k)
+and per-neuron identical on the 2,000-neuron dump; later the trajectories split (a running
+soma-side sum rounds differently from 1,000 separately decayed currents). The 400-tick steady
+rate is 29.7 Hz vs pull 31.4 Hz; a 1e-5 weight perturbation of pull alone moves it to
+33.7 Hz, so that gap is trajectory-to-trajectory variation of this balanced network, not a
+modelling difference. The soma-side current is NEST's `iaf_psc_exp` layout, i.e. closer to the
+reference model than the per-synapse copy.
+
+Diehl-Cook is not a showcase for the wake list: its STDP traces are per-synapse state and
+its inputs are external synapses (a pre-trace has no agent to live on), so only the push
+share (~10 %) applies without restructuring the app.
+
+### A correction to round 1: the mode must live in data, not in a constant
+
+The first version carried `synaptic_input="push"` as a module constant
+(`synaptic_input.PUSH`) read by the kernels at compile time, like `single_exp.I_FLOOR`.
+That is unsafe here: CuPy compiles a kernel at its *first launch*, and SAGESim reuses an
+identical generated kernel across models, so in one process a pull model's compilation
+served a later push model and its synapses never deposited (the full SNA suite caught it;
+the earlier in-process pull-vs-push test could not, because the push model silently ran
+as pull). The mode is now carried by the inbox's index map: in push mode every soma breed
+is a member of the inbox, in pull mode it is registered with no members, so a soma tests
+`synaptic_input_idx[agent_index] >= 0` (`has_inbox`) and a deposit into a row-less target
+is a no-op. No constant, no signature change, any mix of models in one process.
+`lif_psc_soma` (inbox-only) is not registered in pull mode.
+
+## 7. Round 2: event-woken agents (implemented 2026-10-14)
+
+### SAGESim: wake lists
+
+- `Model.configure_wake(event_property)`: a width-2 property; an agent raises an event at
+  tick t by writing > 0 into slot `t % 2` of its own row (SNA uses `output_spikes_tensor`).
+- `Breed.register_step_func(..., wake_on_roles=[0])`: the breed's agents at that priority are
+  stepped only on the tick after a neighbour in one of those slots raised an event, or after
+  an explicit wake. A priority is woken as a whole (every breed stepping at it declares
+  roles), so its loop runs over a queue instead of the index range.
+- At setup the reverse adjacency is built once from the CSR: emitter row -> dependants
+  through the declared roles, over local *and ghost* emitter rows (a ghost's event arrives
+  through the ordinary property exchange, same one-tick delay as a local one).
+- Per tick, in the pre-tick phase: every thread scans emitter rows; a raised slot reserves
+  a queue segment with one atomic (`atomic_add(count, out_degree)`) and copies the row's
+  dependants. The priority loop walks the queue; `wake_stamp[row]` (last tick the row ran,
+  -1 never) makes a row queued twice run once and lets a kernel catch up state in closed
+  form after sleeping. Thread 0 zeroes the counts at tick end.
+- Explicit wakes from injected code: `base = atomic_add(wake_count_<p>, 0, 1);
+  wake_queue_<p>[base] = row` (SNA does this for input events in its pre-tick code).
+- Queue capacity = all role wakes + one explicit wake per agent (worst case); the reverse
+  adjacency costs one int32 per (woken agent, role).
+- Also fixed on the way: one generated kernel file per distinct generated text
+  (`step_func_code_<hash>.py`). CuPy compiles a kernel at its first launch from its
+  function's source lines, so two models with different generated code set up before
+  either ran would compile the first from the second's file.
+- `tests/test_wake_list.py` (emitters with periods, followers woken through role 0 / both
+  roles, twins, resume, validation), in the MPI runner at 1/2/4 ranks.
+
+### SuperNeuroABM: `synapse_stepping="event"`
+
+- Needs `synaptic_input="push"`. Two new built-in kinds carry the model that makes a synapse
+  stateless: `delivery_synapse` (deposits `spike * scale * weight` when its pre fired, else
+  returns; event-capable) and `lif_psc_soma` (lif_soma with the exponential synaptic current
+  filtered on the soma, `tau_syn` hyperparameter, `I_syn` state -- NEST's `iaf_psc_exp`
+  layout). In event mode the default synapse kinds are restricted to event-capable ones and
+  `register_synapse_type` needs `event_capable=True`.
+- Synapse breeds are registered with `wake_on_roles=[0]` (the pre-soma); injected input
+  events wake their synapse from the pre-tick stamping loop. Learning rules (priority 101)
+  still run clocked in this version: a rule with per-synapse traces needs decay-on-wake
+  (round 2b) before it can be woken.
+- `tests/test_event_stepping.py`: clocked vs event on an 8-soma recurrent network with
+  external drive is bit-identical (spikes and state); resume; validation. In the MPI runner.
+- Benchmark: `brunel_sna_local.py --synaptic-input push --synapse-stepping event
+  --soma-breed lif_psc_soma --synapse-breed delivery_synapse --no-learning-rules`.
+
+### Round 2 measured (Brunel 12.5k / K=1000 / 400 ticks, no learning rules, laptop GPU)
+
+| mode | ms/tick | vs pull |
+|---|---|---|
+| pull (lif_soma + single_exp) | 7.66 | 1 |
+| round 1: push, same kinds | 5.56 | 1.4x |
+| push, clocked delivery_synapse + lif_psc_soma | 2.93 | 2.6x |
+| push, event-woken, synapse rows in file order | 2.35 -> 2.11 with block-cooperative expansion | 3.6x |
+| **push, event-woken, synapse rows ordered by pre-soma** (`--synapse-order pre`) | **0.92** | **8.3x** |
+| push, event-woken, loader lays rows out by pre (now the default in event mode, no flag) | 1.10 (0.95 with the file pre-sorted; the difference is run noise) | 7-8x |
+| event mode, silent network (fixed cost: grid barriers, soma, stamping, inbox write-back, queue reset) | 0.69 -> 0.63 after merging two barriers (4 per tick) | |
+| standalone delivery kernel (section 6a) | 0.28 | |
+| NEST GPU | 0.19 | |
+
+Spike totals identical across pull / clocked delivery / event at 30 and 60 ticks (8,631 /
+21,555); the 400-tick totals differ by trajectory divergence only (section 6a).
+
+What the last two rows taught: with rows in file order each woken synapse touched ~10
+scattered 64-byte sectors (queue entry, stamp, breed, CSR, parameters, inbox index, atomic) =
+~256 MB/tick of random traffic, i.e. the 1.4 ms activity cost was DRAM-bound, not
+latency-bound (4 blocks/SM instead of 2 changed nothing; 8 deadlocks the grid barrier as
+expected). Ordering synapse rows by pre makes an emitter's woken synapses a contiguous run,
+so the queue loop's reads coalesce and the activity cost falls to ~0.23 ms, at the floor.
+The fused single-launch path is slower than per-tick launches here (3.5 vs 2.35 ms), so host
+launch overhead is not the remaining gap; the fixed 0.69 ms is.
+
+Done since: (1) the post-owns loaders (columnar and record) lay synapse rows out by pre in
+event mode; (2) barriers merged, 6 -> 4 per tick (expansion needs none unless the first
+priority is woken; the queue reset sits under the write-back barrier); (3) **decay-on-wake
+learning rules**: the four built-in pair-wise rules keep the tick they last ran in
+`learning_internal_states[3]` and decay their traces with `trace_decay(dt, tau, n)` =
+`(1-dt/tau)^n` (`n == 1` is the single multiply they always did, so clocked stepping is
+bit-identical); in event mode the learning-rule selector is woken on roles 0 and 1 (pre or
+post fired) and by input events, and `register_learning_rule(..., event_capable=True)` is
+required for custom rules. Clocked vs event with STDP on an 8-soma recurrent network: same
+spikes, weights equal to 1e-5 (power vs repeated multiply). Found on the way: the wake
+dedupe stamp must be per priority, not per row -- the same synapse legitimately runs at
+priority 100 (delivery) and 101 (rule) in one tick. The coworker's triplet and suppression
+rules need the same two-line change (last-tick slot, `trace_decay`) to be event-capable.
+(3b) **Wake eligibility**: `Model.set_wake_eligibility(priority, fn)` lets a model exclude
+agents from a woken priority's reverse adjacency; SuperNeuroABM uses it so only synapses
+created with a learning rule are woken for the rule phase (Brunel's synapses carry none, and
+with the four built-in rules registered every pre/post spike used to queue ~800 k rule
+no-ops per tick). Explicit wakes from input events are not filtered, so a wake queue is
+sized for every agent of the woken breeds plus all role wakes. Brunel with the four
+built-in rules registered: event 1.92 -> **0.96 ms/tick**, i.e. the same as with no rules.
+Also fixed: the synapse kernels now tolerate a synapse with no post slot (an adjacency
+file may list only the pre); round 1 had made them read slot 1 unconditionally, which
+read past the CSR segment, and `deposit_to_agent` indexed `idx_map[target]` before
+checking the sign, so the -1 sentinel read the element before the map (undefined; it
+happened to be benign until it faulted in a 2-rank `load_from_adjacency` test). The
+sentinel is now tested in SAGESim. Note for kernel authors: the CSR transform rewrites
+exactly one alias of `locations[agent_index]` per kernel.
+Still to do: (4) the reverse ghost exchange for partition-independent push.
+
+### Why NEST GPU is still ~3-5x faster per tick, and what of it is structural
+
+The algorithm is now the same: spiking neuron -> efferent list -> atomic add into the
+target's input -> one neuron update per step. The remaining difference is the execution
+model and what an "agent" carries:
+
+1. **Execution model.** SAGESim runs one persistent generated kernel per launch with
+   *software* grid barriers (an atomic counter every block spins on) between phases, four
+   per tick, on only 2-4 blocks per SM (co-residency). NEST GPU launches a few small
+   ordinary kernels per step, each sized to its work, and lets kernel boundaries do the
+   synchronisation. Our silent-network cost of 0.63 ms/tick is this: barriers plus the
+   clocked phases (soma, input stamping, inbox write-back, queue reset) run by ~9-18k
+   persistent threads, plus the per-launch host path.
+2. **What a synapse is.** NEST's synapse is a 12-byte record read once by the delivery
+   kernel; it has no identity of its own. Ours is an agent: the queue holds its row index,
+   the loop stamps it (`atomic_exch`) so a doubly-woken agent runs once, dispatches on its
+   breed, resolves pre/post through the CSR and parameters through the interning table,
+   then deposits. That is ~6 memory touches per delivery against NEST's ~2, and it is the
+   price of synapses that can carry arbitrary per-synapse models and learning rules --
+   the capability the positioning rests on. With rows laid out by pre those touches
+   coalesce, which is why the activity cost dropped from 1.4 to ~0.3 ms.
+3. **What a neuron step writes.** Our soma writes three state slots, a history slot and the
+   spike slot through generic padded property rows; NEST updates a struct-of-arrays with
+   exactly its state.
+
+So: the activity-dependent part is within ~1.5x of the floor; the fixed 0.63 ms is the
+agent framework's execution model. Closing that would mean launching per-phase kernels
+(or CUDA graphs) instead of the fused persistent kernel -- a different SAGESim execution
+backend, not a tuning item -- and is a decision, not a next step.
+
+## 6. Expected gains (estimates, to be replaced by measurements)
+
+| network | before | after round 1 (push), measured | after round 2 (wake lists), estimate |
+|---|---|---|---|
+| Masquelier 2,000, 10 s | 143.7 us/tick (14.3 s) | 15.5 us/tick (1.54-1.57 s, 3 repeats; 9.2x), bitwise identical | ~10-15 us: fixed cost dominates |
+| Masquelier 2,000, 100 s | 141 s | 13.96 s (10.1x), same 639 spikes | |
+| Masquelier 20,000, 10 s | 1,338 us/tick | 73 us/tick (18x) | |
+| Brunel 12.5k / K=1000 / 100 ticks | 10.1 ms/tick (this run) | 8.7 ms/tick (-14 %), same spikes | 0.4-0.8 ms (10-20x); NEST GPU 0.19 ms |
+| Diehl-Cook | 186 ms/presentation | not measured | needs soma-side STDP traces |
+
+## 8. Could push/event be the only mode? (2026-10-15)
+
+Synapses are agents in every mode: a synapse is a row of the synapse breed with its own id,
+weight, learning state, step function and rule. Event mode only changes which rows SAGESim
+visits each tick (the wake list). What the synapse gives up in event mode is its own current
+filter, which moves to the soma (`lif_psc_soma`, NEST's `iaf_psc_exp` layout).
+
+Everything in the repo and the coworker branches is expressible in push/event: the four
+built-in rules (decay-on-wake), the Daffodil memristive rule and the low-resolution synapse
+on `origin/memristor_step_function` (both change state only at pre/post spikes), AdEx/Izh
+somas (inbox read), Masquelier and DC apps (per-synapse traces with wake-on-input). The
+`synaptic_delay` parameter is unused in every mode today (fixed 1-tick delay in
+`get_soma_spike`), so delays are not a pull advantage either; in push they are a delay ring
+on the inbox, as in NEST.
+
+What pull/clocked still buys, measured or by construction:
+
+| property | pull/clocked | push (clocked or event) |
+|---|---|---|
+| run-to-run reproducibility | bitwise (fixed summation order) | **not bitwise**: atomic-add order varies. Brunel 2000/K=100, 400 ticks, two runs: push/clocked 1,381 of 2,000 somas differ in `v` (max 2e-3); event identical with Brunel's two uniform weights, but with per-synapse jittered weights 1,541 somas differ (max 1e-3). Spike counts matched in all cases at this length; a chaotic net will diverge later. NEST GPU and GeNN have the same property. Fix if wanted: ordered segmented reduction instead of atomics (SAGESim `reduce="sum", ordered=True`). |
+| partition freedom on multi-rank | any (synapse reads ghost spike; soma reads ghost synapse) | post-owned only until the reverse ghost exchange exists (`load_from_adjacency` refused at >1 rank) |
+| soma-side integration | soma iterates its afferents: any function of them | sum per inbox channel only (2 channels today; should be configurable, Cora needs 2 taus, AMPA/NMDA/GABA 3-4) |
+| per-synapse current readout | `I_synapse` per synapse recorded | per-soma `I_syn` per channel |
+| synapse types with continuous per-tick state not driven by spikes | stepped every tick | refused in event mode (`event_capable=False`); would need a per-type "always wake" or a separate clocked breed |
+
+Script: `$S/repro_check.py <pull|push|event> out.npz [jitter]` (scratchpad).
+
+### Masquelier on the event path (measured 2026-10-15)
+
+Scratchpad port (`$S/masq_fw_event/`, ns-applications untouched): built-in
+`delivery_synapse` woken by the injected input events, the summed EPSP `x` on the soma
+with the post-spike reset applied there (`masq_psc_hg_lif_soma.py`: the per-synapse
+recursion summed over afferents), and the nearest-neighbour STDP rule with
+decay-on-wake (`exp(-n dt/tau)`, `last_tick` slot). 2000 afferents, dt 0.1 ms, fused
+single-worker path, laptop GPU:
+
+| run | pull/clocked | push/clocked | push/event | Brian2 CPU | NEST GPU |
+|---|---|---|---|---|---|
+| 10 s (100k ticks) | 14.3 s | 1.66-1.68 s | **1.07-1.08 s** | 5.2 s | 11.0 s |
+| 100 s (1M ticks) | 141 s | 15.4 s | **9.46 s** | 16.5 s | - |
+
+Same 414 (10 s) / 639 (100 s) output spikes at identical ticks as push; final weights
+within 7e-7 (float32, different summation path). The first run after an idle GPU is
+~2x slower (clocks ramp); the table is the steady state. Per tick the event path is
+~10 µs: at 2000 synapses the clocked synapse pass was already one wave, so the gain
+over push is the skipped idle rows and the smaller rule phase, not O(synapses).
+
+## 9. Plan: push/event as the single SNN path (proposed 2026-10-15)
+
+Decisions this plan assumes (user to confirm): synapses stay agents; push/event becomes
+the only SuperNeuroABM path and pull stays in SAGESim as the general neighbour read;
+atomic-add nondeterminism is accepted and documented (fixed-point inbox = later option).
+
+| step | repo | work | effort | gate |
+|---|---|---|---|---|
+| 1 | SNA | N-channel psc soma (tau per channel, N from config) + `channel` hyperparameter on `delivery_synapse`, carried by `create_synapse` and the loaders | 1 d | two-tau test net: clocked single_exp == event psc spikes |
+| 2 | SGNN, ns-apps | SGNN builder sets channel per group, two-tau soma config; Masquelier: drop the three scratch kernels into the duplicate (back up `duplicates/` first) | 1 d | Cora 699/221 (small diffs allowed, not bitwise); Masquelier 414/639 spikes |
+| 3 | SAGESim | reverse ghost exchange for reduce arrays: deposits into ghost rows reduced back to the owner; lift the `neighbor_visible` restriction; drop the `load_from_adjacency` refusal | 2-3 d | push == pull bitwise at 1/2/3/4 ranks with synapses on the PRE rank; 106 + MPI |
+| 4 | SNA | push/event default; remove soma pull loops, kinetic synapses (single/double_exp, weighted -> delivery + channels), the two switches and `has_inbox` branches; tests and docs | 2 d | 224-equivalent suite + MPI 1/2/3/4; Brunel 0.96 ms/tick |
+| 5 | ns-apps | Diehl-Cook: ge/gi as two soma channels, per-synapse traces woken by input events | 1-2 d | 73.03% on the control subset (never the full 40k) |
+| 6 | SNA | coworker kernels on merge: AdEx/Izh read the inbox, triplet/suppression rules decay-on-wake, memristor kernels off the `globals` signature | 1 d | their configs run |
+| 7 | SNA/SAGESim | in-place reset (keep GPU buffers, restore initial columns on device) | 1 d | SGNN per-paper 45 -> ~20 ms |
+| 8 | docs | re-time Brunel/Masquelier/SGNN vs NEST GPU/Brian2; PERFORMANCE_NOTES Masquelier correction; WHY evidence (FLAME GPU probe) | 1 d | tables updated |
+
+About 10-12 working days. Steps 1-2 first (they unblock the apps on one GPU and are
+measurable within two days); step 3 before step 4 so nothing is deleted while push is
+still partition-dependent; 5-8 in any order. Every step ends with the standard gate
+(both suites, MPI 1/2/3/4, bitwise dump where applicable) and a commit by the user.

@@ -1,6 +1,6 @@
 from cupyx import jit
 from sagesim.math_utils import rand_normal, clamp
-from superneuroabm.step_functions.synapse.util import get_soma_spike
+from superneuroabm.step_functions.synapse.util import get_soma_spike, trace_decay
 
 
 @jit.rawkernel(device="cuda")
@@ -99,8 +99,13 @@ def exp_pair_wise_stdp_memristive(
     # =========================
     # ---- STDP ---------------
     # =========================
-    pre_trace  = pre_trace  * (1.0 - dt / tau_pre_stdp)  + pre_spike  * a_exp_pre
-    post_trace = post_trace * (1.0 - dt / tau_post_stdp) + post_spike * a_exp_post
+    # decay-on-wake: ticks since this rule last ran (1 when stepped every tick;
+    # an event-woken rule catches its traces up over the ticks it slept)
+    _n = t_current - int(learning_internal_states[agent_index][3])
+    if _n < 1:
+        _n = 1
+    pre_trace  = pre_trace * trace_decay(dt, tau_pre_stdp, _n)  + pre_spike  * a_exp_pre
+    post_trace = post_trace * trace_decay(dt, tau_post_stdp, _n) + post_spike * a_exp_post
 
     dW = pre_trace * post_spike - post_trace * pre_spike
 
@@ -179,6 +184,7 @@ def exp_pair_wise_stdp_memristive(
     learning_internal_states[agent_index][0] = pre_trace
     learning_internal_states[agent_index][1] = post_trace
     learning_internal_states[agent_index][2] = dW
+    learning_internal_states[agent_index][3] = 1.0 * t_current
 
     buffer_idx = t_current % len(learning_internal_states_buffer[agent_index])
     learning_internal_states_buffer[agent_index][buffer_idx][0] = pre_trace
