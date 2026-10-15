@@ -614,3 +614,13 @@ input path:
   test_synapse_and_soma_models was regenerated for the new model (lif baselines unchanged).
   Tutorials re-executed: 00 (Izhikevich panel A, 21 spikes, STDP weight 0.50 -> 0.75),
   01 unchanged (weight range 0.64, custom rule id 6).
+
+### Masquelier 450 s on the authors' original input, event stepping (2026-10-15)
+
+`ns-applications/duplicates/masquelier_2008/run_hg_input.py --stepping event` (the runner
+gained the switch; its clocked branch now sets `synapse_stepping="clocked"` explicitly):
+57,721,830 input spikes, 4,500,000 ticks. Simulate **71.7 s** (16 us/tick; 12.7 us/tick in
+steady state, the first 50 s chunk carries the JIT and the buffer build), build + inject
+5.8 s, 80.0 s wall for the whole script including loading the 920 MB input dump.
+Previously 647 s (144 us/tick) on the clocked kernels: 9.0x. The authors' own Brian2
+`cpp_standalone` run of the same experiment takes 79.7 s. Same 2,982 output spikes.
