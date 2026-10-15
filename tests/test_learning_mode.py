@@ -311,38 +311,30 @@ class TestLearningMode(unittest.TestCase):
             self.assertAlmostEqual(hp["tref"], 0.0, places=6)
             self.assertEqual(self._weight(), learned, "weights eroded across the loop")
 
-    @unittest.expectedFailure
-    def test_raw_setter_after_simulate_loses_learned_weights(self):
-        """Documents the CPU/GPU staleness hazard on the raw, unguarded API.
+    def test_raw_setter_after_simulate_keeps_learned_weights(self):
+        """The raw setter after a run must not discard what the kernel learned.
 
-        set_agent_property_value writes the CPU copy and only marks the GPU stale,
-        while the kernel's results live on the GPU until reset() syncs them back. So
-        a write straight after simulate() makes the next simulate() re-upload the
-        pre-training CPU array, discarding everything STDP learned.
-
-        This is expectedFailure on purpose: it passes while the bug exists, and
-        reports UNEXPECTED SUCCESS the moment the sync layer starts tracking device
-        staleness -- which is the signal to revisit this file and
-        docs/CPU_GPU_DATA_FLOW.md. set_hyperparameters() refuses this sequence
-        outright; see test_named_parameter_api.py.
+        The device holds the learned weights until something syncs them back. A host
+        write now syncs first (SAGESim _ensure_host_current), lands on current data,
+        and the device is refreshed in place: the learned weight survives a write with
+        no intervening reset(). (This used to be an expectedFailure documenting the
+        opposite; see docs/CPU_GPU_DATA_FLOW.md section 5.)
         """
         self.model.setup()
         self._run()
         learned = self._weight()
         self.assertNotEqual(learned, 14.0, "sanity: STDP should have run")
 
-        # No reset() -- the GPU still holds the learned weight, the CPU does not.
+        # No reset(): the host copy is synced from the device before the write lands.
         hp = self.model.get_agent_property_value(
             id=self.soma_post, property_name="hyperparameters"
         )
         self.model.set_agent_property_value(self.soma_post, "hyperparameters", hp)
+        self.assertEqual(self._weight(), learned, "the write discarded the learned weight")
 
         self.model.eval()
         self._run()
-        self.assertEqual(
-            self._weight(), learned,
-            "learned weight survived a write with no intervening reset()",
-        )
+        self.assertEqual(self._weight(), learned, "eval() after the write must keep the weight")
 
 
 if __name__ == "__main__":

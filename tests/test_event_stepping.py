@@ -115,6 +115,32 @@ class TestEventEqualsClocked(unittest.TestCase):
         self.assertEqual([fresh.get_spike_times(soma_id=s) for s in sf],
                          [reused.get_spike_times(soma_id=s) for s in sr])
 
+    def test_in_place_reset_equals_rebuild(self):
+        """reset() keeps the GPU buffers by default and refreshes them in place; with
+        retain_parameters=True the learned weights survive. Both paths must give the
+        same second run to the bit."""
+        runs = {}
+        for release in (False, True):
+            m, somas, syns = _recurrent_stdp("event")
+            m.simulate(ticks=60)
+            m.reset(retain_parameters=True, release_buffers=release)
+            self.assertEqual(m._gpu_buffers.is_initialized, not release)
+            rng = np.random.default_rng(0)
+            ext = [s for s in m._synapse_ids if m.get_synapse_connectivity(s)[0] == -1]
+            for s in ext:
+                ticks = np.sort(rng.choice(np.arange(2, 70), size=12, replace=False))
+                m.add_spike_list(s, [[int(t), 1.0] for t in ticks])
+            m.simulate(ticks=100)
+            runs[release] = (
+                [m.get_spike_times(soma_id=s) for s in somas],
+                np.array([m.get_agent_property_value(s, "hyperparameters")[0] for s in syns], np.float32),
+                np.array([m.get_agent_property_value(s, "internal_states") for s in somas], np.float32),
+            )
+        self.assertEqual(runs[False][0], runs[True][0])
+        np.testing.assert_array_equal(runs[False][1].view(np.uint32), runs[True][1].view(np.uint32))
+        np.testing.assert_array_equal(runs[False][2].view(np.uint32), runs[True][2].view(np.uint32))
+        self.assertGreater(float(np.abs(runs[False][1] - 14.0).max()), 0.0, "weights must have learned")
+
 
 class TestEventLearning(unittest.TestCase):
 

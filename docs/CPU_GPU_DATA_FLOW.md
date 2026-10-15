@@ -101,56 +101,24 @@ Weights sitting at exactly their creation values after a run that should have tr
 an inference pass scoring at chance; a parameter you set having taken effect while
 everything the kernel learned did not.
 
-## 5. Planned fix: a `_device_dirty` flag
+## 5. Landed (2026-10-15): `_device_dirty`, in-place reset, sync-before-write
 
-Not implemented. Recorded here so the later pass does not have to re-derive it.
+The flag proposed here now exists in SAGESim (`Model._device_dirty`), and `reset()` no
+longer frees the buffers by default. The rules:
 
-Add a flag next to `is_initialized`, meaning **"the device holds values the host has not
-seen"** — the fact `is_initialized` cannot express. It is the same shape as the existing
-`_globals_dirty` (`sagesim/model.py:728, 736, 1652-1654`): set by the producer, checked at
-the point of use.
+| Event | `is_initialized` | `_device_dirty` | `pending_reset` | Why |
+|---|---|---|---|---|
+| `_build_gpu_buffers()` then launch | → `True` | → `True` at the launch | `False` | the kernel writes device tensors the host never sees |
+| `reset(release_buffers=False)` (SuperNeuroABM's default) | `True` | → `False` once flushed | → `True`, flushed at the end of `NeuromorphicModel.reset()` | kept columns synced device→host, then every non-interned host column uploaded over the local rows, breed-local arrays zeroed, wake state cleared; the next `simulate()` reuses the buffers |
+| `reset(release_buffers=True)` | → `False` | `False` | — | the old path: free, rebuild at the next launch |
+| `set_agent_property_value` / `set_hyperparameters` / `_write_stdp_type` | unchanged | `False` after `_ensure_host_current()` | → `True` | **sync-before-write**: if the device is dirty its state is downloaded first, then the host write lands on current data, then the buffers are refreshed in place before the next launch or device read. Nothing learned is lost, so the `set_hyperparameters` guard is gone |
+| `get_agent_property_value`, `get_breed_local_array`, next `simulate()` | | | → `False` | `_flush_pending_reset()` first |
 
-| Event | `is_initialized` | `_device_dirty` | Why |
-|---|---|---|---|
-| `setup()` / `reset()` → fresh manager | `False` | `False` | nothing on the device yet |
-| `_build_gpu_buffers()` (`:1414`) | → `True` | unchanged `False` | **upload** — device mirrors host |
-| kernel write-back, end of `simulate()` (`:~1718`) | `True` | → **`True`** | step funcs mutated device tensors. **Only producer** |
-| `_sync_gpu_to_agent_factory()` (`:1065`) | unchanged | → **`False`** | **download** — host mirrors device |
-| `set_agent_property_value` (after the check) | → `False` | `False` | host write; the *device* is stale, which `is_initialized` tracks |
-| `_write_stdp_type` (after the check) | → `False` | `False` | same, batched |
-| `_regenerate_data_tensors()` | unchanged | unchanged | host-side rebuild, no device involvement |
-
-Consumers call one guard before touching the host:
-
-```python
-def _ensure_host_current(self):
-    if self._buffers_live() and self._gpu_buffers._device_dirty:
-        self._sync_gpu_to_agent_factory()      # clears the flag
-```
-
-Call sites:
-- **SAGESim** — `set_agent_property_value` (`:547`), `set_local_agent_property_value`
-  (`:581`); and the host branches of the two getters (`:541`, `:573`) as belt-and-braces.
-- **superneuroabm** — `_write_stdp_type` (`model.py:722-753`) and `_read_stdp_type`
-  (`:695-720`) **bypass the setter** and poke
-  `af._property_name_2_agent_data_tensor` directly. Fixing SAGESim alone would leave
-  `eval()` order-dependent. Put the check **before** `_write_stdp_type`'s batch loop, not
-  inside it, so `eval()` on a large model pays one sync and then a tight loop.
-- **Not** `_reset_agents` (`:661`, `:763`) — safe by construction, since `reset()` calls
-  `super().reset()` (which syncs) first.
-
-Two mistakes that are easy to make:
-- A **setter must not** set `_device_dirty`. It makes the *device* stale, not the host;
-  marking it would make a later sync overwrite the user's write with old device data.
-- **Buffer construction must not** set it either — that direction is an upload.
-
-`is_initialized == False and _device_dirty == True` should be unreachable, since `reset()`
-syncs before freeing and setters sync before invalidating. Worth an assert.
-
-Cost: one device→host copy of all properties at the first host access after each
-`simulate()` — the same copy `reset()` already performs, just triggered by need instead of
-by convention. Everything else becomes free. Once this lands, the guard in
-`set_hyperparameters` is deleted rather than reworked.
+So "which copy is authoritative" is now explicit: the device after a launch
+(`_device_dirty`), the host after a reset or a host write (`pending_reset`), and the two
+agree in between. The cost model: a reset per sample costs a few column uploads
+(Cora: see `docs/EVENT_DRIVEN_NOTES.md` §13) instead of a rebuild; the first host write
+after a run costs one device→host sync of the written properties.
 
 ## 6. Known issue: `simulate()` resizes the tracking buffers without invalidating the device
 

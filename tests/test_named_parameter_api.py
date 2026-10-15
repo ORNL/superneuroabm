@@ -125,17 +125,21 @@ class TestNamedParameterAPI(unittest.TestCase):
             self.model.set_hyperparameters(self.synapse_stdp, {"synaptic_delay": 3.0})
         self.assertIn("create_synapse", str(ctx.exception))
 
-    def test_write_blocked_while_gpu_holds_unsynced_state(self):
-        """After simulate() the GPU has values the CPU never saw; writing would drop them."""
+    def test_write_after_run_keeps_device_state(self):
+        """After simulate() the GPU has values the CPU never saw. A host write syncs
+        them back first, lands, and is refreshed onto the device in place: the write is
+        honoured and the run's state (membrane, spike counter) is not lost."""
         self.model.setup()
         self.model.simulate(ticks=self.SIM_TICKS)
+        state_before = list(self.model.get_agent_property_value(self.soma_pre, "internal_states"))
+        self.assertNotEqual(state_before[1], 0.0, "the run must have advanced tcount")
 
-        with self.assertRaises(RuntimeError) as ctx:
-            self.model.set_hyperparameters(self.soma_pre, {"vthr": -33.0})
-        self.assertIn("reset(retain_parameters=True)", str(ctx.exception))
+        self.model.set_hyperparameters(self.soma_pre, {"vthr": -33.0})
+        self.assertEqual(self.model.get_hyperparameters(self.soma_pre)["vthr"], -33.0)
+        self.assertEqual(list(self.model.get_agent_property_value(self.soma_pre, "internal_states")),
+                         state_before, "a host write must not discard the device state")
 
         self.model.reset(retain_parameters=True)
-        self.model.set_hyperparameters(self.soma_pre, {"vthr": -33.0})
         self.assertEqual(self.model.get_hyperparameters(self.soma_pre)["vthr"], -33.0)
 
     def test_writes_allowed_before_first_simulate(self):

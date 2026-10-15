@@ -715,23 +715,11 @@ class NeuromorphicModel(Model):
                 if name in self._CREATION_ONLY_HYPERPARAMETERS:
                     raise ValueError(self._CREATION_ONLY_HYPERPARAMETERS[name])
 
-        # Writes land on the CPU-side AgentFactory, but after a simulate() the GPU
-        # holds values the CPU has never seen (STDP weights, membrane state). The
-        # next simulate() rebuilds the GPU from the CPU copy, so writing here would
-        # silently discard everything the kernel learned. reset() is currently the
-        # only GPU->CPU sync, so require it rather than corrupting the model.
-        # See docs/CPU_GPU_DATA_FLOW.md; this guard goes away once the sync layer
-        # tracks staleness directly.
-        if self._buffers_live():
-            raise RuntimeError(
-                f"set_{property_name}() cannot run while GPU buffers hold unsynced "
-                f"state: the write would land on the CPU copy and the next simulate() "
-                f"would re-upload it, discarding GPU-learned values such as STDP "
-                f"weights. Call reset(retain_parameters=True) first -- it syncs the "
-                f"GPU back to the CPU and keeps learned parameters. "
-                f"See docs/CPU_GPU_DATA_FLOW.md."
-            )
-
+        # Writes land on the CPU-side AgentFactory. If the device holds values the host
+        # has not seen (STDP weights, membrane state after a run), SAGESim's setter
+        # downloads them first, then the write lands, then the device is refreshed in
+        # place before the next launch: nothing learned is lost, no reset() needed.
+        # See docs/CPU_GPU_DATA_FLOW.md section 5.
         for agent_id in id_list:
             index = self._hp_key_index(agent_id, property_name)
             unknown = [name for name in updates if name not in index]
@@ -763,8 +751,8 @@ class NeuromorphicModel(Model):
     def set_hyperparameters(self, ids, updates: dict) -> None:
         """Update hyperparameters by name, leaving unnamed ones untouched.
 
-        Must be called before the first simulate(), or after a
-        ``reset(retain_parameters=True)`` -- see docs/CPU_GPU_DATA_FLOW.md.
+        May be called at any time; after a simulate() the device state is synced back
+        first so the write lands on current values -- see docs/CPU_GPU_DATA_FLOW.md.
 
         :param ids: One agent id, or an iterable of them.
         :param updates: ``{name: value}``; an empty dict is a no-op.
@@ -1102,6 +1090,10 @@ class NeuromorphicModel(Model):
         """
         if not id2value:
             return
+        # If the device holds state the host has not seen (a run since the last
+        # build/reset/flush), download it first so this host write lands on current
+        # data and the in-place refresh below does not discard anything learned.
+        self._ensure_host_current()
         af = self._agent_factory
         local_agent_map = af._rank2agentid2agentidx.get(self._local_rank, {})
         data = af._property_name_2_agent_data_tensor["learning_hyperparameters"]
@@ -1141,10 +1133,10 @@ class NeuromorphicModel(Model):
 
         # _generate_agent_data_tensors() hands out references to these same
         # lists, so the write above is already visible model-side; no
-        # _regenerate_data_tensors() needed. Only the GPU copy is now stale.
-        if touched and self._buffers_live():
-            self._gpu_buffers.is_initialized = False
-            self._cached_all_args = None
+        # _regenerate_data_tensors() needed. The device copy is refreshed in place
+        # before the next launch or device read.
+        if touched:
+            self._host_columns_changed()
 
     def set_learning_enabled(self, enabled: bool, synapse_ids: list = None) -> None:
         """
@@ -1289,12 +1281,17 @@ class NeuromorphicModel(Model):
                 self._scatter_row(data[prop_name], row, rows)
 
 
-    def reset(self, retain_parameters: bool = True) -> None:
+    def reset(self, retain_parameters: bool = True, release_buffers: bool = False) -> None:
         """
         Resets all soma and synapse agents to their initial states.
 
         :param retain_parameters: If True, keeps current learned parameters
             (e.g. STDP weights). If False, resets parameters to defaults.
+        :param release_buffers: False (the default) keeps the GPU buffers and refreshes
+            them in place from the reset host columns, so a reset costs a few column
+            uploads rather than a rebuild of the device structures (index map, CSR,
+            interning); the right choice for a reset per sample. True frees them and
+            the next simulate() rebuilds everything.
         """
         # Step 1: SAGESim syncs GPU->AgentFactory, regenerates tensors, frees GPU.
         # Only the columns we are KEEPING need to come back off the device. Everything
@@ -1304,7 +1301,8 @@ class NeuromorphicModel(Model):
         # the STDP traces in learning_internal_states are state, not parameters, and are
         # meant to be cleared.
         super().reset(sync_properties=("hyperparameters", "learning_hyperparameters")
-                      if retain_parameters else ())
+                      if retain_parameters else (),
+                      release_buffers=release_buffers)
 
         # Step 2: Reset agent states on AgentFactory (keeps hyperparameters if retain=True)
         self._reset_agents(retain_parameters=retain_parameters)
@@ -1338,7 +1336,9 @@ class NeuromorphicModel(Model):
         self._spikes_need_gather = False
         self.clear_input_spikes()
         self._input_next_tick = 0
-        # self._agent_factory._prev_agent_data.clear()
+        # The host columns are final now: refresh the live device buffers from them
+        # (no-op after release_buffers=True, the next simulate() rebuilds).
+        self._flush_pending_reset()
         
     def _check_synaptic_channels(self) -> None:
         """A soma config that filters per channel (keys tau_syn_0..) must declare every
@@ -2903,21 +2903,20 @@ class NeuromorphicModel(Model):
         if self._spike_record_count_gpu is None:
             self._spike_record_count_gpu = cp.zeros(1, dtype=cp.int32)
         self._spike_record_count_gpu[0] = 0
-        # Build spike mask: 1.0 for target somas, 0.0 for others
+        # Build spike mask: 1.0 for target somas, 0.0 for others. One scatter: a
+        # per-soma device write was 33 ms per launch on Cora (2,715 somas), and the mask
+        # is rebuilt after every reset().
         if self._spike_mask_gpu is None:
             buf = self._gpu_buffers
             mask = cp.zeros(buf.agent_capacity, dtype=cp.float32)
-            if self._recorded_soma_ids is None:
-                # Record all somas (not synapses — they don't produce output spikes)
-                for sid in self._soma_ids:
-                    idx = buf.agent_id_to_index.get(sid, -1)
-                    if 0 <= idx < num_local_agents:
-                        mask[idx] = 1.0
-            else:
-                for sid in self._recorded_soma_ids:
-                    idx = buf.agent_id_to_index.get(sid, -1)
-                    if 0 <= idx < num_local_agents:
-                        mask[idx] = 1.0
+            # all somas (synapses produce no output spikes), or the recorded subset
+            ids = self._soma_ids if self._recorded_soma_ids is None else self._recorded_soma_ids
+            a2i = buf.agent_id_to_index
+            idx = np.fromiter((a2i.get(int(sid), -1) for sid in ids), dtype=np.int64,
+                              count=len(ids))
+            idx = idx[(idx >= 0) & (idx < num_local_agents)]
+            if idx.size:
+                mask[cp.asarray(idx)] = 1.0
             self._spike_mask_gpu = mask
         self._compile_input_events(self._gpu_buffers)
         # A driver that rewinds the clock (Diehl & Cook sets model.tick = 0 before

@@ -561,3 +561,33 @@ SAGESim option to wake dependants right after the emitting priority of the same 
 lift that; noted, not built. Sanity run 300/300: 36.33 %, retries 26/25/46, identical to
 before; 2.6x faster (65 s whole run; the exc soma no longer gathers 883 afferents serially).
 `test_brian1_semantics.py` passes against its CPU reference (|dv| 5e-5 mV).
+
+## 13. Step 7: in-place reset (2026-10-15)
+
+`reset()` used to free the device buffers; the next `simulate()` rebuilt them (index map,
+CSR, interning, uploads): on Cora that rebuild was the largest single item per paper.
+SAGESim's `reset(release_buffers=False)` now keeps the buffers and marks them
+`pending_reset`; `_flush_pending_reset()` uploads the (reset) host columns over the local
+rows and their write buffers, zeroes every breed-local array (the inbox starts empty) and
+clears the wake stamps and queue counts. Interned properties are untouched (read-only on
+the device). It runs before the next launch, before the next device read, and at the end
+of `NeuromorphicModel.reset()` once `_reset_agents` has rewritten the host columns, so
+`reset(retain_parameters=...)` is in place by default and `release_buffers=True` keeps
+the old path. Alongside, `_device_dirty` (set at every launch, cleared by a flush) makes
+the host/device authority explicit: a host write while the device is dirty first syncs
+the written properties device->host (`_ensure_host_current`), lands, and schedules an
+in-place refresh, so the `set_hyperparameters` guard that forced a `reset()` first is
+gone (docs/CPU_GPU_DATA_FLOW.md section 5). Tests: SAGESim `tests/test_reset_in_place.py`
+(5, in the MPI runner), SNA `test_event_stepping.test_in_place_reset_equals_rebuild`
+(rebuild and in-place paths give the same second run to the bit, learned weights kept).
+
+Measured on Cora (2,715 somas, 32,836 synapses, 20 ticks per paper, profile over 20
+papers): the in-place reset alone changed nothing (53.1 s per 1000 papers vs 51.3 s with
+`release_buffers=True`), because the rebuild was not where the time went. The profile
+showed `_prepare_kernel_extras` at 33 ms per launch: the spike-record mask was rebuilt
+after every reset with one device write per soma. Replaced by one scatter. Per paper now:
+simulate 2.6 ms (20 ticks), reset 3.5 ms, readout 0.4 ms, i.e. ~6.5 ms against ~45 ms
+before (the 1000-paper total is in the gate log below). Lesson re-learned: profile the
+loop, not the step one expects to be slow.
+Gate (2026-10-15): SAGESim 115 passed + MPI 1/2/3/4; SNA 238 passed + MPI 1/2/3/4; Cora
+1000 papers **7.7 s** (was 50-58 s), 699/1000 correct, 221 ties; Diehl-Cook sanity 36.33 %.

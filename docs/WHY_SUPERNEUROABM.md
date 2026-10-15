@@ -235,8 +235,11 @@ code. Equations can be `clock-driven` (integrated every step, and able to read t
 - **Rows 7-8.** CuPy kernels on GPUs; MPI between GPUs, exchanging spikes and synapse outputs.
 
 **The price.** About 10x more GPU memory per synapse than NEST GPU (147 vs 12-16 bytes) and, on a
-Brunel network, about 40x slower per time step, because the work is proportional to synapses rather
-than spikes. On scaling, NEST GPU has run far larger weak-scaling tests — 128 to 1,024 GPUs at 2.5 billion
+Brunel network, about 7x slower per time step (1.28 vs 0.19 ms with 12.5 M synapses), the cost of
+each synapse being an agent with its own row and learning rule rather than a 12-byte record. The
+work is proportional to spikes in both: synapses are stepped only when their presynaptic neuron
+fires. On a single-neuron STDP experiment (Masquelier 2008, 2,000 plastic synapses) SuperNeuroABM
+is faster than both Brian2 on CPU and NEST GPU (1.07 s vs 5.2 s vs 11.0 s). On scaling, NEST GPU has run far larger weak-scaling tests — 128 to 1,024 GPUs at 2.5 billion
 synapses per GPU, random connectivity, firing — with simulation time per model second growing
 sublinearly and construction time linearly. Ours is flat from 64 to 2,048 GPUs, but at 12.5-50
 million synapses per GPU on a local, silent network; the workloads are too different to say who

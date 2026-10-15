@@ -116,8 +116,11 @@ synapse may hold: arbitrary NESTML/C++ with per-synapse state in NEST, a fixed `
 selector crossbar).
 
 This is a deliberate trade, and a good one for its purpose: 12 bytes per synapse (16 in the wide layout) and work
-proportional to spikes. It is why NEST GPU is fast — our own Brunel benchmark measured a ~40x per-tick
-gap, which is O(synapses) work in SuperNeuroABM against O(spikes) in NEST GPU. It is also why it cannot
+proportional to spikes. It is why NEST GPU is fast. (SuperNeuroABM's synapses have been event-woken too
+since 2026-10-15 — stepped only when their pre fires, with the synaptic kinetics on the soma — and the
+per-tick gap on our Brunel benchmark went from ~40x to ~7x, 1.28 vs 0.19 ms per tick; what remains is
+the cost of a synapse being an agent with its own row and learning rule rather than a 12-byte record,
+`docs/EVENT_DRIVEN_NOTES.md` section 7.) It is also why it cannot
 be hardware-aware beyond static effects: there is nowhere to keep device state and no place where
 device code runs. Adding it means widening the connection struct (used by connection building,
 delivery, remote/MPI connection code), adding a per-step synapse kernel and per-synapse RNG state, and
@@ -196,10 +199,12 @@ for NEST GPU, and it should be stated precisely:
   likewise volatile memristors driven by the membrane voltage, or sneak currents), interactions
   beyond pre/post (synapse-level pooling, synapses as input ports), or the same chip instance at a
   different number of processes without a hand-written counter-based generator.
-- *Speed.* Not measured on these workloads, and a GPU does not win by default: NEST's work is
-  proportional to spikes, SuperNeuroABM steps every synapse every tick. In our own Masquelier
-  benchmark (`docs/PERFORMANCE_NOTES.md`) Brian2 on CPU took 11.1 s, NEST GPU 12.6 s and SuperNeuroABM
-  33.8 s (before later speed-ups). No speed claim against NEST on CPU should be made without measuring.
+- *Speed.* Not measured against NEST on CPU on these workloads, so no claim there. Against the
+  others, measured (`docs/EVENT_DRIVEN_NOTES.md`, 2026-10-15): on the Masquelier 2008 experiment
+  (2,000 plastic afferents, one neuron, 100,000 steps) SuperNeuroABM takes 1.07 s, Brian2 on CPU
+  5.2 s and NEST GPU 11.0 s; on Brunel (12.5 M synapses) it is ~7x slower per step than NEST GPU.
+  Both simulators do work proportional to spikes now; the earlier "steps every synapse every tick"
+  was true and has been removed.
 - *Where it runs.* Current leadership HPC systems put most of their compute in GPUs, which NEST on
   CPU leaves idle. That is an argument about cost and access, not capability.
 
