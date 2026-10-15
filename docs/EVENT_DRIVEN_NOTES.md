@@ -624,3 +624,13 @@ steady state, the first 50 s chunk carries the JIT and the buffer build), build 
 5.8 s, 80.0 s wall for the whole script including loading the 920 MB input dump.
 Previously 647 s (144 us/tick) on the clocked kernels: 9.0x. The authors' own Brian2
 `cpp_standalone` run of the same experiment takes 79.7 s. Same 2,982 output spikes.
+
+### Brunel, ours vs NEST GPU, back to back (2026-10-15, laptop GPU, 12.5k / K=1000 / 400 ticks)
+
+| | SuperNeuroABM (event) | NEST GPU 2.0 |
+|---|---|---|
+| per tick, steady state | 1.22 ms (ticks 2-400: 0.487 s) | 0.20 ms (ticks 11-400: 0.0786 s by the script's timer; NEST GPU's own printed simulation time for the same 390 ms is 0.201 s, i.e. 0.52 ms/tick) |
+| first tick / calibrate | 6.25 s (device buffer build) | 0.05 s |
+| construction | 25.2 s load + 3.8 s setup | 0.03 s connect |
+| whole run | 46.9 s | 1.85 s |
+| firing rate | 32.5 Hz (33.5 steady) | 28.1 Hz |
