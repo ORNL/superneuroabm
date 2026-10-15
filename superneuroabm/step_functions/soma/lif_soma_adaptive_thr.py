@@ -1,18 +1,23 @@
 """
-LIF Neuron and weighted synapse step functions for spiking neural networks
+LIF soma with an adaptive threshold: the threshold jumps by ``delta_thr`` at every spike
+and relaxes back to ``vthr_initial`` with ``tau_decay_thr``. Synaptic input comes from
+the soma inbox through one exponential filter per channel
+(step_functions/synaptic_input.synaptic_current), as in lif_soma.
 
+Hyperparameters (neuron_params): [0] C, [1] R, [2] vthr_initial, [3] tref, [4] vrest,
+[5] vreset, [6] tref_allows_integration, [7] I_in, [8] scaling_factor, [9] delta_thr,
+[10] tau_decay_thr, [11 + c] tau_syn_c.
+Internal state: [0] v, [1] tcount, [2] tlast, [3] vthr, [4 + c] I_syn_c.
 """
 
 from cupyx import jit
 import cupy as cp
 
-from superneuroabm.step_functions.synaptic_input import (
-    has_inbox, read_synaptic_input,
-)
+from superneuroabm.step_functions.synaptic_input import synaptic_current
 
 
 @jit.rawkernel(device="cuda")
-def lif_soma_adaptive_thr_step_func(  # NOTE: update the name to soma_step_func from neuron_step_func
+def lif_soma_adaptive_thr_step_func(
     tick,
     agent_index,
     dt,
@@ -20,100 +25,64 @@ def lif_soma_adaptive_thr_step_func(  # NOTE: update the name to soma_step_func 
     agent_ids,
     breeds,
     locations,
-    neuron_params,  # k, vth, C, a, b,
+    neuron_params,
     learning_params,
-    internal_states,  # v, u
+    internal_states,
     learning_internal_states,
-    synapse_history,  # Synapse delay
-    input_spikes_tensor,  # input spikes
+    synapse_history,
+    input_spikes_tensor,
     output_spikes_tensor,
     internal_states_buffer,
     learning_internal_states_buffer,
     synaptic_input,
     synaptic_input_idx,
 ):
-    synapse_indices = locations[agent_index]  # Now contains local indices instead of IDs
+    t_current = int(tick)
 
-    I_synapse = 0.0
+    I_synapse = synaptic_current(agent_index, dt, neuron_params, 11, internal_states, 4,
+                                 synaptic_input, synaptic_input_idx)
 
-    if has_inbox(agent_index, synaptic_input_idx):
-        # Afferent synapses deposited their currents into this soma's inbox last tick
-        I_synapse = read_synaptic_input(agent_index, synaptic_input, synaptic_input_idx, 0)
-    else:
-        # synapse_indices now contains pre-computed local indices (converted in SAGESim)
-        # No linear search needed!
-        for i in range(len(synapse_indices)):
-            synapse_index = int(synapse_indices[i])
-            if synapse_index >= 0 and not cp.isnan(synapse_indices[i]):
-                I_synapse += internal_states[synapse_index][0]
+    C = neuron_params[agent_index][0]
+    R = neuron_params[agent_index][1]
+    vthr_initial = neuron_params[agent_index][2]
+    tref = neuron_params[agent_index][3]
+    vrest = neuron_params[agent_index][4]
+    vreset = neuron_params[agent_index][5]
+    tref_allows_integration = neuron_params[agent_index][6]
+    I_in = neuron_params[agent_index][7]
+    scaling_factor = neuron_params[agent_index][8]
+    delta_thr = neuron_params[agent_index][9]
+    tau_decay_thr = neuron_params[agent_index][10]
 
-    # Get the current time step value:
-    t_current = int(tick)  # Check if tcount is needed or if we ca use this directly.
-    # dt and I_bias received directly as scalar params
+    v = internal_states[agent_index][0]
+    tcount = internal_states[agent_index][1]
+    tlast = internal_states[agent_index][2]
+    vthr = internal_states[agent_index][3]
 
-    # NOTE: neuron_params would need to as long as the max number of params in any spiking neuron model
-    # Neuron Parameter
-    C = neuron_params[agent_index][0]  # membrane capacitance
-    R = neuron_params[agent_index][1]  # Leak resistance
-    vthr_initial = neuron_params[agent_index][2]  # initial spike threshold
-    tref = neuron_params[agent_index][3]  # refractory period
-    vrest = neuron_params[agent_index][4]  # resting potential
-    vreset = neuron_params[agent_index][5]  # reset potential
-    tref_allows_integration = neuron_params[agent_index][6]  # whether to allow integration during refractory period
-    I_in = neuron_params[agent_index][7]  # input current
-    scaling_factor = neuron_params[agent_index][8]  # scaling factor for synaptic current
-    # Adaptive threshold parameters
-    delta_thr      = neuron_params[agent_index][9]     # threshold increment
-    tau_decay_thr  = neuron_params[agent_index][10]    # threshold decay constant
-
-
-
-    # vreset = neuron_params[agent_index][8]
-    # I_in = neuron_params[agent_index][9]
-
-    # NOTE: size of internal_states would need to be set as the maximum possible state variables of any spiking neuron
-    # Internal state variables
-    v = internal_states[agent_index][0]  # membrane potential
-    tcount = internal_states[agent_index][
-        1
-    ]  # time count from the start of the simulation
-    tlast = internal_states[agent_index][2]  # last spike time
-    vthr = internal_states[agent_index][3]  # spike threshold (updated value)
-    # Calculate the membrane potential update
     dv = (vrest - v) / (R * C) + (I_synapse * scaling_factor + I_bias + I_in) / C
-
     v += (
         (dv * dt)
         if ((dt * tcount) > (tlast + tref)) or tref_allows_integration
         else 0.0
     )
+    s = 1.0 * ((v >= vthr) and ((dt * tcount > tlast + tref) if tlast > 0 else True))
 
-    #if tlast > 0 else 1 # output spike only happens if the membrane potential exceeds the threshold and the neuron is not in refractory period.
-    s = 1.0 * ((v >= vthr) and (( dt * tcount > tlast + tref) if tlast > 0 else True))
-    # -----------------------------
-    # ADAPTIVE THRESHOLD UPDATE
-    # -----------------------------
+    # adaptive threshold: jump at a spike, otherwise relax towards the initial value
     if s == 1.0:
-        # Increase threshold after spike
         vthr += delta_thr
     else:
-        # Exponential decay: vthr = vrest_thr + (vthr - vrest_thr)*exp(-dt/tau)
         vthr = vthr_initial + (vthr - vthr_initial) * cp.exp(-dt / tau_decay_thr)
 
-
     tlast = tlast * (1 - s) + dt * tcount * s
-    v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
+    v = v * (1 - s) + vreset * s
 
     internal_states[agent_index][0] = v
     internal_states[agent_index][1] += 1
     internal_states[agent_index][2] = tlast
-    # Write back updated threshold state
-    internal_states[agent_index][3] =vthr
+    internal_states[agent_index][3] = vthr
 
     output_spikes_tensor[agent_index][t_current % 2] = s
 
-    # Safe buffer indexing: use modulo to prevent out-of-bounds access
-    # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always
     buffer_idx = t_current % len(internal_states_buffer[agent_index])
     internal_states_buffer[agent_index][buffer_idx][0] = v
     internal_states_buffer[agent_index][buffer_idx][1] = internal_states[agent_index][1] + 1

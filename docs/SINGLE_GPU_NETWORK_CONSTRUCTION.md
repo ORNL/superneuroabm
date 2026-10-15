@@ -38,7 +38,7 @@ output_neuron = model.create_soma(breed="lif_soma", config_name="config_0")
 # --- Connections (synapses) ---
 # External input -> input neuron. pre_soma_id=-1 means "external input".
 input_synapse = model.create_synapse(
-    breed="single_exp_synapse",
+    breed="delivery_synapse",
     pre_soma_id=-1,
     post_soma_id=input_neuron,
     config_name="config_0",
@@ -47,7 +47,7 @@ input_synapse = model.create_synapse(
 
 # Input -> Hidden, with STDP learning enabled via a learning_rule.
 model.create_synapse(
-    breed="single_exp_synapse",
+    breed="delivery_synapse",
     pre_soma_id=input_neuron,
     post_soma_id=hidden_neuron,
     config_name="config_0",
@@ -57,7 +57,7 @@ model.create_synapse(
 
 # Hidden -> Output (fixed weight).
 model.create_synapse(
-    breed="single_exp_synapse",
+    breed="delivery_synapse",
     pre_soma_id=hidden_neuron,
     post_soma_id=output_neuron,
     config_name="config_0",
@@ -101,7 +101,7 @@ output_layer = [model.create_soma(breed="lif_soma", config_name="config_0")
 for pre in input_layer:
     for post in output_layer:
         model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=pre,
             post_soma_id=post,
             config_name="config_0",
@@ -133,7 +133,7 @@ is the bulk counterpart to Method 1.
 - **You assign every `id`.** A synapse names its endpoints by soma id via
   `pre`/`post`; `pre = -1` marks an external-input synapse.
 - Omitted `breed`/`config` fall back to the method defaults
-  (`lif_soma`/`config_0` for somas, `single_exp_synapse`/`config_0` for synapses).
+  (`lif_soma`/`config_0` for somas, `delivery_synapse`/`config_0` for synapses).
 - `overrides` is grouped by property type: `"hyperparameters"`,
   `"internal_states"`, `"learning_hyperparameters"`, `"learning_internal_states"`.
 
@@ -234,17 +234,18 @@ partition-aware loaders described in
 Default parameter presets live in `superneuroabm/component_base_config.yaml`,
 keyed by breed and config name.
 
-- **Somas:** `lif_soma`, `izh_soma`, `hg_lif_soma` — each has a `config_0`.
-- **Synapses:** `single_exp_synapse` (`config_0`), `weighted_synapse`
-  (`config_0`, `config_1`).
+- **Somas:** `lif_soma`, `izh_soma`, `hg_lif_soma`, `lif_soma_adaptive_thr` — each
+  has a `config_0`, with one synaptic time constant per inbox channel
+  (`tau_syn_0`, `tau_syn_1`).
+- **Synapses:** `delivery_synapse` (`config_0` weight 14, `config_1` weight 100); its
+  `channel` picks which `tau_syn_<c>` of the post soma filters the input.
 
 Override any preset value per agent via `overrides` (Method 1 argument or the
 `"overrides"` entry field in Method 2):
 
 ```python
 overrides={
-    "hyperparameters": {"weight": 14.0, "tau_fall": 10.0e-3},
-    "internal_states": {"I_synapse": 0.0},
+    "hyperparameters": {"weight": 14.0, "channel": 1},
 }
 ```
 

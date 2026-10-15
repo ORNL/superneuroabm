@@ -1,16 +1,11 @@
-"""synaptic_input="push": synapses deposit their current into the post soma's inbox.
+"""Synaptic input: synapses deposit into the post soma's inbox, the soma filters it.
 
 Runs under mpirun too (tests/run_mpi_tests.sh): create_synapse places a synapse with its
 post soma, so every deposit here is local; a synapse on another rank than its post soma
 deposits into the soma's ghost row and SAGESim sums it back to the owner (see
-test_load_from_adjacency's push and event cases). Either way push must match pull at any
-rank count.
-
-The soma then reads one row instead of looping over its afferents. The values are the
-same as the pull loop's, so spike times and soma state must agree with a pull-mode
-model driven by the same input. With one afferent per soma the sums are single terms
-and the two modes are bit-identical; with several afferents the atomic adds may order
-the float additions differently, so state is compared to float32 round-off.
+test_load_from_adjacency's split-synapse cases). Either way the two steppings of the
+same kernels must agree to the bit at any rank count, a chunked run must equal one
+launch, and a synapse kernel that cannot deliver is refused.
 """
 
 import sys
@@ -32,27 +27,27 @@ def _single_rank_only(test):
         pass
 
 
-def _chain(mode, synapse_breed="single_exp_synapse"):
+def _chain(stepping):
     """external -> soma_0 -> soma_1; returns (model, [soma_0, soma_1], syn_ext)."""
-    model = NeuromorphicModel(synaptic_input=mode)
+    model = NeuromorphicModel(synapse_stepping=stepping)
     model.set_seed(42)
     soma_0 = model.create_soma(breed="lif_soma", config_name="config_0")
     soma_1 = model.create_soma(breed="lif_soma", config_name="config_0")
-    syn_ext = model.create_synapse(breed=synapse_breed, pre_soma_id=-1,
+    syn_ext = model.create_synapse(breed="delivery_synapse", pre_soma_id=-1,
                                    post_soma_id=soma_0, config_name="config_0")
-    model.create_synapse(breed=synapse_breed, pre_soma_id=soma_0,
+    model.create_synapse(breed="delivery_synapse", pre_soma_id=soma_0,
                          post_soma_id=soma_1, config_name="config_0")
     model.setup()
     model.add_spike_list(syn_ext, [[2, 1.0], [5, 1.0], [9, 1.0], [40, 1.0], [41, 1.0]])
     return model, [soma_0, soma_1], syn_ext
 
 
-def _fan_in(mode, n_afferents=5, breed="lif_soma", synapse_breed="single_exp_synapse"):
+def _fan_in(stepping, n_afferents=5, breed="lif_soma"):
     """n external synapses onto one soma, each driven with a different spike value."""
-    model = NeuromorphicModel(synaptic_input=mode)
+    model = NeuromorphicModel(synapse_stepping=stepping)
     model.set_seed(42)
     soma = model.create_soma(breed=breed, config_name="config_0")
-    syns = [model.create_synapse(breed=synapse_breed, pre_soma_id=-1,
+    syns = [model.create_synapse(breed="delivery_synapse", pre_soma_id=-1,
                                  post_soma_id=soma, config_name="config_0")
             for _ in range(n_afferents)]
     model.setup()
@@ -66,48 +61,43 @@ def _state(model, somas):
                         dtype=np.float32) for p in STATE_PROPS}
 
 
-class TestPushEqualsPull(unittest.TestCase):
+class TestClockedEqualsEvent(unittest.TestCase):
 
     def test_chain_bit_exact(self):
-        pull, somas_pull, _ = _chain("pull")
-        push, somas_push, _ = _chain("push")
-        pull.simulate(ticks=80)
-        push.simulate(ticks=80)
-        self.assertEqual(pull.get_spike_times(soma_id=somas_pull[0]),
-                         push.get_spike_times(soma_id=somas_push[0]))
-        self.assertEqual(pull.get_spike_times(soma_id=somas_pull[1]),
-                         push.get_spike_times(soma_id=somas_push[1]))
-        self.assertGreater(len(push.get_spike_times(soma_id=somas_push[1])), 0,
+        clocked, sc, _ = _chain("clocked")
+        event, se, _ = _chain("event")
+        clocked.simulate(ticks=80)
+        event.simulate(ticks=80)
+        for i in range(2):
+            self.assertEqual(clocked.get_spike_times(soma_id=sc[i]),
+                             event.get_spike_times(soma_id=se[i]))
+        self.assertGreater(len(event.get_spike_times(soma_id=se[1])), 0,
                            "the chain must actually fire for the test to mean anything")
-        sa, sb = _state(pull, somas_pull), _state(push, somas_push)
+        sa, sb = _state(clocked, sc), _state(event, se)
         for p in STATE_PROPS:
             np.testing.assert_array_equal(sa[p].view(np.uint32), sb[p].view(np.uint32),
-                                          err_msg=f"{p} differs between pull and push")
+                                          err_msg=f"{p} differs between clocked and event")
 
-    def test_fan_in_matches_to_roundoff(self):
-        pull, sp = _fan_in("pull")
-        push, ss = _fan_in("push")
-        pull.simulate(ticks=60)
-        push.simulate(ticks=60)
-        self.assertGreater(len(pull.get_spike_times(soma_id=sp[0])), 0)
-        self.assertEqual(pull.get_spike_times(soma_id=sp[0]), push.get_spike_times(soma_id=ss[0]))
-        sa, sb = _state(pull, sp), _state(push, ss)
+    def test_fan_in_sums_every_afferent(self):
+        """Deposits of several synapses on one tick add up: the soma's recorded current
+        after the tick-20 volley equals the sum of the deposits (to the rounding order
+        of the atomic adds), and both steppings agree on the spikes."""
+        clocked, sc = _fan_in("clocked")
+        event, se = _fan_in("event")
+        clocked.simulate(ticks=60)
+        event.simulate(ticks=60)
+        self.assertGreater(len(clocked.get_spike_times(soma_id=sc[0])), 0)
+        self.assertEqual(clocked.get_spike_times(soma_id=sc[0]), event.get_spike_times(soma_id=se[0]))
+        sa, sb = _state(clocked, sc), _state(event, se)
         np.testing.assert_allclose(sa["internal_states"], sb["internal_states"], rtol=1e-5, atol=1e-6)
-
-    def test_weighted_synapse(self):
-        pull, sp = _fan_in("pull", n_afferents=3, synapse_breed="weighted_synapse")
-        push, ss = _fan_in("push", n_afferents=3, synapse_breed="weighted_synapse")
-        pull.simulate(ticks=40)
-        push.simulate(ticks=40)
-        self.assertEqual(pull.get_spike_times(soma_id=sp[0]), push.get_spike_times(soma_id=ss[0]))
 
     def test_resume_simulate(self):
         """simulate(k) repeated equals one simulate: the inbox survives launches.
         get_spike_times reports the spikes of the last simulate() call, so the chunked
         run's spikes are collected per chunk."""
         _single_rank_only(self)
-        once, so, _ = _chain("push")
-        twice, st, _ = _chain("push")
+        once, so, _ = _chain("event")
+        twice, st, _ = _chain("event")
         once.simulate(ticks=80)
         chunked = []
         for _ in range(8):
@@ -120,54 +110,43 @@ class TestPushEqualsPull(unittest.TestCase):
                                           err_msg=f"{p} differs between one launch and eight")
 
 
-class TestPushValidation(unittest.TestCase):
+class TestValidation(unittest.TestCase):
 
-    def test_bad_mode(self):
+    def test_bad_stepping(self):
         with self.assertRaises(ValueError):
-            NeuromorphicModel(synaptic_input="atomic")
+            NeuromorphicModel(synapse_stepping="atomic")
 
-    def test_custom_synapse_without_inbox_rejected_in_push(self):
-        """A synapse kernel that does not take the inbox cannot deliver; push refuses it."""
+    def test_custom_synapse_without_inbox_rejected(self):
+        """A synapse kernel that does not take the inbox cannot deliver; setup refuses it."""
         from pathlib import Path
-        from superneuroabm.step_functions.synapse import weighted_synapse as ws_mod
-        # a kernel with the historical signature (no synaptic_input params)
-        src = Path(ws_mod.__file__).read_text().replace(
-            "    synaptic_input,\n    synaptic_input_idx,\n", "").replace(
-            "    deliver_synaptic_current(synaptic_input, synaptic_input_idx, post_soma_index, 0, I_synapse)\n", "")
-        src = src.replace("def weighted_synapse_step_func(", "def legacy_weighted_synapse_step_func(")
+        from superneuroabm.step_functions.synapse import delivery as d_mod
+        # the delivery kernel with the historical signature (no synaptic_input params)
+        src = Path(d_mod.__file__).read_text()
+        src = src.replace("    synaptic_input,\n    synaptic_input_idx,\n", "")
+        src = src.replace(
+            "    deliver_synaptic_current(synaptic_input, synaptic_input_idx, post_soma_index, channel,\n"
+            "                             spike * scale * weight)\n", "    return\n")
+        src = src.replace("def delivery_synapse_step_func(", "def legacy_synapse_step_func(")
+        assert "synaptic_input" not in src.split("def legacy_synapse_step_func(")[1].split(")")[0]
         import tempfile, importlib.util
         d = Path(tempfile.mkdtemp())
-        f = d / "legacy_weighted.py"
+        f = d / "legacy_synapse.py"
         f.write_text(src)
-        spec = importlib.util.spec_from_file_location("legacy_weighted", f)
+        spec = importlib.util.spec_from_file_location("legacy_synapse", f)
         mod = importlib.util.module_from_spec(spec)
-        sys.modules["legacy_weighted"] = mod
+        sys.modules["legacy_synapse"] = mod
         spec.loader.exec_module(mod)
 
         import copy
-
-        def _model(mode):
-            model = NeuromorphicModel(synaptic_input=mode)
-            model.register_synapse_type("legacy", mod.legacy_weighted_synapse_step_func, f)
-            model._component_configurations["synapse"]["legacy"] = copy.deepcopy(
-                model._component_configurations["synapse"]["weighted_synapse"])
-            return model
-
-        model = _model("push")
+        model = NeuromorphicModel(synapse_stepping="clocked")
+        model.register_synapse_type("legacy", mod.legacy_synapse_step_func, f)
+        model._component_configurations["synapse"]["legacy"] = copy.deepcopy(
+            model._component_configurations["synapse"]["delivery_synapse"])
         soma = model.create_soma(breed="lif_soma", config_name="config_0")
         model.create_synapse(breed="legacy", pre_soma_id=-1, post_soma_id=soma,
                              config_name="config_0")
         with self.assertRaises(ValueError):
             model.setup()
-
-        # the same kernel is fine in pull mode (it keeps its old signature)
-        model = _model("pull")
-        soma = model.create_soma(breed="lif_soma", config_name="config_0")
-        syn = model.create_synapse(breed="legacy", pre_soma_id=-1, post_soma_id=soma,
-                                   config_name="config_0")
-        model.setup()
-        model.add_spike_list(syn, [[2, 1.0], [3, 1.0]])
-        model.simulate(ticks=10)
 
 
 if __name__ == "__main__":

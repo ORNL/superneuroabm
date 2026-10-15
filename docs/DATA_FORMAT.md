@@ -72,7 +72,7 @@ Only `id` is mandatory; everything else falls back to defaults.
     "id":                   100042,      # REQUIRED. int. unique, distinct from soma ids (§5)
     "pre":                  12,          # REQUIRED. pre-synaptic soma id, or -1 for external input
     "post":                 42,          # REQUIRED. post-synaptic soma id
-    "breed":                "single_exp_synapse",  # optional. default: "single_exp_synapse"
+    "breed":                "delivery_synapse",  # optional. default: "delivery_synapse"
     "config":               "config_0",  # optional. default: "config_0"
     "learning_rule":        None,         # optional. e.g. "exp_pair_wise_stdp" (None = static)
     "learning_rule_config": "default",    # optional. default: "default"
@@ -191,8 +191,7 @@ These ship in `superneuroabm/component_base_config.yaml`. Pass your own YAML via
 
 | breed                 | configs            | key hyperparameters |
 |-----------------------|--------------------|---------------------|
-| `single_exp_synapse`  | `config_0`         | `weight, synaptic_delay, scale, tau_fall, tau_rise` |
-| `weighted_synapse`    | `config_0`, `config_1` | `weight, synaptic_delay, scale` (`config_1` adds `tau_fall, tau_rise`) |
+| `delivery_synapse`    | `config_0` (weight 14), `config_1` (weight 100) | `weight, synaptic_delay, scale, channel` — the time constant is the post soma's `tau_syn_<channel>` |
 
 ### Learning rules (set `learning_rule` on the synapse; `learning_rule_config = "default"`)
 
@@ -245,7 +244,7 @@ synapses = []
 for pre, post in raw_edges:
     synapses.append({
         "id": syn_id, "pre": pre, "post": post,
-        "breed": "single_exp_synapse", "config": "config_0",
+        "breed": "delivery_synapse", "config": "config_0",
         "overrides": {"hyperparameters": {"weight": 14.0}},
         "learning_rule": "exp_pair_wise_stdp",   # or None for static
     })
@@ -256,7 +255,7 @@ input_synapse_ids = {}
 for post in external_inputs:
     synapses.append({
         "id": syn_id, "pre": -1, "post": post,
-        "breed": "single_exp_synapse", "config": "config_0",
+        "breed": "delivery_synapse", "config": "config_0",
         "overrides": {"hyperparameters": {"weight": 500.0}},
         "metadata": ["input_synapse"],
     })

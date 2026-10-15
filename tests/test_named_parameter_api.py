@@ -20,14 +20,14 @@ class TestNamedParameterAPI(unittest.TestCase):
         self.soma_post = self.model.create_soma(breed="lif_soma", config_name="config_0")
         # External input -> soma_pre, no learning rule
         self.synapse_input = self.model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=self.soma_pre,
             config_name="config_0",
         )
         # soma_pre -> soma_post, plastic
         self.synapse_stdp = self.model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=self.soma_pre,
             post_soma_id=self.soma_post,
             config_name="config_0",
@@ -41,7 +41,7 @@ class TestNamedParameterAPI(unittest.TestCase):
         self.assertEqual(
             list(hp),
             ["C", "R", "vthr", "tref", "vrest", "vreset",
-             "tref_allows_integration", "I_in", "scaling_factor"],
+             "tref_allows_integration", "I_in", "scaling_factor", "tau_syn_0", "tau_syn_1"],
         )
         raw = self.model.get_agent_property_value(
             id=self.soma_pre, property_name="hyperparameters"
@@ -57,7 +57,7 @@ class TestNamedParameterAPI(unittest.TestCase):
     def test_synapse_and_learning_rule_names(self):
         hp = self.model.get_hyperparameters(self.synapse_stdp)
         self.assertEqual(
-            list(hp), ["weight", "synaptic_delay", "scale", "tau_fall", "tau_rise"]
+            list(hp), ["weight", "synaptic_delay", "scale", "channel"]
         )
         lhp = self.model.get_learning_hyperparameters(self.synapse_stdp)
         self.assertEqual(lhp["stdp_type"], 0.0, "exp_pair_wise_stdp is built-in rule 0")
@@ -197,20 +197,19 @@ class TestKernelPinnedOrderValidation(unittest.TestCase):
 
     def test_reordered_synapse_config_is_rejected(self):
         model = NeuromorphicModel(enable_internal_states_tracking=False)
-        config = model._component_configurations["synapse"]["single_exp_synapse"]["config_0"]
+        config = model._component_configurations["synapse"]["delivery_synapse"]["config_0"]
         reordered = dict(config["hyperparameters"])
         # Move weight out of position 0.
         config["hyperparameters"] = {
             "scale": reordered["scale"],
             "weight": reordered["weight"],
             "synaptic_delay": reordered["synaptic_delay"],
-            "tau_fall": reordered["tau_fall"],
-            "tau_rise": reordered["tau_rise"],
+            "channel": reordered["channel"],
         }
         soma = model.create_soma(breed="lif_soma", config_name="config_0")
         with self.assertRaises(ValueError) as ctx:
             model.create_synapse(
-                breed="single_exp_synapse", pre_soma_id=-1, post_soma_id=soma,
+                breed="delivery_synapse", pre_soma_id=-1, post_soma_id=soma,
                 config_name="config_0",
             )
         self.assertIn("weight", str(ctx.exception))
@@ -229,7 +228,7 @@ class TestKernelPinnedOrderValidation(unittest.TestCase):
         soma_b = model.create_soma(breed="lif_soma", config_name="config_0")
         with self.assertRaises(ValueError) as ctx:
             model.create_synapse(
-                breed="single_exp_synapse", pre_soma_id=soma_a, post_soma_id=soma_b,
+                breed="delivery_synapse", pre_soma_id=soma_a, post_soma_id=soma_b,
                 config_name="config_0", learning_rule="exp_pair_wise_stdp",
             )
         self.assertIn("stdp_type", str(ctx.exception))

@@ -75,9 +75,13 @@ def exp_pair_wise_stdp_bounded_nn(
         input_spikes_tensor, output_spikes_tensor,
     )
 
-    # --- Decay traces (exact exponential, matching Brian2) ---
-    pre_trace = pre_trace * cp.exp(-dt / tau_pre_stdp)
-    post_trace = post_trace * cp.exp(-dt / tau_post_stdp)
+    # --- Decay traces over the ticks since the rule last ran (exact exponential;
+    # n == 1 when stepped every tick, the sleep length when event-woken) ---
+    _n = t_current - int(learning_internal_states[agent_index][3])
+    if _n < 1:
+        _n = 1
+    pre_trace = pre_trace * cp.exp(-_n * dt / tau_pre_stdp)
+    post_trace = post_trace * cp.exp(-_n * dt / tau_post_stdp)
 
     # --- Process pre-spike (Brian2 on_pre order) ---
     # 1. Reset pre_trace to a_exp_pre (nearest-neighbor)
@@ -105,6 +109,7 @@ def exp_pair_wise_stdp_bounded_nn(
     learning_internal_states[agent_index][0] = pre_trace
     learning_internal_states[agent_index][1] = post_trace
     learning_internal_states[agent_index][2] = dW
+    learning_internal_states[agent_index][3] = 1.0 * t_current   # last tick run (decay-on-wake)
 
     buffer_idx = t_current % len(learning_internal_states_buffer[agent_index])
     learning_internal_states_buffer[agent_index][buffer_idx][0] = pre_trace
@@ -116,8 +121,6 @@ def exp_pair_wise_stdp_bounded_nn(
     # This runs at priority 101 (after synapse step at 100), so it
     # overwrites the synapse step's I_fast/I_slow with zeroed values.
     # Next tick, the soma sees zero accumulated input and must re-accumulate.
-    internal_states[agent_index][0] *= (1.0 - post_soma_spike)
-    internal_states[agent_index][1] *= (1.0 - post_soma_spike)
 
     # Learning state (pre_trace, post_trace, dW) is tracked exclusively
     # in learning_internal_states_buffer above — no need to duplicate

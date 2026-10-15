@@ -1,34 +1,29 @@
 """
-How synaptic current reaches a soma: pulled or pushed.
+How synaptic current reaches a soma: synapses push, somas filter.
 
-pull (default): each soma loops over its afferent synapses and sums their current
-slots. One thread per soma, so a soma with K afferents does K serial reads per tick;
-a single neuron with 2,000 afferents spends 83 % of the tick in that loop
-(docs/EVENT_DRIVEN_NOTES.md).
+Every synapse deposits ``spike * scale * weight`` for the tick into one channel of its
+post soma's inbox (a SAGESim reduce breed-local array, ``synaptic_input``, one row per
+soma of ``NeuromorphicModel(synaptic_channels=K)`` slots, default 2). Deposits are atomic
+adds into the inbox's write buffer; SAGESim copies and clears it at the end of the tick,
+so the soma sees the previous tick's total. A synapse whose post soma lives on another
+rank deposits into the soma's ghost row and SAGESim sums it back into the owner's row.
 
-push: each synapse deposits its final current for the tick into the post soma's inbox
-(a SAGESim reduce breed-local array, ``synaptic_input``, one row per soma of
-``NeuromorphicModel(synaptic_channels=K)`` slots, default 2). A slot is a channel: the
-delivery synapse's ``channel`` hyperparameter picks it and the psc soma decays each
-channel with its own ``tau_syn_<c>``, so one soma can receive afferents with K distinct
-time constants (NEST's receptor ports). The clocked kinetic synapses use slot 0 (and the
-double-exponential one slot 1 for its slow component). The soma reads one row. Deposits
-are atomic adds into the inbox's write buffer; SAGESim copies and clears it at the end
-of the tick, so the soma sees the previous tick's total, exactly what the pull loop
-summed. The add order is not fixed, so push runs are not bitwise reproducible
-(docs/EVENT_DRIVEN_NOTES.md section 8).
-
-The mode is carried by the inbox's index map, not by a constant: in push mode every
-soma has an inbox row, in pull mode the inbox is registered with no member breeds and
-every index is -1. ``has_inbox`` is therefore the mode test a soma kernel makes, and a
-synapse's deposit to a row-less target is a no-op. (A compile-time constant was tried
-first and is unsafe: CuPy compiles a kernel at its first launch and SAGESim reuses an
-identical generated kernel across models, so a pull model's compilation could serve a
-push model in the same process.)
+The synaptic kinetics live on the soma: ``synaptic_current`` below decays one state
+variable per channel with that channel's time constant (``tau_syn_<c>`` in the soma's
+hyperparameters, ``I_syn_<c>`` in its internal states), adds last tick's deposits and
+returns the sum over channels. One soma can therefore receive afferents with K distinct
+time constants (NEST's ``iaf_psc_exp_multisynapse`` receptor ports); the delivery
+synapse's ``channel`` hyperparameter picks the slot. A channel whose time constant
+equals ``dt`` has a decay factor of zero: an instantaneous, one-tick delivery (what the
+former ``weighted_synapse`` did).
 
 A kernel takes part by ending its parameter list with ``synaptic_input,
-synaptic_input_idx``; ``NeuromorphicModel`` detects that and declares the array for
-the breed. Kernels without the pair keep their signature and pull.
+synaptic_input_idx``; ``NeuromorphicModel`` detects that and declares the array for the
+breed. A soma kernel without the pair receives nothing from the inbox (a custom kernel
+may still read its afferents' state directly, with synapse_stepping="clocked").
+
+The add order inside a tick is not fixed, so results are reproducible only up to float
+rounding order (docs/EVENT_DRIVEN_NOTES.md section 8).
 """
 
 from cupyx import jit
@@ -38,14 +33,14 @@ from sagesim.utils import deposit_to_agent
 
 @jit.rawkernel(device="cuda")
 def has_inbox(agent_index, synaptic_input_idx):
-    """True when this soma has an inbox row, i.e. the model runs synaptic_input="push"."""
+    """True when this soma has an inbox row (every built-in soma has one)."""
     return synaptic_input_idx[agent_index] >= 0
 
 
 @jit.rawkernel(device="cuda")
 def read_synaptic_input(agent_index, synaptic_input, synaptic_input_idx, slot):
     """This soma's inbox slot: the total its afferent synapses deposited last tick
-    (0.0 in pull mode, where the soma has no row)."""
+    (0.0 for an agent without an inbox row)."""
     row = synaptic_input_idx[agent_index]
     if row >= 0:
         return synaptic_input[row][slot]
@@ -53,12 +48,33 @@ def read_synaptic_input(agent_index, synaptic_input, synaptic_input_idx, slot):
 
 
 @jit.rawkernel(device="cuda")
-def deliver_synaptic_current(synaptic_input, synaptic_input_idx, post_soma_index, slot, current):
-    """Deposit this synapse's final current for the tick into the post soma's inbox.
-    In pull mode the post soma has no row and nothing happens (the soma reads
-    internal_states[synapse][0] instead).
+def synaptic_current(agent_index, dt, neuron_params, tau_at, internal_states, state_at,
+                     synaptic_input, synaptic_input_idx):
+    """Synaptic current on the soma, one exponential filter per inbox channel.
 
-    Call it after the last write to the current: a later priority that still changes
+    Channel c decays ``internal_states[agent_index][state_at + c]`` with
+    ``neuron_params[agent_index][tau_at + c]`` (forward Euler, ``1 - dt/tau``), adds
+    what the afferents deposited into slot c last tick, stores the new value and
+    returns the sum over channels. The channel count is the inbox row width.
+    """
+    I_total = 0.0
+    row = int(synaptic_input_idx[agent_index])
+    if row >= 0:
+        for c in range(len(synaptic_input[row])):
+            I_c = (internal_states[agent_index][state_at + c]
+                   * (1 - dt / neuron_params[agent_index][tau_at + c])
+                   + synaptic_input[row][c])
+            internal_states[agent_index][state_at + c] = I_c
+            I_total += I_c
+    return I_total
+
+
+@jit.rawkernel(device="cuda")
+def deliver_synaptic_current(synaptic_input, synaptic_input_idx, post_soma_index, slot, current):
+    """Deposit this synapse's contribution for the tick into one channel of the post
+    soma's inbox. A post soma without an inbox row (or the -1 sentinel) gets nothing.
+
+    Call it after the last write to the value: a later priority that still changes
     the synapse's state is not reflected in what the soma receives.
     """
     deposit_to_agent(synaptic_input, synaptic_input_idx, post_soma_index, slot, current)

@@ -38,15 +38,31 @@ def _build(tracking=False, learning_rule=None):
     model.set_seed(7)
     soma = model.create_soma(breed="lif_soma", config_name="config_0")
     kwargs = {"learning_rule": learning_rule} if learning_rule else {}
-    syn = model.create_synapse(breed="single_exp_synapse", pre_soma_id=-1,
+    syn = model.create_synapse(breed="delivery_synapse", pre_soma_id=-1,
                                post_soma_id=soma, config_name="config_0", **kwargs)
     model.setup()
     return model, soma, syn
 
 
-def _spike_column(model, syn):
-    """single_exp writes the spike it received into history column 1 every tick."""
-    return np.asarray(model.get_internal_states_history(syn), dtype=np.float32)[:, 1]
+# lif_soma config_0: channel-0 time constant and the delivery synapse's weight
+_DECAY = 1.0 - 1e-3 / 1e-2
+_WEIGHT = 14.0
+
+
+def _current(model, soma):
+    """The soma's recorded synaptic current (history column 3), one value per tick."""
+    return np.asarray(model.get_internal_states_history(soma), dtype=np.float32)[:, 3]
+
+
+def _spike_column(model, soma):
+    """What the synapse delivered on each tick, reconstructed from the soma's current:
+    a spike seen by the synapse at tick t is deposited at t and enters the soma's
+    current at t+1, so delivered(t) = (I(t+1) - I(t) * decay) / weight. The last tick
+    of a run cannot be reconstructed (no I(t+1)) and reads 0."""
+    I = _current(model, soma).astype(np.float64)
+    out = np.zeros(len(I), dtype=np.float64)
+    out[:-1] = (I[1:] - I[:-1] * _DECAY) / _WEIGHT
+    return out
 
 
 def _soma_bits(model, soma):
@@ -57,13 +73,13 @@ def _soma_bits(model, soma):
 class TestDelivery(unittest.TestCase):
 
     def test_exact_ticks_and_same_tick_sum(self):
-        model, _soma, syn = _build(tracking=True)
+        model, soma, syn = _build(tracking=True)
         model.add_spike_list(syn, [[3, 1.0], [7, 1.0], [7, 1.0], [12, 0.25]])
         model.simulate(ticks=20, update_data_ticks=1)
-        received = _spike_column(model, syn)
-        expected = np.zeros(20, dtype=np.float32)
+        received = _spike_column(model, soma)
+        expected = np.zeros(20, dtype=np.float64)
         expected[3], expected[7], expected[12] = 1.0, 2.0, 0.25
-        np.testing.assert_array_equal(received, expected)
+        np.testing.assert_allclose(received[:19], expected[:19], atol=1e-4)
 
     def test_row_readback_is_last_delivery(self):
         """input_spikes_tensor row is [last_delivered_tick, value] after a run."""
@@ -80,7 +96,7 @@ class TestDelivery(unittest.TestCase):
         model_b.add_spike_list(syn_b, [[3, 1.0], [7, 1.0], [12, 1.0]])
         model_a.simulate(ticks=20, update_data_ticks=1)
         model_b.simulate(ticks=20, update_data_ticks=1)
-        np.testing.assert_array_equal(_spike_column(model_a, syn_a), _spike_column(model_b, syn_b))
+        np.testing.assert_array_equal(_current(model_a, soma_a), _current(model_b, soma_b))
         for p, bits in _soma_bits(model_a, soma_a).items():
             np.testing.assert_array_equal(bits, _soma_bits(model_b, soma_b)[p], err_msg=p)
 
@@ -99,17 +115,17 @@ class TestDelivery(unittest.TestCase):
         model_a.add_spike_list(syn_a, [[t, 1.0] for t in (2, 5, 8, 11, 105, 108, 111)])
         model_a.simulate(ticks=200, update_data_ticks=1)
         spikes_a = model_a.get_spike_times(soma_a)
-        received_a = _spike_column(model_a, syn_a)
+        received_a = _current(model_a, soma_a)
 
         model_b, soma_b, syn_b = _build(tracking=True)
         model_b.add_spike_list(syn_b, [[t, 1.0] for t in (2, 5, 8, 11)])
         model_b.simulate(ticks=100, update_data_ticks=1)
         spikes_b = list(model_b.get_spike_times(soma_b))
-        received_b = [_spike_column(model_b, syn_b)]
+        received_b = [_current(model_b, soma_b)]
         model_b.add_spike_list(syn_b, [[t, 1.0] for t in (105, 108, 111)])
         model_b.simulate(ticks=100, update_data_ticks=1)
         spikes_b += model_b.get_spike_times(soma_b)
-        received_b.append(_spike_column(model_b, syn_b))
+        received_b.append(_current(model_b, soma_b))
 
         self.assertGreater(len(spikes_a), 1)
         self.assertEqual(spikes_a, spikes_b)
@@ -140,9 +156,9 @@ class TestDelivery(unittest.TestCase):
         model.add_spike_list(syn, [[t, 1.0] for t in (52, 55, 58, 61)])
         model.simulate(ticks=50, update_data_ticks=1)
         self.assertEqual(model.get_spike_times(soma), [])
-        self.assertEqual(float(_spike_column(model, syn).sum()), 0.0)
+        self.assertAlmostEqual(float(_spike_column(model, soma).sum()), 0.0, places=4)
         model.simulate(ticks=50, update_data_ticks=1)
-        self.assertEqual(float(_spike_column(model, syn).sum()), 4.0)
+        self.assertAlmostEqual(float(_spike_column(model, soma).sum()), 4.0, places=3)
         self.assertGreater(len(model.get_spike_times(soma)), 0)
 
     def test_tick_rewind_clears_old_stamps(self):
@@ -150,18 +166,19 @@ class TestDelivery(unittest.TestCase):
 
         A row keeps [last_delivered_tick, value] after a run; rewinding the clock would
         make that stamp match the same tick number again unless the launch clears it."""
-        model, _soma, syn = _build(tracking=True)
+        model, soma, syn = _build(tracking=True)
         model.add_spike(syn, tick=8, value=1.0)
         model.simulate(ticks=20, update_data_ticks=1)
-        self.assertEqual(float(_spike_column(model, syn)[8]), 1.0)
+        self.assertAlmostEqual(float(_spike_column(model, soma)[8]), 1.0, places=4)
 
         model.tick = 0
         model.clear_input_spikes()
         model.add_spike(syn, tick=5, value=1.0)
         model.simulate(ticks=20, update_data_ticks=1)
-        received = _spike_column(model, syn)
-        self.assertEqual(float(received[5]), 1.0)
-        self.assertEqual(float(received[8]), 0.0, "stale stamp from the previous presentation was re-delivered")
+        received = _spike_column(model, soma)
+        self.assertAlmostEqual(float(received[5]), 1.0, places=4)
+        self.assertAlmostEqual(float(received[8]), 0.0, places=4,
+                               msg="stale stamp from the previous presentation was re-delivered")
 
     def test_clear_input_spikes(self):
         model, soma, syn = _build()
@@ -175,9 +192,9 @@ class TestDelivery(unittest.TestCase):
         model = NeuromorphicModel()
         s0 = model.create_soma(breed="lif_soma", config_name="config_0")
         s1 = model.create_soma(breed="lif_soma", config_name="config_0")
-        ext = model.create_synapse(breed="single_exp_synapse", pre_soma_id=-1,
+        ext = model.create_synapse(breed="delivery_synapse", pre_soma_id=-1,
                                    post_soma_id=s0, config_name="config_0")
-        rec = model.create_synapse(breed="single_exp_synapse", pre_soma_id=s0,
+        rec = model.create_synapse(breed="delivery_synapse", pre_soma_id=s0,
                                    post_soma_id=s1, config_name="config_0")
         model.setup()
         model.add_spike_list(ext, [[t, 1.0] for t in (2, 5, 8, 11)])

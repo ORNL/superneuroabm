@@ -1,6 +1,6 @@
-"""synapse_stepping="event": synapses stepped only after their pre fired.
+"""synapse_stepping="event" (the default): synapses stepped only after their pre fired.
 
-delivery_synapse + lif_psc_soma in push mode, clocked vs event: the woken synapses
+delivery_synapse + lif_soma, clocked vs event: the woken synapses
 compute exactly what they would have in the clocked run and the idle ones would have
 deposited nothing, so spike times and soma state must be bit-identical. Runs under
 mpirun too (tests/run_mpi_tests.sh): a pre-soma on another rank raises its event
@@ -17,16 +17,16 @@ STATE_PROPS = ("internal_states", "output_spikes_tensor")
 
 
 def _model(stepping):
-    m = NeuromorphicModel(synaptic_input="push", synapse_stepping=stepping,
+    m = NeuromorphicModel(synapse_stepping=stepping,
                           enable_internal_states_tracking=False)
     m.set_seed(7)
     return m
 
 
 def _recurrent(stepping, n=8):
-    """n lif_psc somas, one external delivery synapse each, ring + skip-3 recurrence."""
+    """n lif somas, one external delivery synapse each, ring + skip-3 recurrence."""
     m = _model(stepping)
-    somas = [m.create_soma(breed="lif_psc_soma", config_name="config_0") for _ in range(n)]
+    somas = [m.create_soma(breed="lif_soma", config_name="config_0") for _ in range(n)]
     ext = [m.create_synapse(breed="delivery_synapse", pre_soma_id=-1, post_soma_id=s,
                             config_name="config_0") for s in somas]
     for i in range(n):
@@ -46,7 +46,7 @@ def _recurrent_stdp(stepping, n=8, every_other=False):
     one, to exercise the wake-eligibility mask: rule-less synapses are never queued
     for the learning-rule phase)."""
     m = _model(stepping)
-    somas = [m.create_soma(breed="lif_psc_soma", config_name="config_0") for _ in range(n)]
+    somas = [m.create_soma(breed="lif_soma", config_name="config_0") for _ in range(n)]
     kw = dict(config_name="config_0", learning_rule="exp_pair_wise_stdp",
               learning_rule_config="default")
     plain = dict(config_name="config_0")
@@ -154,21 +154,20 @@ class TestEventLearning(unittest.TestCase):
         m = _model("event")
         m._learning_rules[99] = {"func_name": "my_rule", "import_line": "",
                                  "sys_path_entry": None, "event_capable": False}
-        m.create_soma(breed="lif_psc_soma", config_name="config_0")
+        m.create_soma(breed="lif_soma", config_name="config_0")
         with self.assertRaises(ValueError):
             m.setup()
 
 
 class TestEventValidation(unittest.TestCase):
 
-    def test_event_needs_push(self):
+    def test_bad_stepping_value(self):
         with self.assertRaises(ValueError):
-            NeuromorphicModel(synaptic_input="pull", synapse_stepping="event")
+            NeuromorphicModel(synapse_stepping="sometimes")
 
-    def test_stateful_kinds_are_excluded(self):
+    def test_delivery_is_the_built_in_synapse(self):
         m = _model("event")
-        self.assertNotIn("single_exp_synapse", m._synapse_breeds)
-        self.assertIn("delivery_synapse", m._synapse_breeds)
+        self.assertEqual(set(m._synapse_breeds), {"delivery_synapse"})
 
     def test_custom_type_must_be_event_capable(self):
         from pathlib import Path

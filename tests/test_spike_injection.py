@@ -65,10 +65,10 @@ def _build_chain():
     soma_0 = model.create_soma(breed="lif_soma", config_name="config_0")
     soma_1 = model.create_soma(breed="lif_soma", config_name="config_0")
     syn_ext = model.create_synapse(
-        breed="single_exp_synapse", pre_soma_id=-1,
+        breed="delivery_synapse", pre_soma_id=-1,
         post_soma_id=soma_0, config_name="config_0")
     model.create_synapse(
-        breed="single_exp_synapse", pre_soma_id=soma_0,
+        breed="delivery_synapse", pre_soma_id=soma_0,
         post_soma_id=soma_1, config_name="config_0")
     model.setup()
     return model, soma_0, soma_1, syn_ext

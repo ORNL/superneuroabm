@@ -21,13 +21,13 @@ def build_network_alone(seed=42):
     soma_2 = m.create_soma(breed="lif_soma", config_name="config_0")
 
     syn_in = m.create_synapse(
-        breed="single_exp_synapse", pre_soma_id=-1,
+        breed="delivery_synapse", pre_soma_id=-1,
         post_soma_id=soma_0, config_name="config_0")
     syn_01 = m.create_synapse(
-        breed="single_exp_synapse", pre_soma_id=soma_0,
+        breed="delivery_synapse", pre_soma_id=soma_0,
         post_soma_id=soma_1, config_name="config_0")
     syn_12 = m.create_synapse(
-        breed="single_exp_synapse", pre_soma_id=soma_1,
+        breed="delivery_synapse", pre_soma_id=soma_1,
         post_soma_id=soma_2, config_name="config_0")
 
     m.setup()
@@ -46,13 +46,13 @@ def build_two_networks(seed=42):
     a1 = m.create_soma(breed="lif_soma", config_name="config_0")
     a2 = m.create_soma(breed="lif_soma", config_name="config_0")
     syn_a_in = m.create_synapse(
-        breed="single_exp_synapse", pre_soma_id=-1,
+        breed="delivery_synapse", pre_soma_id=-1,
         post_soma_id=a0, config_name="config_0")
     syn_a01 = m.create_synapse(
-        breed="single_exp_synapse", pre_soma_id=a0,
+        breed="delivery_synapse", pre_soma_id=a0,
         post_soma_id=a1, config_name="config_0")
     syn_a12 = m.create_synapse(
-        breed="single_exp_synapse", pre_soma_id=a1,
+        breed="delivery_synapse", pre_soma_id=a1,
         post_soma_id=a2, config_name="config_0")
 
     # Network B (completely disconnected from A)
@@ -60,13 +60,13 @@ def build_two_networks(seed=42):
     b1 = m.create_soma(breed="lif_soma", config_name="config_0")
     b2 = m.create_soma(breed="lif_soma", config_name="config_0")
     syn_b_in = m.create_synapse(
-        breed="single_exp_synapse", pre_soma_id=-1,
+        breed="delivery_synapse", pre_soma_id=-1,
         post_soma_id=b0, config_name="config_0")
     syn_b01 = m.create_synapse(
-        breed="single_exp_synapse", pre_soma_id=b0,
+        breed="delivery_synapse", pre_soma_id=b0,
         post_soma_id=b1, config_name="config_0")
     syn_b12 = m.create_synapse(
-        breed="single_exp_synapse", pre_soma_id=b1,
+        breed="delivery_synapse", pre_soma_id=b1,
         post_soma_id=b2, config_name="config_0")
 
     m.setup()
@@ -126,10 +126,10 @@ class TestResumeSimulateSNN(unittest.TestCase):
         s0 = m.create_soma(breed="lif_soma", config_name="config_0")
         s1 = m.create_soma(breed="lif_soma", config_name="config_0")
         syn_in = m.create_synapse(
-            breed="single_exp_synapse", pre_soma_id=-1,
+            breed="delivery_synapse", pre_soma_id=-1,
             post_soma_id=s0, config_name="config_0")
         syn_01 = m.create_synapse(
-            breed="single_exp_synapse", pre_soma_id=s0,
+            breed="delivery_synapse", pre_soma_id=s0,
             post_soma_id=s1, config_name="config_0")
         m.setup()
         m.add_spike(synapse_id=syn_in, tick=2, value=1)

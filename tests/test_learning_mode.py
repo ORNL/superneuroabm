@@ -21,14 +21,14 @@ class TestLearningMode(unittest.TestCase):
         self.soma_post = self.model.create_soma(breed="lif_soma", config_name="config_0")
         # External input -> soma_pre (no learning rule attached)
         self.synapse_input = self.model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=self.soma_pre,
             config_name="config_0",
         )
         # soma_pre -> soma_post, plastic
         self.synapse_stdp = self.model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=self.soma_pre,
             post_soma_id=self.soma_post,
             config_name="config_0",
@@ -159,7 +159,7 @@ class TestLearningMode(unittest.TestCase):
         """set_learning_enabled with explicit ids affects only those, and does not
         move the global mode flag."""
         other = self.model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=self.soma_post,
             post_soma_id=self.soma_pre,
             config_name="config_0",

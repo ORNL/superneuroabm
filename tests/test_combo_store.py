@@ -70,7 +70,7 @@ class TestComboStoreOnColumnarBuild(unittest.TestCase):
         syn = _a_synapse(m)
         hp = m.get_hyperparameters(syn)          # was KeyError: None
         self.assertIn("weight", hp)
-        self.assertIn("tau_fall", hp)
+        self.assertIn("channel", hp)
 
     def test_named_parameter_write_works(self):
         m = _columnar_model()
@@ -196,7 +196,7 @@ class TestBreedOrder(unittest.TestCase):
             m._component_configurations["soma"]["lif_soma"])
 
         late_idx = m._soma_breeds["late_lif"]._breedidx
-        syn_idx = m._synapse_breeds["single_exp_synapse"]._breedidx
+        syn_idx = m._synapse_breeds["delivery_synapse"]._breedidx
         self.assertGreater(late_idx, syn_idx,
                            "test premise: the late soma breed must sort after synapses")
 
@@ -253,13 +253,13 @@ class TestEvalTrainScatter(unittest.TestCase):
         m = NeuromorphicModel(enable_internal_states_tracking=False)
         a = m.create_soma(breed="lif_soma", config_name="config_0")
         b = m.create_soma(breed="lif_soma", config_name="config_0")
-        s1 = m.create_synapse(breed="single_exp_synapse", pre_soma_id=a, post_soma_id=b,
+        s1 = m.create_synapse(breed="delivery_synapse", pre_soma_id=a, post_soma_id=b,
                               config_name="config_0",
                               learning_rule="exp_pair_wise_stdp")
-        s2 = m.create_synapse(breed="single_exp_synapse", pre_soma_id=b, post_soma_id=a,
+        s2 = m.create_synapse(breed="delivery_synapse", pre_soma_id=b, post_soma_id=a,
                               config_name="config_0",
                               learning_rule="exp_pair_wise_stdp_bounded")
-        s3 = m.create_synapse(breed="single_exp_synapse", pre_soma_id=-1, post_soma_id=a,
+        s3 = m.create_synapse(breed="delivery_synapse", pre_soma_id=-1, post_soma_id=a,
                               config_name="config_0")          # no rule
         return m, s1, s2, s3
 
@@ -329,7 +329,7 @@ class TestLazyIdSets(unittest.TestCase):
     def test_incremental_build_still_tracks_ids(self):
         m = NeuromorphicModel(enable_internal_states_tracking=False)
         a = m.create_soma(breed="lif_soma", config_name="config_0")
-        syn = m.create_synapse(breed="single_exp_synapse", pre_soma_id=-1,
+        syn = m.create_synapse(breed="delivery_synapse", pre_soma_id=-1,
                                post_soma_id=a, config_name="config_0")
         self.assertEqual(m._soma_ids, {a})
         self.assertEqual(m._synapse_ids, {syn})
@@ -367,7 +367,7 @@ class TestNeighbourAccessors(unittest.TestCase):
         m = NeuromorphicModel(enable_internal_states_tracking=False)
         a = m.create_soma(breed="lif_soma", config_name="config_0")
         b = m.create_soma(breed="lif_soma", config_name="config_0")
-        m.create_synapse(breed="single_exp_synapse", pre_soma_id=a, post_soma_id=b,
+        m.create_synapse(breed="delivery_synapse", pre_soma_id=a, post_soma_id=b,
                          config_name="config_0")
         self._check(m)
 

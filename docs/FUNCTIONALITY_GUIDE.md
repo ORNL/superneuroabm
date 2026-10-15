@@ -209,51 +209,52 @@ fs_neuron = model.create_soma(
 
 Each synapse type is its own breed. Additional synapse types (e.g., double exponential, NMDA, GABA) can be added as new breeds.
 
-#### Single Exponential Synapse
+#### Delivery Synapse
 
-**Breed Name**: `single_exp_synapse`
+**Breed Name**: `delivery_synapse`
 
-**Description**: A current-based synapse with exponential decay dynamics. Each synapse connects a pre-synaptic soma to a post-synaptic soma and converts spike events into synaptic currents.
+**Description**: The synapse carries the weight and the learning state; the synaptic
+current and its time constant live on the post soma. When its pre soma fired on the
+previous tick (or an injected input spike arrives), the synapse deposits
+`spike * weight * scale` into one channel of the post soma's inbox and is done. It has
+no per-tick state, so it is stepped only when its pre fires (`synapse_stepping="event"`,
+the default). A synapse whose post soma lives on another GPU deposits into the soma's
+ghost row and SAGESim sums it back to the owner, so the partition never changes the result.
 
-**Mathematical Model**:
+**Mathematical Model** (on the soma, per inbox channel c):
 ```
-I_syn(t + dt) = I_syn(t) * (1 - dt/τ_fall) + spike_pre(t) * weight * scale
-
-Post-synaptic soma receives: I_syn
+I_c(t + dt) = I_c(t) * (1 - dt/tau_syn_c) + sum over afferents on channel c of spike_pre(t) * weight * scale
+I_syn = sum over channels of I_c          (what the membrane integrates)
 ```
+A soma receiving afferents with K distinct time constants needs K channels
+(`NeuromorphicModel(synaptic_channels=K)`, default 2) and `tau_syn_0..K-1`,
+`I_syn_0..K-1` in its config. `tau_syn_c == dt` makes channel c an instantaneous
+one-tick pulse.
 
 **Parameters** (from `component_base_config.yaml`):
 
 | Parameter | Symbol | Description |
 |-----------|--------|-------------|
 | `weight` | w | Synaptic strength (can be positive or negative) |
-| `synaptic_delay` | delay | Transmission delay (ms) |
+| `synaptic_delay` | delay | Transmission delay (unused: delivery takes one tick) |
 | `scale` | scale | Additional scaling factor |
-| `tau_fall` | τ_fall | Decay time constant (ms) |
-| `tau_rise` | τ_rise | Rise time constant (ms, currently unused) |
+| `channel` | c | Inbox channel of the post soma, i.e. which `tau_syn_c` filters this input |
 | `stdp_type` | - | Learning rule selector (-1 = none, 0 = exp pair-wise STDP) |
-| `tau_pre_stdp` | τ_pre | Pre-synaptic trace decay (ms, STDP only) |
-| `tau_post_stdp` | τ_post | Post-synaptic trace decay (ms, STDP only) |
+| `tau_pre_stdp` | τ_pre | Pre-synaptic trace decay (s, STDP only) |
+| `tau_post_stdp` | τ_post | Post-synaptic trace decay (s, STDP only) |
 | `a_exp_pre` | A+ | Pre-before-post learning rate (STDP only) |
 | `a_exp_post` | A- | Post-before-pre learning rate (STDP only) |
 
-**Internal State Variables**:
-```python
-[I_synapse, I_synapse_supp, pre_trace, post_trace]
-# I_synapse: current synaptic current (A)
-# I_synapse_supp: supplementary current (reserved)
-# pre_trace: pre-synaptic STDP trace
-# post_trace: post-synaptic STDP trace
-```
+**Internal State Variables**: none that evolve per tick (`[unused]`); the STDP traces
+live in the learning internal states `[pre_trace, post_trace, dW, last_tick]`.
 
 **Step Functions**:
 
-Yes, **STDP learning is implemented as a separate step function**! This is a key architectural design:
+STDP learning is a separate step function, woken by the same events:
 
-1. **`synapse_single_exp_step_func`** (Priority 100)
-   - Reads pre-synaptic spike from previous tick
-   - Updates synaptic current with exponential decay
-   - Injects current into post-synaptic soma
+1. **`delivery_synapse_step_func`** (Priority 100)
+   - Runs when the pre soma fired on the previous tick (or an input spike arrived)
+   - Deposits `spike * weight * scale` into channel `channel` of the post soma's inbox
 
 2. **`learning_rule_selector`** (Priority 101)
    - Reads pre and post-synaptic spikes
@@ -453,7 +454,7 @@ soma_pre = model.create_soma(breed="lif_soma", config_name="config_0")
 soma_post = model.create_soma(breed="lif_soma", config_name="config_0")
 
 synapse = model.create_synapse(
-    breed="single_exp_synapse",
+    breed="delivery_synapse",
     pre_soma_id=soma_pre,
     post_soma_id=soma_post,
     config_name="exp_pair_wise_stdp_config_0",  # STDP enabled
@@ -501,10 +502,10 @@ soma_properties = {
 
 ```python
 synapse_properties = {
-    "hyperparameters": [weight, delay, scale, tau_fall, tau_rise, ...]
+    "hyperparameters": [weight, delay, scale, channel, ...]
     "learning_hyperparameters": [stdp_type, tau_pre_stdp, tau_post_stdp, a_exp_pre, a_exp_post]
-    "internal_state": [I_synapse, I_synapse_supp, pre_trace, post_trace]
-    "internal_learning_state": [pre_trace, post_trace, dW]
+    "internal_state": [unused]
+    "internal_learning_state": [pre_trace, post_trace, dW, last_tick]
     "locations": [pre_soma_index, post_soma_index]  # Connectivity (pre-converted indices)
     "input_spikes_tensor": [-1, 0]  # [last_delivered_tick, value] stamp written by the
                                     # framework each tick an injected spike arrives (pre_soma = -1)
@@ -564,7 +565,7 @@ soma_B = model.create_soma(breed="lif_soma", config_name="config_0")  # Agent ID
 
 # Create synapse A → B
 synapse = model.create_synapse(
-    breed="single_exp_synapse",
+    breed="delivery_synapse",
     pre_soma_id=soma_A,   # Pre-synaptic neuron
     post_soma_id=soma_B,  # Post-synaptic neuron
     config_name="no_learning_config_0"
@@ -580,16 +581,16 @@ synapse = model.create_synapse(
 **In Synapse Step Function:**
 ```python
 @jit.rawkernel(device="cuda")
-def synapse_single_exp_step_func(..., locations, ...):
+def delivery_synapse_step_func(..., locations, ..., synaptic_input, synaptic_input_idx):
     # Get pre and post soma indices (already converted by SAGESim)
     pre_soma_index = locations[agent_index][0]   # O(1) access
     post_soma_index = locations[agent_index][1]
 
     # Read pre-synaptic spike (no search needed!)
     if pre_soma_index >= 0:
-        pre_spike = output_spikes_tensor[pre_soma_index][tick - 1]
+        pre_spike = output_spikes_tensor[pre_soma_index][(tick - 1) % 2]
 
-    # Compute synaptic current...
+    # Deposit into the post soma's inbox channel...
 ```
 
 **In Soma Step Function:**
@@ -615,7 +616,7 @@ For external input (no pre-synaptic neuron), use `pre_soma_id = -1`:
 
 ```python
 input_synapse = model.create_synapse(
-    breed="single_exp_synapse",
+    breed="delivery_synapse",
     pre_soma_id=-1,      # Special value: external input
     post_soma_id=soma_B,
     config_name="no_learning_config_0"
@@ -684,7 +685,7 @@ config block, so this keeps working if a config is reordered or a custom breed i
 model.get_hyperparameters(soma_id)
 # {'C': 1e-09, 'R': 1e6, 'vthr': -45.0, 'tref': 0.005, 'vrest': -60.0, ...}
 model.get_hyperparameters(synapse_id)
-# {'weight': 14.0, 'synaptic_delay': 1.0, 'scale': 1.0, 'tau_fall': 0.001, ...}
+# {'weight': 14.0, 'synaptic_delay': 1.0, 'scale': 1.0, 'channel': 0.0}
 model.get_learning_hyperparameters(synapse_id)
 # {'stdp_type': 0.0, 'tau_pre_stdp': 0.02, 'a_exp_pre': 0.01, ...}
 
@@ -768,7 +769,7 @@ rs_neuron = model.create_soma(
 
 # Excitatory connection (positive weight)
 exc_synapse = model.create_synapse(
-    breed="single_exp_synapse",
+    breed="delivery_synapse",
     pre_soma_id=rs_neuron,
     post_soma_id=fs_neuron,
     config_name="no_learning_config_0",
@@ -777,7 +778,7 @@ exc_synapse = model.create_synapse(
 
     # Inhibitory connection (negative weight)
     inh_synapse = model.create_synapse(
-        breed="single_exp_synapse",
+        breed="delivery_synapse",
         pre_soma_id=fs_neuron,
         post_soma_id=rs_neuron,
         config_name="no_learning_config_0",
@@ -803,7 +804,7 @@ exc_synapse = model.create_synapse(
     ```python
     # Plastic synapse with STDP
     learning_syn = model.create_synapse(
-        breed="single_exp_synapse",
+        breed="delivery_synapse",
         pre_soma_id=neuron_A,
         post_soma_id=neuron_B,
         config_name="exp_pair_wise_stdp_config_0"  # STDP enabled
@@ -811,7 +812,7 @@ exc_synapse = model.create_synapse(
 
     # Fixed synapse without learning
     fixed_syn = model.create_synapse(
-        breed="single_exp_synapse",
+        breed="delivery_synapse",
         pre_soma_id=neuron_B,
         post_soma_id=neuron_C,
         config_name="no_learning_config_0"  # STDP disabled

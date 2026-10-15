@@ -91,7 +91,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
                 "If this is intentional, run: python test_synapse_and_soma_models.py --save-baselines"
             )
 
-    def test_lif_soma_single_exp_synapse(self) -> None:
+    def test_lif_soma_delivery_synapse(self) -> None:
         """
         Tests the basic functionality of a LIF soma with a single exponential synapse.
 
@@ -103,11 +103,11 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         """
 
         self.micro_model_test_helper(
-            "lif_soma", "config_0", "single_exp_synapse", "config_0"
+            "lif_soma", "config_0", "delivery_synapse", "config_0"
         )
-        self._check_baseline("test_lif_soma_single_exp_synapse")
+        self._check_baseline("test_lif_soma_delivery_synapse")
 
-    def test_izh_soma_single_exp_synapse(self) -> None:
+    def test_izh_soma_delivery_synapse(self) -> None:
         """
         Tests the basic functionality of an Izhikevich soma with a single exponential synapse.
 
@@ -119,9 +119,9 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         """
 
         self.micro_model_test_helper(
-            "izh_soma", "config_0", "single_exp_synapse", "config_0"
+            "izh_soma", "config_0", "delivery_synapse", "config_0"
         )
-        self._check_baseline("test_izh_soma_single_exp_synapse")
+        self._check_baseline("test_izh_soma_delivery_synapse")
 
 
     def test_lif_soma_two_external_synapses(self) -> None:
@@ -138,7 +138,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
 
         # Create synapse_3: external input -> soma_1 (no spikes to this one)
         synapse_1 = self._model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,  # External input
             post_soma_id=soma_0,
             config_name="config_0",
@@ -146,7 +146,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
 
         # Create synapse_4: external input -> soma_1 (spike to this one)
         synapse_2 = self._model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,  # External input
             post_soma_id=soma_0,
             config_name="config_0",
@@ -198,7 +198,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
 
         # Create synapse_0 -> soma_0
         synapse_0 = self._model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_0,
             config_name="config_0",
@@ -206,7 +206,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         
         # Create synapse_1 -> soma_1
         synapse_1 = self._model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_1,
             config_name="config_0",
@@ -214,7 +214,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
 
         # Create synapse_2: soma_0 -> soma_2
         synapse_2 = self._model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_0,
             post_soma_id=soma_2,
             config_name="config_0",
@@ -222,7 +222,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
         
         # Create synapse_3: soma_1 -> soma_2
         synapse_3 = self._model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_1,
             post_soma_id=soma_2,
             config_name="config_0",
@@ -293,7 +293,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
 
         # Create synapse_2: external input -> soma_0
         synapse_2 = self._model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,  # External input
             post_soma_id=soma_0,
             config_name="config_0",
@@ -301,7 +301,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
 
         # Create synapse_3: soma_0 -> soma_1
         synapse_3 = self._model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_0,
             post_soma_id=soma_1,
             config_name="config_0",
@@ -309,7 +309,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
 
         # Create synapse_2: external input -> soma_1
         synapse_4= self._model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,  # External input
             post_soma_id=soma_1,
             config_name="config_0",
@@ -318,7 +318,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
     
         # Create synapse_3: soma_1 -> soma_0 (to test bidirectional connections)
         synapse_5 = self._model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_1,  # External input
             post_soma_id=soma_0,
             config_name="config_0",
@@ -363,7 +363,7 @@ class TestSynapseAndSomaModels(unittest.TestCase):
 
         Args:
             soma_breed: Type of soma to create ("lif_soma" or "izh_soma")
-            synapse_breed: Type of synapse to create ("single_exp_synapse")
+            synapse_breed: Type of synapse to create ("delivery_synapse")
 
         The test injects predefined spike patterns and verifies the soma's response.
         """

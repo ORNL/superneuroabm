@@ -82,7 +82,7 @@ def test_lif_soma_mixed_synapses_mpi(enable_internal_states_tracking=True):
 
     # Create synapse_2: external input -> soma_0
     synapse_2 = model.create_synapse(
-        breed="single_exp_synapse",
+        breed="delivery_synapse",
         pre_soma_id=-1,  # External input
         post_soma_id=soma_0,
         config_name="config_0",
@@ -90,7 +90,7 @@ def test_lif_soma_mixed_synapses_mpi(enable_internal_states_tracking=True):
 
     # Create synapse_3: soma_0 -> soma_1
     synapse_3 = model.create_synapse(
-        breed="single_exp_synapse",
+        breed="delivery_synapse",
         pre_soma_id=soma_0,
         post_soma_id=soma_1,
         config_name="config_0",
@@ -98,7 +98,7 @@ def test_lif_soma_mixed_synapses_mpi(enable_internal_states_tracking=True):
 
     # Create synapse_4: external input -> soma_1
     synapse_4 = model.create_synapse(
-        breed="single_exp_synapse",
+        breed="delivery_synapse",
         pre_soma_id=-1,  # External input
         post_soma_id=soma_1,
         config_name="config_0",
@@ -106,7 +106,7 @@ def test_lif_soma_mixed_synapses_mpi(enable_internal_states_tracking=True):
 
     # Create synapse_5: soma_1 -> soma_0 (to test bidirectional connections)
     synapse_5 = model.create_synapse(
-        breed="single_exp_synapse",
+        breed="delivery_synapse",
         pre_soma_id=soma_1,
         post_soma_id=soma_0,
         config_name="config_0",

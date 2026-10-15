@@ -60,7 +60,7 @@ def _lif_params(soma_breed="lif_soma", soma_config="config_0"):
 
 
 def measure_psp_per_weight(*, probe_weight, ticks, soma_breed="lif_soma",
-                           soma_config="config_0", synapse_breed="single_exp_synapse",
+                           soma_config="config_0", synapse_breed="delivery_synapse",
                            synapse_config="config_0"):
     """Measure the sub-threshold EPSP amplitude per unit synaptic weight (mV/weight).
 

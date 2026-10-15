@@ -27,7 +27,7 @@ class TestMemristiveSynapse(unittest.TestCase):
 
         soma = model.create_soma(breed="lif_soma", config_name="config_0")
         synapse = model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma,
             config_name="config_0",

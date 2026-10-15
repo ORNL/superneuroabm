@@ -59,15 +59,9 @@ def build_parser():
                         "has static synapses, so this is the faithful configuration; it also "
                         "lets the framework intern `hyperparameters`, which STDP kernels "
                         "otherwise write.")
-    p.add_argument("--i-floor", type=float, default=0.0,
-                   help="Flush-to-zero floor for synaptic currents (single_exp.I_FLOOR); 0 = exact.")
-    p.add_argument("--synaptic-input", choices=("pull", "push"), default="pull",
-                   help="pull: somas sum their afferents (one thread per soma); push: synapses "
-                        "deposit into the soma inbox (NeuromorphicModel synaptic_input=).")
-    p.add_argument("--synapse-stepping", choices=("clocked", "event"), default="clocked",
-                   help="event: synapses stepped only after their pre fired (needs push and an "
-                        "event-capable synapse kind, e.g. --synapse-breed delivery_synapse "
-                        "--soma-breed lif_psc_soma).")
+    p.add_argument("--synapse-stepping", choices=("clocked", "event"), default="event",
+                   help="event (default): synapses stepped only after their pre fired; "
+                        "clocked: every synapse every tick (the same kernels, for comparison).")
     p.add_argument("--fused", action="store_true",
                    help="Leave verbose_timing off so a single worker fuses all ticks into one "
                         "kernel launch (the path a user gets). The per-tick number is then "
@@ -77,7 +71,7 @@ def build_parser():
                    help="pre: reorder the partition's synapse rows by pre-soma so an emitter's "
                         "efferents are contiguous (coalesced wake-list access).")
     p.add_argument("--soma-breed", default="lif_soma")
-    p.add_argument("--synapse-breed", default="single_exp_synapse")
+    p.add_argument("--synapse-breed", default="delivery_synapse")
     p.add_argument("--in-memory", action="store_true",
                    help="Skip the .npz round-trip: generate the partition arrays and "
                         "hand them straight to the columnar builder. Isolates what "
@@ -132,17 +126,13 @@ def run_once(args, repeat):
 
     # ---- 2. Load the partition ----
     t0 = time.time()
-    if args.i_floor > 0:
-        import superneuroabm.step_functions.synapse.single_exp as _se
-        _se.I_FLOOR = float(args.i_floor)
     model = NeuromorphicModel(enable_internal_states_tracking=False,
-                              synaptic_input=args.synaptic_input,
                               synapse_stepping=args.synapse_stepping,
                               **({"learning_rule_info": {}} if args.no_learning_rules else {}))
     # The partition carries its own breed names (brunel_partition writes lif_soma /
-    # single_exp_synapse) and the loader lets them win over its arguments, so a breed
+    # delivery_synapse) and the loader lets them win over its arguments, so a breed
     # override rewrites the fields in memory first.
-    override = (args.soma_breed != "lif_soma" or args.synapse_breed != "single_exp_synapse"
+    override = (args.soma_breed != "lif_soma" or args.synapse_breed != "delivery_synapse"
                 or args.synapse_order != "file")
     if args.in_memory or override:
         if arrays is None:

@@ -456,7 +456,7 @@ is the part that trips people up:
 
 ```python
 syn = model.create_synapse(
-    breed="single_exp_synapse",           # current dynamics
+    breed="delivery_synapse",           # deposits weight into the post soma's inbox
     pre_soma_id=pre, post_soma_id=post,
     config_name="config_0",
     learning_rule="bounded_stdp",         # which YAML block
@@ -494,7 +494,7 @@ rule, and a synapse with `learning_rule=None` is invisible to them.
 `NeuromorphicModel(user_config=...)` **replaces** the packaged
 `component_base_config.yaml` — it is not merged. Your file must therefore
 declare every breed and config you use, including built-ins you still rely on
-(e.g. `single_exp_synapse`, or a stock STDP block). See
+(e.g. `delivery_synapse`, or a stock STDP block). See
 `examples/custom_components_config.yaml` for a file that mixes both.
 
 Two consequences of how the file is loaded:

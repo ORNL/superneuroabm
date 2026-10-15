@@ -41,7 +41,7 @@ class TestModelResetWithSTDP(unittest.TestCase):
 
         # External input synapse to trigger pre-synaptic soma
         synapse_input = self.model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,  # External input
             post_soma_id=soma_pre,
             config_name="config_0",
@@ -49,7 +49,7 @@ class TestModelResetWithSTDP(unittest.TestCase):
 
         # STDP-enabled synapse between two somas
         synapse_stdp = self.model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
             config_name="config_0",
@@ -112,14 +112,14 @@ class TestModelResetWithSTDP(unittest.TestCase):
         )
 
         synapse_input = self.model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
             config_name="config_0",
         )
 
         synapse_stdp = self.model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
             config_name="config_0",
@@ -204,14 +204,14 @@ class TestModelResetWithSTDP(unittest.TestCase):
         )
 
         synapse_input = self.model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
             config_name="config_0",
         )
 
         synapse_stdp = self.model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
             config_name="config_0",
@@ -305,14 +305,14 @@ class TestModelResetWithSTDP(unittest.TestCase):
         )
 
         synapse_input = self.model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
             config_name="config_0",
         )
 
         synapse_stdp = self.model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
             config_name="config_0",

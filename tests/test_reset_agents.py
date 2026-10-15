@@ -47,9 +47,9 @@ def _created_model():
     m = NeuromorphicModel(enable_internal_states_tracking=False)
     a = m.create_soma(breed="lif_soma", config_name="config_0")
     b = m.create_soma(breed="lif_soma", config_name="config_0")
-    m.create_synapse(breed="single_exp_synapse", pre_soma_id=-1, post_soma_id=a,
+    m.create_synapse(breed="delivery_synapse", pre_soma_id=-1, post_soma_id=a,
                      config_name="config_0")
-    m.create_synapse(breed="single_exp_synapse", pre_soma_id=a, post_soma_id=b,
+    m.create_synapse(breed="delivery_synapse", pre_soma_id=a, post_soma_id=b,
                      config_name="config_0", learning_rule="exp_pair_wise_stdp")
     return m
 

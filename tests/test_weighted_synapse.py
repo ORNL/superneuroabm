@@ -13,7 +13,9 @@ except ImportError:
     from tests.util import vizualize_responses
 
 class TestWeightedSynapse(unittest.TestCase):
-    """Tests for the simple weighted synapse and lif soma."""
+    """Instantaneous synapses: a delivery_synapse (config_1, weight 100) into a lif_soma whose
+    channel time constant equals dt, so each spike is a one-tick current pulse (the former
+    weighted_synapse)."""
 
 
     def _make_model(self):
@@ -23,20 +25,22 @@ class TestWeightedSynapse(unittest.TestCase):
 
         model = self._make_model()
 
-        soma0 = model.create_soma(breed="lif_soma", config_name="config_0")
-        soma1 = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma0 = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
+        soma1 = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
 
         synapse0 = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma0,
-            config_name="config_0",
+            config_name="config_1",
         )
         synapse1 = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma0,
             post_soma_id=soma1,
-            config_name="config_0",
+            config_name="config_1",
         )
 
         model.setup()
@@ -67,12 +71,13 @@ class TestWeightedSynapseExpPairWiseSTDP(unittest.TestCase):
         """A single input spike should propagate through the STDP synapse and cause the soma to fire."""
         model = self._make_model()
 
-        soma = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
         synapse = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma,
-            config_name="config_0",
+            config_name="config_1",
             learning_rule="exp_pair_wise_stdp",
         )
 
@@ -95,21 +100,23 @@ class TestWeightedSynapseExpPairWiseSTDP(unittest.TestCase):
         """STDP learning should modify the synapse weight from its initial value."""
         model = self._make_model()
 
-        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0")
-        soma_post = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
+        soma_post = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
 
         synapse_input = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
-            config_name="config_0",
+            config_name="config_1",
         )
 
         synapse_stdp = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
-            config_name="config_0",
+            config_name="config_1",
             learning_rule="exp_pair_wise_stdp",
         )
 
@@ -146,12 +153,13 @@ class TestWeightedSynapseBoundedSTDP(unittest.TestCase):
         """A single input spike should propagate through the bounded STDP synapse and cause the soma to fire."""
         model = self._make_model()
 
-        soma = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
         synapse = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma,
-            config_name="config_0",
+            config_name="config_1",
             learning_rule="exp_pair_wise_stdp_bounded",
         )
 
@@ -174,21 +182,23 @@ class TestWeightedSynapseBoundedSTDP(unittest.TestCase):
         """Bounded STDP learning should modify the synapse weight from its initial value."""
         model = self._make_model()
 
-        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0")
-        soma_post = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
+        soma_post = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
 
         synapse_input = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
-            config_name="config_0",
+            config_name="config_1",
         )
 
         synapse_stdp = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
-            config_name="config_0",
+            config_name="config_1",
             learning_rule="exp_pair_wise_stdp_bounded",
         )
 
@@ -218,21 +228,23 @@ class TestWeightedSynapseBoundedSTDP(unittest.TestCase):
         """Weight should stay within [wmin, wmax] even under heavy stimulation."""
         model = self._make_model()
 
-        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0")
-        soma_post = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
+        soma_post = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
 
         synapse_input = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
-            config_name="config_0",
+            config_name="config_1",
         )
 
         synapse_stdp = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
-            config_name="config_0",
+            config_name="config_1",
             learning_rule="exp_pair_wise_stdp_bounded",
         )
 
@@ -266,12 +278,13 @@ class TestWeightedSynapseThreeBitSTDP(unittest.TestCase):
         """A single input spike should propagate through the quantized STDP synapse and cause the soma to fire."""
         model = self._make_model()
 
-        soma = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
         synapse = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma,
-            config_name="config_0",
+            config_name="config_1",
             learning_rule="three_bit_exp_pair_wise_stdp",
         )
 
@@ -294,21 +307,23 @@ class TestWeightedSynapseThreeBitSTDP(unittest.TestCase):
         """Quantized STDP learning should modify the synapse weight from its initial value."""
         model = self._make_model()
 
-        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0")
-        soma_post = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
+        soma_post = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
 
         synapse_input = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
-            config_name="config_0",
+            config_name="config_1",
         )
 
         synapse_stdp = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
-            config_name="config_0",
+            config_name="config_1",
             learning_rule="three_bit_exp_pair_wise_stdp",
         )
 
@@ -338,21 +353,23 @@ class TestWeightedSynapseThreeBitSTDP(unittest.TestCase):
         """After STDP learning, the weight should land on a valid quantization level."""
         model = self._make_model()
 
-        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0")
-        soma_post = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
+        soma_post = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
 
         synapse_input = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
-            config_name="config_0",
+            config_name="config_1",
         )
 
         synapse_stdp = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
-            config_name="config_0",
+            config_name="config_1",
             learning_rule="three_bit_exp_pair_wise_stdp",
         )
 
@@ -386,21 +403,23 @@ class TestWeightedSynapseThreeBitSTDP(unittest.TestCase):
         """Weight should stay within [wmin, wmax] even under heavy stimulation."""
         model = self._make_model()
 
-        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0")
-        soma_post = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
+        soma_post = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
 
         synapse_input = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
-            config_name="config_0",
+            config_name="config_1",
         )
 
         synapse_stdp = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
-            config_name="config_0",
+            config_name="config_1",
             learning_rule="three_bit_exp_pair_wise_stdp",
         )
 
@@ -434,12 +453,13 @@ class TestWeightedSynapseMemristiveSTDP(unittest.TestCase):
         """A single input spike should propagate through the memristive STDP synapse and cause the soma to fire."""
         model = self._make_model()
 
-        soma = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
         synapse = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma,
-            config_name="config_0",
+            config_name="config_1",
             learning_rule="memristive_exp_pair_wise_stdp",
         )
 
@@ -462,21 +482,23 @@ class TestWeightedSynapseMemristiveSTDP(unittest.TestCase):
         """Memristive STDP learning should modify the synapse weight from its initial value."""
         model = self._make_model()
 
-        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0")
-        soma_post = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
+        soma_post = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
 
         synapse_input = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
-            config_name="config_0",
+            config_name="config_1",
         )
 
         synapse_stdp = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
-            config_name="config_0",
+            config_name="config_1",
             learning_rule="memristive_exp_pair_wise_stdp",
         )
 
@@ -506,21 +528,23 @@ class TestWeightedSynapseMemristiveSTDP(unittest.TestCase):
         """Weight should stay within [wmin, wmax] even under heavy stimulation."""
         model = self._make_model()
 
-        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0")
-        soma_post = model.create_soma(breed="lif_soma", config_name="config_0")
+        soma_pre = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
+        soma_post = model.create_soma(breed="lif_soma", config_name="config_0",
+                                  overrides={"hyperparameters": {"tau_syn_0": 1e-3}})
 
         synapse_input = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
-            config_name="config_0",
+            config_name="config_1",
         )
 
         synapse_stdp = model.create_synapse(
-            breed="weighted_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
-            config_name="config_0",
+            config_name="config_1",
             learning_rule="memristive_exp_pair_wise_stdp",
         )
 

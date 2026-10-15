@@ -47,10 +47,10 @@ post = model.create_soma(breed="lif_soma", config_name="config_0")
 
 # External drive into `pre` (pre_soma_id=-1 means "external input"), and pre -> post
 drive = model.create_synapse(
-    breed="single_exp_synapse", pre_soma_id=-1, post_soma_id=pre, config_name="config_0"
+    breed="delivery_synapse", pre_soma_id=-1, post_soma_id=pre, config_name="config_0"
 )
 model.create_synapse(
-    breed="single_exp_synapse", pre_soma_id=pre, post_soma_id=post, config_name="config_0"
+    breed="delivery_synapse", pre_soma_id=pre, post_soma_id=post, config_name="config_0"
 )
 
 # Compile step functions and allocate GPU buffers

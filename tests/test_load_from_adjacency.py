@@ -116,9 +116,9 @@ def _reference_spike_times():
     model = NeuromorphicModel(enable_internal_states_tracking=False)
     a = model.create_soma(breed="lif_soma", config_name="config_0")
     b = model.create_soma(breed="lif_soma", config_name="config_0")
-    ext = model.create_synapse(breed="single_exp_synapse", pre_soma_id=-1,
+    ext = model.create_synapse(breed="delivery_synapse", pre_soma_id=-1,
                                post_soma_id=a, config_name="config_0")
-    model.create_synapse(breed="single_exp_synapse", pre_soma_id=a,
+    model.create_synapse(breed="delivery_synapse", pre_soma_id=a,
                          post_soma_id=b, config_name="config_0")
     model.setup()
     model.add_spike(synapse_id=ext, tick=INPUT_TICK, value=1)
@@ -178,8 +178,7 @@ class TestLoadFromAdjacency(unittest.TestCase):
             self.skipTest(f"fixture supports 1 or 2 ranks, got {size}")
         with tempfile.TemporaryDirectory() as tmpdir:
             paths = _split_synapse_files(tmpdir, size)
-            model = NeuromorphicModel(enable_internal_states_tracking=False,
-                                      synaptic_input="push")
+            model = NeuromorphicModel(enable_internal_states_tracking=False)
             model.load_from_adjacency(paths[rank])
             model.setup()
             model.add_spike(synapse_id=S_EXT, tick=INPUT_TICK, value=1)
@@ -200,9 +199,9 @@ class TestLoadFromAdjacency(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             m = NeuromorphicModel(enable_internal_states_tracking=False,
-                                  synaptic_input="push", synapse_stepping="event")
+                                  synapse_stepping="event")
             m.load_from_adjacency(_split_synapse_files(tmpdir, size)[rank],
-                                  soma_breed="lif_psc_soma", synapse_breed="delivery_synapse")
+                                  soma_breed="lif_soma", synapse_breed="delivery_synapse")
             m.setup()
             m.add_spike(synapse_id=S_EXT, tick=INPUT_TICK, value=1)
             m.simulate(ticks=SIM_TICKS, update_data_ticks=1)
@@ -213,9 +212,9 @@ class TestLoadFromAdjacency(unittest.TestCase):
         # loading one whole-network file on each rank instead would make every rank an
         # owner of B and the collective getter would report its spikes once per rank.
         ref = NeuromorphicModel(enable_internal_states_tracking=False,
-                                synaptic_input="push", synapse_stepping="event")
-        a = ref.create_soma(breed="lif_psc_soma", config_name="config_0")
-        b = ref.create_soma(breed="lif_psc_soma", config_name="config_0")
+                                synapse_stepping="event")
+        a = ref.create_soma(breed="lif_soma", config_name="config_0")
+        b = ref.create_soma(breed="lif_soma", config_name="config_0")
         ext = ref.create_synapse(breed="delivery_synapse", pre_soma_id=-1,
                                  post_soma_id=a, config_name="config_0")
         ref.create_synapse(breed="delivery_synapse", pre_soma_id=a,

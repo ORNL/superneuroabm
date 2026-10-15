@@ -1,14 +1,18 @@
 """
-Izhikevich Neuron and weighted synapse step functions for spiking neural networks
+Izhikevich soma. Synaptic input comes from the soma inbox through one exponential
+filter per channel (step_functions/synaptic_input.synaptic_current); the default config
+sets every ``tau_syn_c`` equal to ``dt`` (decay factor zero), i.e. instantaneous
+delivery, which is what this soma was paired with before.
 
+Hyperparameters (neuron_params): [0] k, [1] vthr, [2] C, [3] a, [4] b, [5] vpeak,
+[6] vrest, [7] d, [8] vreset, [9] I_in, [10 + c] tau_syn_c.
+Internal state: [0] v, [1] u, [2 + c] I_syn_c.
 """
 
 import cupy as cp
 from cupyx import jit
 
-from superneuroabm.step_functions.synaptic_input import (
-    has_inbox, read_synaptic_input,
-)
+from superneuroabm.step_functions.synaptic_input import synaptic_current
 
 
 @jit.rawkernel(device="cuda")
@@ -20,38 +24,23 @@ def izh_soma_step_func(
     agent_ids,
     breeds,
     locations,
-    neuron_params,  # k, vth, C, a, b,
+    neuron_params,  # k, vthr, C, a, b, vpeak, vrest, d, vreset, I_in, tau_syn_0, tau_syn_1, ...
     learning_params,
-    internal_states,  # v, u
+    internal_states,  # v, u, I_syn_0, I_syn_1, ...
     learning_internal_states,
-    synapse_history,  # Synapse delay
-    input_spikes_tensor,  # input spikes
+    synapse_history,
+    input_spikes_tensor,
     output_spikes_tensor,
     internal_states_buffer,
     learning_internal_states_buffer,
     synaptic_input,
     synaptic_input_idx,
 ):
-    synapse_indices = locations[agent_index]  # network location is defined by neighbors
-
-    I_synapse = 0.0
-
-    if has_inbox(agent_index, synaptic_input_idx):
-        # Afferent synapses deposited their currents into this soma's inbox last tick
-        I_synapse = read_synaptic_input(agent_index, synaptic_input, synaptic_input_idx, 0)
-    else:
-        # synapse_indices now contains pre-computed local indices (converted in SAGESim)
-        # No linear search needed!
-        for i in range(len(synapse_indices)):
-            synapse_index = int(synapse_indices[i])
-            if synapse_index >= 0 and not cp.isnan(synapse_indices[i]):
-                I_synapse += internal_states[synapse_index][0]
-
-    # Get the current time step value:
     t_current = int(tick)
-    # dt and I_bias received directly as scalar params
 
-    # NOTE: neuron_params would need to be as long as the max number of params in any spiking neuron model
+    I_synapse = synaptic_current(agent_index, dt, neuron_params, 10, internal_states, 2,
+                                 synaptic_input, synaptic_input_idx)
+
     k = neuron_params[agent_index][0]
     vthr = neuron_params[agent_index][1]
     C = neuron_params[agent_index][2]
@@ -64,33 +53,25 @@ def izh_soma_step_func(
     I_in = neuron_params[agent_index][9]
 
     # From https://www.izhikevich.org/publications/spikes.htm
-    # v' = 0.04v^2 + 5v + 140 -u + I
-    # u' = a(bv - u)
-    # if v=30mV: v = c, u = u + d, spike
-
-    # dv = (k*(internal_states[my_idx]-vrest)*(internal_states[my_idx]-vthr)-u[my_idx]+I) / C
-    # internal_states: [0] - v, [1] - u
-    # NOTE: size of internal_states would need to be set as the maximum possible state variables of any spiking neuron
-
+    #   C v' = k (v - vrest)(v - vthr) - u + I
+    #   u'   = a (b (v - vrest) - u)
+    #   if v >= vpeak: v = vreset, u = u + d, spike
     v = internal_states[agent_index][0]
     u = internal_states[agent_index][1]
 
     dv = (k * (v - vrest) * (v - vthr) - u + I_synapse + I_bias + I_in) / C
     v = v + dt * dv * 1e3
-
     u += dt * 1e3 * (a * (b * (v - vrest) - u))
-    # s = 1 * (v >= vthr)  # output spike
-    s = 1 * (v >= vpeak)  # output spike
-    u = u + d * s  # If spiked, update recovery variable
-    v = v * (1 - s) + vreset * s  # If spiked, reset membrane potential
+
+    s = 1 * (v >= vpeak)
+    u = u + d * s
+    v = v * (1 - s) + vreset * s
 
     internal_states[agent_index][0] = v
     internal_states[agent_index][1] = u
 
     output_spikes_tensor[agent_index][t_current % 2] = s
 
-    # Safe buffer indexing: use modulo to prevent out-of-bounds access
-    # When tracking is disabled, buffer length is 1, so t_current % 1 = 0 always
     buffer_idx = t_current % len(internal_states_buffer[agent_index])
     internal_states_buffer[agent_index][buffer_idx][0] = v
     internal_states_buffer[agent_index][buffer_idx][1] = u

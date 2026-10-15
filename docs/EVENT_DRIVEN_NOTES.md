@@ -496,3 +496,46 @@ fills the missing post slot from the local soma that names the synapse as incomi
 synapse whose post is on another rank must list it. Also: a whole-network file loaded
 on every rank of an MPI run makes every rank an owner, so a collective getter reports
 each spike once per rank; a reference model in an MPI test is built with create_*.
+
+## 12. Step 4 done: one path (2026-10-15)
+
+`NeuromorphicModel(synapse_stepping="event")` is the default and the only input path:
+`synaptic_input` is gone (synapses always deposit into the soma inbox), the clocked
+kinetic synapses `single_exp_synapse`, `double_exp_synapse` and `weighted_synapse` are
+deleted, and every built-in soma (`lif_soma`, `izh_soma`, `hg_lif_soma`,
+`lif_soma_adaptive_thr`) filters its synaptic input on the soma with one exponential
+per inbox channel (`step_functions/synaptic_input.synaptic_current`; `tau_syn_<c>` /
+`I_syn_<c>` in every soma config). `lif_psc_soma` became `lif_soma`. The one built-in
+synapse is `delivery_synapse` (`config_0` weight 14, `config_1` weight 100, the former
+weighted_synapse's). `synapse_stepping="clocked"` stays as the verification arm (same
+kernels, every synapse every tick) and for a custom synapse type with continuous
+per-tick state; a custom learning rule must be registered `event_capable=True`
+(decay-on-wake, see tests/step_funcs/exp_pair_wise_stdp_bounded_nn.py for the
+conversion). A kernel that reads `has_inbox` still compiles (always true for a soma).
+
+Equivalences kept: the former weighted_synapse == delivery into a channel whose
+`tau_syn_c == dt` (decay factor 0); the former single_exp pairing == `tau_syn_c` set to
+its `tau_fall`; the stored spike-time baselines of test_synapse_and_soma_models (lif and
+izh with the old single_exp synapse) still match to the tick.
+
+Verification: SNA 236 passed; MPI 1/2/3/4 ok (test_synaptic_channels now checks each
+channel against the closed form w(1-dt/tau)^n and superposition, since the per-synapse
+reference is gone). SGNN Cora: both configs rebuilt on lif_soma + delivery_synapse
+(`assign_channels` now always runs), 699/1000 correct, 221 ties, main config 49.9 s,
+event config 55.4 s (GPU clock noise). Masquelier duplicate event run: 671 spikes
+identical to the step-2 run, 13.4 s. Brunel: see the table below.
+
+Partition files written before this change name `single_exp_synapse` and must be
+regenerated (the Brunel benchmark cache, `brunel_partition` now writes
+`delivery_synapse`). Still pending, application-side: the tutorials
+(`tutorials/00_simple_heterogenous_network.ipynb`, `01_superneuroabm_digits.ipynb`,
+`digits_config.yaml`) and the Diehl-Cook duplicate still name the old synapse kinds.
+
+| Brunel 12.5k / K=1000, 400 ticks, rules registered, regenerated partition | spikes | ms/tick |
+|---|---|---|
+| default (`synapse_stepping="event"`) | 162,561 (same as steps 1-3) | 1.28 |
+| `--synapse-stepping clocked` (same kernels, every synapse every tick) | 153,609 | 4.91 |
+
+The two steppings deposit in a different thread order, so after a few hundred ticks the
+chaotic network has diverged (section 8; they agree to the bit on the test networks and
+for the first tens of ticks here). For reference the removed pull path was 7.66 ms/tick.

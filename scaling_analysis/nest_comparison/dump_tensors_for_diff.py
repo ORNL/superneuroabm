@@ -13,9 +13,9 @@ N, K, TICKS, SEED = 2000, 100, 30, 42
 arrays = brunel_partition(somas_per_rank=N, num_partitions=1, partition_rank=0,
                           excitatory_in_degree=round(0.8*K), inhibitory_in_degree=K-round(0.8*K),
                           topology="torus3d", seed=SEED, output_format="columns")
-# SNA_SYNAPTIC_INPUT=push dumps the push path (docs/EVENT_DRIVEN_NOTES.md)
+# SNA_SYNAPSE_STEPPING=clocked dumps the clocked path (docs/EVENT_DRIVEN_NOTES.md)
 m = NeuromorphicModel(enable_internal_states_tracking=False,
-                      synaptic_input=os.environ.get('SNA_SYNAPTIC_INPUT', 'pull'))
+                      synapse_stepping=os.environ.get('SNA_SYNAPSE_STEPPING', 'event'))
 m.load_post_owned(arrays)
 m.setup()
 inp = m._input_synapse_ids.tolist()

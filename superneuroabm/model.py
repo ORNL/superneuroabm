@@ -19,9 +19,6 @@ from superneuroabm.step_functions.soma.izh import izh_soma_step_func
 from superneuroabm.step_functions.soma.lif import lif_soma_step_func
 from superneuroabm.step_functions.soma.lif_soma_adaptive_thr import lif_soma_adaptive_thr_step_func
 from superneuroabm.step_functions.soma.hg_lif import hg_lif_soma_step_func
-from superneuroabm.step_functions.soma.lif_psc import lif_psc_soma_step_func
-from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
-from superneuroabm.step_functions.synapse.weighted_synapse import weighted_synapse_step_func
 from superneuroabm.step_functions.synapse.delivery import delivery_synapse_step_func
 from superneuroabm.util import load_component_configurations
 
@@ -87,14 +84,13 @@ def _default_soma_breeds():
         "lif_soma": (lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif.py"),
         "lif_soma_adaptive_thr": (lif_soma_adaptive_thr_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif_soma_adaptive_thr.py"),
         "hg_lif_soma": (hg_lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "hg_lif.py"),
-        "lif_psc_soma": (lif_psc_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif_psc.py"),
     }
 
 
 def _default_synapse_breeds():
+    # One built-in synapse: it delivers spike * scale * weight into a channel of the
+    # post soma's inbox; the synaptic kinetics (time constants) live on the soma.
     return {
-        "single_exp_synapse": (synapse_single_exp_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "single_exp.py"),
-        "weighted_synapse": (weighted_synapse_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "weighted_synapse.py"),
         "delivery_synapse": (delivery_synapse_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "synapse" / "delivery.py"),
     }
 
@@ -102,8 +98,6 @@ def _default_synapse_breeds():
 # Synapse kinds with no per-tick state, so they may be event-woken (synapse_stepping="event"):
 # stepped only on the tick after their pre fired or an input event arrived.
 EVENT_CAPABLE_SYNAPSES = {"delivery_synapse"}
-# Soma kinds that take their input from the inbox only (no pull loop): push mode only.
-PUSH_ONLY_SOMAS = {"lif_psc_soma"}
 # Built-in learning rules that catch their traces up on wake (trace_decay + last_tick slot),
 # so the learning-rule selector can be event-woken by pre or post spikes.
 EVENT_CAPABLE_RULES = {"exp_pair_wise_stdp", "exp_pair_wise_stdp_bounded",
@@ -151,8 +145,8 @@ SYNAPTIC_INPUT_PARAMS = ("synaptic_input", "synaptic_input_idx")
 
 def _synaptic_input_arrays(step_func) -> List[str]:
     """Breed-local arrays a soma/synapse kernel declares: ["synaptic_input"] when its
-    parameter list ends with the inbox pair, else [] (the kernel keeps its old
-    signature and pulls). See superneuroabm/step_functions/synaptic_input.py."""
+    parameter list ends with the inbox pair, else [] (a custom soma that reads its
+    afferents' state directly). See superneuroabm/step_functions/synaptic_input.py."""
     params = list(inspect.signature(step_func).parameters)
     return ["synaptic_input"] if tuple(params[-2:]) == SYNAPTIC_INPUT_PARAMS else []
 
@@ -165,8 +159,7 @@ class NeuromorphicModel(Model):
         learning_rule_info=None,
         user_config=None,
         enable_internal_states_tracking: bool = True,
-        synaptic_input: str = "pull",
-        synapse_stepping: str = "clocked",
+        synapse_stepping: str = "event",
         synaptic_channels: int = 2,
     ) -> None:
         """
@@ -183,38 +176,25 @@ class NeuromorphicModel(Model):
             internal states history for all agents during simulation.
             If False, disables tracking to reduce memory usage and improve
             performance. Default is True for backward compatibility.
-        :param synaptic_input: "pull" (default): each soma sums its afferent
-            synapses' currents, one thread per soma. "push": each synapse deposits
-            its current into the post soma's inbox (a reduce breed-local array) and
-            the soma reads one row; O(1) per soma instead of O(fan-in), same values.
-            Every synapse kernel in the model must then take the ``synaptic_input,
-            synaptic_input_idx`` parameters (all built-in ones do); a soma kernel
-            without them keeps pulling. See superneuroabm/step_functions/synaptic_input.py.
-        :param synapse_stepping: "clocked" (default): every synapse is stepped every
-            tick. "event": a synapse is stepped only on the tick after its pre-soma fired
-            or an injected input event arrived, so the synapse phase costs O(spikes x
-            fan-out) instead of O(synapses). Needs synaptic_input="push" and synapse
-            kinds with no per-tick state (EVENT_CAPABLE_SYNAPSES, e.g. delivery_synapse
-            with lif_psc_soma); the default synapse kinds are then restricted to those,
-            and register_synapse_type needs event_capable=True. Learning rules are woken
-            by their pre or post spike and must be event-capable (decay-on-wake traces,
-            see the built-in rules or register_learning_rule(..., event_capable=True)).
-        :param synaptic_channels: width of the soma inbox in push mode: the number of
-            distinct synaptic time constants one soma can receive. A delivery_synapse
-            picks a channel with its ``channel`` hyperparameter and the psc soma filters
-            channel c with ``tau_syn_c`` (NEST's receptor ports). Default 2 (slot 1 is
-            also the slow component of the double-exponential synapse).
+        :param synapse_stepping: "event" (default): a synapse is stepped only on the
+            tick after its pre-soma fired or an injected input event arrived, so the
+            synapse phase costs O(spikes x fan-out) instead of O(synapses); learning
+            rules are woken by their pre or post spike and must be event-capable
+            (decay-on-wake traces, see the built-in rules or
+            register_learning_rule(..., event_capable=True)); a custom synapse type
+            needs register_synapse_type(..., event_capable=True). "clocked": every
+            synapse is stepped every tick (for verification, or for a custom synapse
+            type with continuous per-tick state).
+        :param synaptic_channels: width of the soma inbox: the number of distinct
+            synaptic time constants one soma can receive. A delivery_synapse picks a
+            channel with its ``channel`` hyperparameter and the soma filters channel c
+            with ``tau_syn_c`` (NEST's receptor ports). Default 2.
         """
         super().__init__(space=NetworkSpace(ordered=True),
                          agent_slack_factor=1.0, csr_slack_factor=1.0)
 
-        if synaptic_input not in ("pull", "push"):
-            raise ValueError(f"synaptic_input must be 'pull' or 'push', got {synaptic_input!r}")
-        self._synaptic_input = synaptic_input
         if synapse_stepping not in ("clocked", "event"):
             raise ValueError(f"synapse_stepping must be 'clocked' or 'event', got {synapse_stepping!r}")
-        if synapse_stepping == "event" and synaptic_input != "push":
-            raise ValueError("synapse_stepping='event' needs synaptic_input='push'")
         self._synapse_stepping = synapse_stepping
         if int(synaptic_channels) < 1 or int(synaptic_channels) != synaptic_channels:
             raise ValueError(f"synaptic_channels must be a positive int, got {synaptic_channels!r}")
@@ -222,15 +202,8 @@ class NeuromorphicModel(Model):
 
         if soma_breed_info is None:
             soma_breed_info = _default_soma_breeds()
-            if synaptic_input == "pull":
-                # a soma that only reads the inbox would get nothing in pull mode
-                soma_breed_info = {k: v for k, v in soma_breed_info.items()
-                                   if k not in PUSH_ONLY_SOMAS}
         if synapse_breed_info is None:
             synapse_breed_info = _default_synapse_breeds()
-            if synapse_stepping == "event":
-                synapse_breed_info = {k: v for k, v in synapse_breed_info.items()
-                                      if k in EVENT_CAPABLE_SYNAPSES}
 
         self.enable_internal_states_tracking = enable_internal_states_tracking
         self._config_list_cache = {}
@@ -1445,28 +1418,23 @@ class NeuromorphicModel(Model):
                 # only synapses that carry a rule have anything to do at this priority
                 self.set_wake_eligibility(max_priority + 1, self._synapses_with_rule)
 
-        # Synaptic input: the soma inbox (reduce breed-local array) exists in both modes
-        # so kernel signatures do not depend on the mode. The mode is carried by its
-        # index map: in push mode every soma breed is a member (each soma has a row); in
-        # pull mode it has no members, every index is -1, somas loop over their
-        # afferents and a synapse's deposit is a no-op (step_functions/synaptic_input.py).
+        # Synaptic input: every soma breed has a row in the inbox (a reduce breed-local
+        # array, step_functions/synaptic_input.py). neighbor_visible: a synapse whose post
+        # soma lives on another rank deposits into the soma's ghost row and SAGESim sums
+        # it back into the owner's row, so the partition never changes the result.
         self._check_synaptic_channels()
         if not any(b['name'] == "synaptic_input" for b in self._breed_local_arrays):
-            members = list(self._soma_breeds.values()) if self._synaptic_input == "push" else []
-            # neighbor_visible: a synapse whose post soma lives on another rank deposits
-            # into the soma's ghost row and SAGESim sums it back into the owner's row
-            # (reduce-back-to-owner), so push works for any partition, not only post-owns.
+            members = list(self._soma_breeds.values())
             self.register_breed_local_array(
                 "synaptic_input", members, shape_per_agent=(self._synaptic_channels,),
                 neighbor_visible=bool(members), reduce="sum")
-        if self._synaptic_input == "push":
-            for name, breed in self._synapse_breeds.items():
-                for priority, (func, _path) in breed.step_funcs.items():
-                    if priority == 100 and breed.step_func_blas.get(priority) != ["synaptic_input"]:
-                        raise ValueError(
-                            f"synaptic_input='push' needs every synapse kernel to deliver its "
-                            f"current, but synapse type '{name}' ({func.__name__}) does not take "
-                            "the 'synaptic_input, synaptic_input_idx' parameters")
+        for name, breed in self._synapse_breeds.items():
+            for priority, (func, _path) in breed.step_funcs.items():
+                if priority == 100 and breed.step_func_blas.get(priority) != ["synaptic_input"]:
+                    raise ValueError(
+                        f"every synapse kernel must deliver into the soma inbox, but synapse "
+                        f"type '{name}' ({func.__name__}) does not take the "
+                        "'synaptic_input, synaptic_input_idx' parameters")
         if self._synapse_stepping == "event":
             # a soma raises the event by writing its spike into output_spikes_tensor[t % 2]
             self.configure_wake(event_property="output_spikes_tensor")
@@ -1529,7 +1497,7 @@ class NeuromorphicModel(Model):
         if not n_local:
             return
         # Width must be the max over agents, not any one agent's: breeds differ (a
-        # single_exp_synapse carries 1 internal state, a lif_soma 3), the tensor width is
+        # delivery_synapse carries 1 internal state, a lif_soma 5), the tensor width is
         # the column max, and kernels write up to their own state width. A narrower
         # shared row would shrink the tensor into unchecked out-of-bounds device writes.
         def _max_len(col):
@@ -1670,7 +1638,7 @@ class NeuromorphicModel(Model):
         Creates and adds a Synapse agent.
 
         Parameters:
-            breed (str): Synapse breed name (e.g., 'single_exp_synapse').
+            breed (str): Synapse breed name (e.g., 'delivery_synapse').
             pre_soma_id (int): Presynaptic soma agent ID (or -1 for external input).
             post_soma_id (int): Postsynaptic soma agent ID (or -1 for external output).
             config_name (str): Name of the configuration to use for this synapse.
@@ -2055,7 +2023,7 @@ class NeuromorphicModel(Model):
     def load_post_owned(self, partition_file: str,
                         soma_breed: str = "lif_soma",
                         soma_config: str = "config_0",
-                        synapse_breed: str = "single_exp_synapse",
+                        synapse_breed: str = "delivery_synapse",
                        synapse_config: str = "config_0") -> None:
         """Load a POST-OWNED network file (Method 1) and build the model.
 
@@ -2119,7 +2087,7 @@ class NeuromorphicModel(Model):
     def create_from_lists(self, somas: list, synapses: list,
                           soma_breed: str = "lif_soma",
                           soma_config: str = "config_0",
-                          synapse_breed: str = "single_exp_synapse",
+                          synapse_breed: str = "delivery_synapse",
                           synapse_config: str = "config_0") -> None:
         """Bulk-create the whole network from in-memory soma/synapse lists.
 
@@ -2594,7 +2562,7 @@ class NeuromorphicModel(Model):
     def load_from_adjacency(self, partition_file: str,
                             soma_breed: str = "lif_soma",
                             soma_config: str = "config_0",
-                            synapse_breed: str = "single_exp_synapse",
+                            synapse_breed: str = "delivery_synapse",
                             synapse_config: str = "config_0") -> None:
         """Load an EXPLICIT-NEIGHBORS network file (Method 2) and build the model.
 

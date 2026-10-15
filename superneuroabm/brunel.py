@@ -43,7 +43,7 @@ Design notes
 * **Local-only, vectorized.** A rank materializes connectivity for *only its own*
   neurons (``O(somas_per_rank * in_degree)``), never the global graph. No MPI during
   generation -- ranks are independent.
-* **The inhibitory sign lives in the weight.** The ``single_exp_synapse`` kernel uses
+* **The inhibitory sign lives in the weight.** The ``delivery_synapse`` kernel uses
   the stored weight directly (no sign logic), so an inhibitory synapse must store a
   *negative* weight. See :func:`brunel_partition` for details.
 
@@ -590,7 +590,7 @@ def brunel_partition(
     # --- breeds / configs (SuperNeuroABM component names) ---
     soma_breed: str = "lif_soma",
     soma_config: str = "config_0",
-    synapse_breed: str = "single_exp_synapse",
+    synapse_breed: str = "delivery_synapse",
     synapse_config: str = "config_0",
     # --- reproducibility ---
     seed: int = 42,
@@ -673,7 +673,7 @@ def brunel_partition(
         is decided by the draw (source pool), which the config cannot know.
 
         .. important::
-            The ``single_exp_synapse`` kernel integrates ``spike * scale * weight``
+            The ``delivery_synapse`` kernel integrates ``spike * scale * weight``
             **directly, with no sign logic**, and the presynaptic spike is a
             non-negative magnitude. So an inhibitory synapse **must** store a negative
             weight; passing a positive one would make it excitatory and unbalance the
@@ -1048,7 +1048,7 @@ def spatial_smallworld_partition(
     allow_autapses: bool = False,
     soma_breed: str = "lif_soma",
     soma_config: str = "config_0",
-    synapse_breed: str = "single_exp_synapse",
+    synapse_breed: str = "delivery_synapse",
     synapse_config: str = "config_0",
     seed: int = 42,
 ) -> dict:

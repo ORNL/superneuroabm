@@ -206,7 +206,7 @@ class TestAutapseKeepsBothSlots(unittest.TestCase):
             "synapse_ids": np.array([S], dtype=np.int64),
             "pre": np.array([A], dtype=np.int64),
             "post": np.array([A], dtype=np.int64),
-            "synapse_breed": np.asarray("single_exp_synapse"),
+            "synapse_breed": np.asarray("delivery_synapse"),
             "synapse_config": np.asarray("config_0"),
             "learning_rule": np.asarray(""),
             "learning_rule_config": np.asarray("default"),

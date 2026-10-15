@@ -3,9 +3,9 @@ Delivery-only synapse: no per-tick state.
 
 Reads its pre-soma's spike (or its injected input event); if there is none it is done.
 Otherwise it deposits ``spike * scale * weight`` into one channel of the post soma's
-inbox. The synaptic kinetics live on the soma (see soma/lif_psc.py), which is NEST's
+inbox. The synaptic kinetics live on the soma (see soma/lif.py), which is NEST's
 ``iaf_psc_exp`` layout and what makes a synapse cheap enough to be event-woken: with
-``NeuromorphicModel(synaptic_input="push", synapse_stepping="event")`` this kernel runs
+the default ``synapse_stepping="event"`` this kernel runs
 only for synapses whose pre fired (or received an input event) on the previous tick.
 
 ``channel`` picks the inbox slot, i.e. which of the soma's time constants this synapse's

@@ -75,6 +75,7 @@ def run(args):
         learning_rule_info={},
         user_config=MASQ_DIR / "masquelier_config.yaml",
         enable_internal_states_tracking=False,
+        synapse_stepping="clocked",   # the duplicate's own clocked kernels
     )
     stdp_id = model.register_learning_rule(
         exp_pair_wise_stdp_bounded_nn, MASQ_DIR / "exp_pair_wise_stdp_bounded_nn.py")

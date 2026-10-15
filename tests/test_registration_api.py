@@ -48,7 +48,7 @@ class TestRegistrationAPI(unittest.TestCase):
 
         soma = model.create_soma(breed="my_lif_soma", config_name="config_0")
         synapse = model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma,
             config_name="config_0",
@@ -75,9 +75,12 @@ class TestRegistrationAPI(unittest.TestCase):
             / "step_funcs"
             / "exp_pair_wise_stdp_bounded_nn.py"
         )
+        # event stepping (the default) wakes a rule only on its pre/post spikes, so a
+        # custom rule must catch its traces up on wake (see the file) and say so
         rule_id = model.register_learning_rule(
             step_func=exp_pair_wise_stdp_bounded_nn,
             step_func_path=stdp_path,
+            event_capable=True,
         )
 
         self.assertEqual(rule_id, 4, "First user rule should get ID 4")
@@ -87,7 +90,7 @@ class TestRegistrationAPI(unittest.TestCase):
         soma_post = model.create_soma(breed="lif_soma", config_name="config_0")
 
         synapse_input = model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma_pre,
             config_name="config_0",
@@ -95,7 +98,7 @@ class TestRegistrationAPI(unittest.TestCase):
 
         # Use the custom learning rule (override stdp_type to the new ID)
         synapse_stdp = model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
             config_name="config_0",
@@ -134,7 +137,7 @@ class TestRegistrationAPI(unittest.TestCase):
 
         soma = model.create_soma(breed="lif_soma", config_name="config_0")
         model.create_synapse(
-            breed="single_exp_synapse",
+            breed="delivery_synapse",
             pre_soma_id=-1,
             post_soma_id=soma,
             config_name="config_0",
@@ -163,7 +166,7 @@ class TestRegistrationAPI(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             model.register_synapse_type(
-                "single_exp_synapse", lif_soma_step_func, dummy_path
+                "delivery_synapse", lif_soma_step_func, dummy_path
             )
 
         with self.assertRaises(ValueError):

@@ -32,7 +32,7 @@ E_L_MV = -60.0       # vrest
 V_TH_MV = -45.0      # vthr
 V_RESET_MV = -60.0   # vreset
 T_REF_MS = 5.0       # tref
-TAU_SYN_MS = 10.0    # single_exp_synapse tau_fall = 1e-2 s
+TAU_SYN_MS = 10.0    # lif_soma tau_syn_0 = 1e-2 s
 
 
 def psp_peak_weight(target_psp_mv):
