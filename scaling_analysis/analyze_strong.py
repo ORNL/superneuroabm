@@ -91,7 +91,8 @@ WARMUP_TICKS = 10
 
 STEP_PARTS = [("comm", "ghost exchange"), ("compute", "GPU compute"),
               ("gpu_sync", "GPU sync"), ("write_back", "write back")]
-COMM_PARTS = [("pack", "pack"), ("exchange", "MPI exchange"), ("unpack", "unpack")]
+COMM_PARTS = [("pack", "pack"), ("exchange", "MPI exchange"), ("unpack", "unpack"),
+              ("reverse", "reverse (inbox to owner)")]
 
 
 def parse_args(argv=None):
@@ -192,10 +193,11 @@ def derive(tick_rows, warmup=WARMUP_TICKS):
     }
     for name, _ in STEP_PARTS:
         out[f"{name}_s"] = st.fmean([r[f"{name}_mean"] for r in window])
-    for name in ("pack", "exchange", "unpack", "wait"):
-        out[f"{name}_s"] = st.fmean([r[f"{name}_mean"] for r in window])
+    for name in ("pack", "exchange", "unpack", "reverse", "wait"):
+        # "reverse" (reduce inbox back to its owner) exists only in CSVs from 2026-10-15 on
+        out[f"{name}_s"] = st.fmean([r.get(f"{name}_mean", 0.0) for r in window])
     out["other_s"] = max(out["step_s"] - sum(out[f"{n}_s"] for n, _ in STEP_PARTS), 0.0)
-    out["comm_other_s"] = max(out["comm_s"] - out["pack_s"] - out["exchange_s"] - out["unpack_s"],
+    out["comm_other_s"] = max(out["comm_s"] - out["pack_s"] - out["exchange_s"] - out["unpack_s"] - out["reverse_s"],
                               0.0)
     return out
 

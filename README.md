@@ -127,6 +127,8 @@ Reproduce with `scaling_analysis/weak_3d_chunk.sh` and `scaling_analysis/strong_
 
 | | |
 |---|---|
+| [`docs/STATUS.md`](docs/STATUS.md) | where the performance work stands and what is next (start here to continue it) |
+| [`docs/EVENT_DRIVEN_NOTES.md`](docs/EVENT_DRIVEN_NOTES.md) | the measured log of the event-driven work |
 | [`docs/FUNCTIONALITY_GUIDE.md`](docs/FUNCTIONALITY_GUIDE.md) | the API surface, end to end |
 | [`docs/CUSTOM_COMPONENTS.md`](docs/CUSTOM_COMPONENTS.md) | bringing your own soma, synapse and learning rule |
 | [`docs/DATA_FORMAT.md`](docs/DATA_FORMAT.md) | how agent properties are laid out |

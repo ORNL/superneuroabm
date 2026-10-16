@@ -52,6 +52,7 @@ TIMER_COLUMNS = (
     ("pack", ("mpi_gpu_pack", "mpi_gpu_sync_pack")),
     ("exchange", ("mpi_exchange",)),
     ("unpack", ("mpi_gpu_unpack",)),
+    ("reverse", ("mpi_reverse",)),      # reduce inbox deposits back to their owner (2026-10-15)
     ("wait", ("mpi_wait_time",)),
     ("peers", ("mpi_num_peers",)),
     ("ghost_somas", ("num_neighbors",)),
@@ -60,15 +61,24 @@ TIMER_COLUMNS = (
 
 # Level-1 names, for analysis scripts that need the disjoint decomposition.
 LEVEL1 = ("comm", "compute", "gpu_sync", "write_back")
-LEVEL2 = ("pack", "exchange", "unpack")
+LEVEL2 = ("pack", "exchange", "unpack", "reverse")
 LEVEL3 = ("wait",)
 
 
-def inject_poisson_drive(model, input_synapses, rate_hz, ticks, dt_ms, seed, rank):
+def inject_poisson_drive(model, input_synapses, rate_hz, ticks, dt_ms, seed, rank,
+                         inputs_per_soma=1):
     """Schedule a Poisson spike train on each external (pre == -1) input synapse.
 
     Each tick is ``dt_ms`` milliseconds; the per-tick spike probability is
     ``rate_hz * dt_ms / 1000``. Vectorized draw per synapse.
+
+    ``inputs_per_soma > 1`` makes the one external synapse stand in for that many
+    independent Poisson inputs of ``rate_hz`` each (the Brunel convention, as in
+    ``nest_comparison/bench_common.py``): the count of external spikes in a tick is
+    ``Poisson(inputs_per_soma * rate_hz * dt_ms / 1000)`` and is delivered as ONE event
+    whose value is that count (the synapse multiplies it into the weight), keeping the
+    compound drive's mean and variance at one event per synapse per tick. With the
+    default 1 the behaviour is the Bernoulli train below, unchanged.
 
     Uses ``add_local_spike_list`` (non-collective, batched): every synapse in ``input_synapses``
     is owned by this rank, so no MPI is needed and each synapse's whole spike train is written in
@@ -77,6 +87,15 @@ def inject_poisson_drive(model, input_synapses, rate_hz, ticks, dt_ms, seed, ran
     collective calls require every rank to call in lockstep with the same id.
     """
     rng = np.random.default_rng(np.random.SeedSequence([seed, rank, 7]))
+    if inputs_per_soma > 1:
+        lam = inputs_per_soma * rate_hz * dt_ms / 1000.0
+        for syn_id in input_synapses:
+            counts = rng.poisson(lam, size=ticks)
+            spike_ticks = np.nonzero(counts)[0] + 1
+            if spike_ticks.size:
+                model.add_local_spike_list(
+                    syn_id, np.column_stack((spike_ticks, counts[spike_ticks - 1])))
+        return
     p_spike = rate_hz * dt_ms / 1000.0
     for syn_id in input_synapses:
         fires = rng.random(ticks) < p_spike

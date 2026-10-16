@@ -58,7 +58,7 @@ import scaling_diagnostics as diagnostics
 SUMMARY_COLUMNS = [
     'job_id', 'nodes', 'workers', 'total_neurons', 'neurons_per_worker',
     'synapses', 'in_degree', 'topology', 'remote_ranks', 'connection_radius',
-    'drive_rate', 'ticks',
+    'drive_rate', 'ticks', 'spikes', 'rate_hz',
     'generation_time', 'model_creation_time', 'gpu_setup_time',
     'construction_time', 'simulation_time', 'total_time',
     'peers_min', 'peers_mean', 'peers_max',
@@ -236,6 +236,11 @@ def main():
     parser.add_argument("--external-rate", type=float, default=None,
                         help="AI-calibrated external Poisson rate (Hz) from calibrate_ai.py. "
                              "Overrides --firing-rate when set.")
+    parser.add_argument("--external-inputs", type=int, default=1,
+                        help="How many independent Poisson inputs of --firing-rate the one "
+                             "external synapse per neuron stands in for (Brunel: C_E = 0.8 K). "
+                             "The per-tick count is delivered as one event whose value is the "
+                             "count; 1 (default) is a plain Bernoulli train, as before.")
     parser.add_argument("--external-weight", type=float, default=None,
                         help="Aggregate external synapse weight (C_E*J) from calibrate_ai.py; "
                              "None inherits the excitatory weight.")
@@ -462,7 +467,8 @@ def main():
         print(f"\n    Injecting {drive_rate} Hz Poisson drive on "
               f"{len(input_synapses)} input synapses...")
     diagnostics.inject_poisson_drive(model, input_synapses, drive_rate,
-                                     simulation_ticks, args.dt_ms, SEED, rank)
+                                     simulation_ticks, args.dt_ms, SEED, rank,
+                                     inputs_per_soma=args.external_inputs)
 
     if rank == 0:
         print("\n" + "=" * 70)
@@ -472,10 +478,13 @@ def main():
     start_time = time.time()
     model.simulate(ticks=simulation_ticks, update_data_ticks=update_ticks)
     wall_time = time.time() - start_time
+    # Did the network fire? (collective; every rank records its own somas' spikes)
+    n_spikes = comm.allreduce(len(model._recorded_spikes) // 2, op=MPI.SUM)
     sim_time = getattr(model, '_simulation_time', wall_time)
     construction_time = getattr(model, '_construction_time', 0.0)
 
     total_time = time.time() - t_pipeline_start
+    rate_hz = n_spikes / float(total_neurons) / (simulation_ticks * args.dt_ms / 1000.0)
     total_synapses = getattr(model, "_num_synapses", None)
     if total_synapses is None:
         total_synapses = len(model._synapse_ids)
@@ -536,6 +545,8 @@ def main():
         print(f"Construction time: {construction_time:.3f}s")
         print(f"Simulation time: {sim_time:.3f}s")
         print(f"Total wall time: {total_time:.3f}s")
+        print(f"Spikes: {n_spikes:,} = {rate_hz:.2f} Hz per neuron over the whole run"
+              + ("  (SILENT network: per-tick numbers describe the idle scan only)" if n_spikes == 0 else ""))
         print("=" * 70)
         print("SUCCESS - Brunel strong scaling run completed!")
         print("=" * 70)
@@ -565,7 +576,7 @@ def main():
                 topology,
                 ('' if remote_rank_fanout is None else remote_rank_fanout),
                 ('' if args.connection_radius is None else f'{args.connection_radius:g}'),
-                f'{drive_rate:.4f}', simulation_ticks,
+                f'{drive_rate:.4f}', simulation_ticks, n_spikes, f'{rate_hz:.3f}',
                 f'{generation_time:.4f}', f'{model_creation_time:.4f}',
                 f'{gpu_setup_time:.4f}', f'{construction_time:.4f}',
                 f'{sim_time:.4f}', f'{total_time:.4f}',

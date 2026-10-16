@@ -863,3 +863,30 @@ Not re-verified: the row-9 coupling probe's digest. `poc/hetero_chip` kernels pr
 single input path (no `synaptic_input` parameters) and `setup()` has refused them since
 step 4; the opt-in line is in place for when the PoC is ported (flagship work is to move
 to its own repo anyway).
+
+## 17. Before Frontier: what was checked on the laptop (2026-10-16)
+
+- **The scaling drivers run on the event path and fire.** `weak_scaling.py` with the
+  Brunel asynchronous-irregular drive (`--J-E 0.02581 --g 5 --external-inputs 800
+  --firing-rate 14.53`, K=1000, 12,500 neurons per rank, 100 ticks): 28.8 Hz on 1 rank,
+  27.0 Hz on 2 ranks. The drivers now take `--external-inputs` (compound Poisson, as the
+  NEST comparison does), print the spike count and rate, flag a silent run, and record
+  both in the summary CSV; the per-tick CSV has a `reverse` column and the analyzers
+  read it, tolerating older CSVs. The 2026-07-30 campaign was silent (section 3.1a of the
+  evidence doc); the new one must not be.
+- **Steady per-tick at 2 ranks with 12,500 ghosts per rank: 2.3-2.7 ms** (gpu_sync
+  0.4-0.8, exchange 1.0-1.6), consistent with section 16 at twice the ghosts.
+- **The first tick is 41 s at 2 ranks** (12,500 ghosts, 12.5 M local synapses): ghost
+  discovery 12.3 s, device buffer build 10.0 s (the id hashmap 6.4 s), communication
+  maps 16.0 s; plus 24 s load and 5.6 s setup. That is ~2 ms of host Python per ghost in
+  discovery + maps, the multi-rank face of the construction item (section 15's list).
+  Bounded-halo topologies (torus3d) have fewer ghosts per rank; still, it is the cost to
+  expect per run on the cluster.
+- **The GPU-aware MPI path is untested.** The laptop's Debian Open MPI 4.1.6 segfaults
+  on any device buffer (a bare cupy `Isend` does, independent of SAGESim), so the
+  device-buffer branch of the new exchange has only been exercised through host
+  staging. First thing on Frontier: both MPI test runners with
+  `MPICH_GPU_SUPPORT_ENABLED=1`.
+- The probes behind sections 15-16 live in `scaling_analysis/per_tick_probes/` with a
+  README; the hand-off page is `docs/STATUS.md`; `CLAUDE.md` in both repos carries the
+  working rules and the gate.
