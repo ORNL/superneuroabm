@@ -787,3 +787,20 @@ Where to cut (step 2 of the round):
   `set_property_neighbor_visible("internal_states", True)`.
 - Later, bigger: exchange spikes as events (O(spikes) instead of O(ghost rows)); exchange
   every min-delay ticks instead of every tick.
+
+### Step 2a done: the launch path (2026-10-15)
+
+SAGESim launches the compiled kernel directly after the first call (`sagesim/launch.py`,
+`DirectLaunch`): cupyx.jit's wrapper re-derived the type signature of all ~60 arguments
+on every call and looked the compiled function up by it. The launcher takes the compiled
+`cupy.cuda.function.Function` out of the jit kernel's cache once, keeps the scalar casts,
+and checks later argument lists by identity (plus dtype / ndim / contiguity / 32-bit
+indexability for any replaced array). `SAGESIM_DIRECT_LAUNCH=0` disables it.
+
+| | before | after |
+|---|---|---|
+| one launch per `simulate(1)` call, 12,500-soma ring, laptop | 0.527 ms | 0.244 ms |
+| Brunel 2 ranks, launch column of the section-16 table | 0.36 ms | 0.07 ms |
+
+Same 156,183 spikes at 2 ranks. Gate: SAGESim 119 + MPI 1-4, SuperNeuroABM 248 + MPI 1-4.
+The scalar resets (three small device writes, ~0.03 ms) were left alone.
