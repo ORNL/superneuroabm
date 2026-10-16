@@ -267,7 +267,14 @@ class NeuromorphicModel(Model):
             "learning_internal_states_buffer": ([], False),  # learning states buffer
         }
         # Synapse properties: (default_value, neighbor_visible)
-        # Only internal_states is read by neighbors (somas read I_synapse from synapses)
+        # Nothing of a synapse is read by a neighbour: a soma gets its input through the
+        # inbox (step_functions/synaptic_input.py), not by reading its synapses' rows.
+        # Note that SAGESim keeps ONE visibility flag per property NAME across breeds, so
+        # flagging a synapse property visible would ship the SOMA column of the same name
+        # to every ghost soma every tick as well (internal_states: 5 floats per ghost that
+        # no kernel reads; the pull-era flag cost 28 B per ghost per tick instead of 8). A
+        # custom kernel that reads a neighbour's property on another rank opts in with
+        # model.set_property_neighbor_visible(name, True) before setup().
         synapse_properties = {
             "hyperparameters": (
                 [0.0] * max_sizes.get("hyperparameters", 0), False
@@ -276,8 +283,8 @@ class NeuromorphicModel(Model):
                 [0.0] * max_sizes.get("learning_hyperparameters", 0), False
             ),
             "internal_states": (
-                [0.0] * max_sizes.get("internal_states", 0), True
-            ),  # NEIGHBOR-VISIBLE: somas read Isyn
+                [0.0] * max_sizes.get("internal_states", 0), False
+            ),
             "learning_internal_states": (
                 [0.0] * max_sizes.get("learning_internal_states", 0), False
             ),

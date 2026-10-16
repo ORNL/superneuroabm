@@ -369,6 +369,25 @@ Worker 0:                           Worker 1:
 
 ---
 
+### What crosses ranks each tick
+
+Only a soma's spike slot (`output_spikes_tensor`, 2 floats) is exchanged for ghost
+somas, plus the synaptic-input inbox deposits that flow back to their owner (the reduce
+exchange). Nothing of a synapse crosses ranks: synapses live on their post-soma's rank
+and a soma reads its input from the inbox, not from its synapses' rows. If a custom
+kernel reads another property of a neighbour that may live on another rank (for
+example a device reading a neighbour device's state), opt that property in before
+`setup()`:
+
+```python
+model.set_property_neighbor_visible("internal_states", True)
+```
+
+SAGESim keeps one visibility flag per property *name* across breeds, so opting in
+`internal_states` ships the soma and synapse columns of that name to every ghost (it was
+the default until 2026-10-15 and cost 28 bytes per ghost soma per tick instead of 8).
+On one rank there are no ghosts and the flag changes nothing.
+
 ## Synchronization Interval: `sync_n_ticks`
 
 The `sync_n_ticks` parameter controls how often workers communicate to update ghost agents.

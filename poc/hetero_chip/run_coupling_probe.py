@@ -64,6 +64,9 @@ rng = np.random.default_rng(0)
 fire = rng.random((TICKS, N_RELAY)) < 0.05
 t, r = np.nonzero(fire)
 model.add_spikes(EXT + r, t)
+# The sensor reads its neighbour heater's internal_states on another rank. Only a
+# soma's spike slot crosses ranks by default (2026-10-15); opt the property in.
+model.set_property_neighbor_visible("internal_states", True)
 model.setup()
 model.simulate(ticks=TICKS, update_data_ticks=1)
 

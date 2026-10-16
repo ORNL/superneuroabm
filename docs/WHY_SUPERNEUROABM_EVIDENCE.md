@@ -304,8 +304,10 @@ The one capability found in neither is therefore *a device that reads other devi
 other than its two neurons) in a network spread over many GPUs*: GeNN can couple devices but only on
 one GPU; Arbor scales but cannot couple devices across cells. SuperNeuroABM does it [run]:
 `load_from_adjacency()` takes neighbour lists verbatim, so a synapse's slots may name another synapse
-on another rank; SAGESim discovers ghosts from any neighbour list and synapse `internal_states` are
-neighbour-visible (`superneuroabm/model.py:224`). Probe `poc/hetero_chip/run_coupling_probe.py`: 16
+on another rank; SAGESim discovers ghosts from any neighbour list, and a model opts the property the
+device reads into the ghost exchange (`set_property_neighbor_visible("internal_states", True)` before
+`setup()`; since 2026-10-15 only a soma's spike slot crosses ranks by default). Probe
+`poc/hetero_chip/run_coupling_probe.py`: 16
 neurons, each with a heater device and a sensor device; sensor j reads heater j+1 (another neuron,
 another rank whenever ranks > 1); the heat is random per pulse and double-buffered by tick parity, so
 the read is race-free on one GPU and equal to the ghost copy on several. Digest `7d387425…`, 67 spikes

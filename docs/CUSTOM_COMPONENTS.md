@@ -543,6 +543,14 @@ spike output, a synapse through its current slot.
 
 ## 9. Rules, limits, and common errors
 
+**Reading a neighbour's row across ranks.** Only `output_spikes_tensor` of a soma is
+exchanged between ranks by default. A kernel that reads any other property of a
+neighbour (`internal_states[post_soma_index]` is fine, the post soma is always local;
+`internal_states[some_other_neighbour]` is not, if that neighbour may live elsewhere)
+must have the model call `set_property_neighbor_visible(name, True)` before `setup()`,
+or it silently reads a stale ghost row on a multi-rank run (see
+`DISTRIBUTED_SIMULATION.md`, "What crosses ranks each tick").
+
 **Registration must happen before `setup()`.** `setup()` is what generates the
 selector and compiles the fused kernel; registering after it raises
 `RuntimeError`.

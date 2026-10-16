@@ -837,3 +837,29 @@ used to be O(peers x fields), which at 26 torus peers would have been the tick.
 
 Still open from section 16: ship only the spike slot (a SuperNeuroABM decision), the
 fired-emitter compaction on the GPU side, and an event-based spike exchange.
+
+### Step 2c done: only the spike slot crosses ranks (2026-10-15, user decision)
+
+The synapse `internal_states` flag was the pull-era "somas read Isyn from synapses"; with
+SAGESim's one flag per property name it shipped the soma `internal_states` (5 floats no
+kernel reads) to every ghost soma every tick. Now only `output_spikes_tensor` is
+neighbour-visible by default; a kernel that reads another property of a neighbour on
+another rank opts in with `set_property_neighbor_visible(name, True)` before `setup()`
+(documented in DISTRIBUTED_SIMULATION.md and CUSTOM_COMPONENTS.md; the row-9 coupling
+probe in poc/hetero_chip does so). `tests/test_neighbor_visibility.py`.
+
+Same probe, rank 0, ms per tick, after step 2b -> after 2c:
+
+| N | total | pack | unpack | bytes per peer per tick |
+|---|---|---|---|---|
+| 2 | 1.90 -> **1.68** | 0.25 -> 0.21 | 0.18 -> 0.12 | 175 kB -> 50 kB |
+| 4 | 2.61 -> **2.43** | 0.39 -> 0.31 | 0.22 -> 0.17 | 262 kB -> 75 kB |
+
+Same 156,183 spikes at 2 and 4 ranks. Where the round started (section 16): 2.06 / 3.86 /
+6.26 ms at 2 / 3 / 4 ranks; now 1.68 / ~2.0 / 2.43. On a machine with one GPU per rank and
+GPU-aware MPI the remaining exchange is the two permutations, one gather and one scatter
+per field, the reverse's segmented add and the MPI calls themselves.
+Not re-verified: the row-9 coupling probe's digest. `poc/hetero_chip` kernels predate the
+single input path (no `synaptic_input` parameters) and `setup()` has refused them since
+step 4; the opt-in line is in place for when the PoC is ported (flagship work is to move
+to its own repo anyway).
