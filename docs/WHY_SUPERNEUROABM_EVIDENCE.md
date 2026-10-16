@@ -119,8 +119,8 @@ This is a deliberate trade, and a good one for its purpose: 12 bytes per synapse
 proportional to spikes. It is why NEST GPU is fast. (SuperNeuroABM's synapses have been event-woken too
 since 2026-10-15 — stepped only when their pre fires, with the synaptic kinetics on the soma — and the
 per-tick gap on our Brunel benchmark went from ~40x to ~1.4x, 0.28 vs 0.20 ms per tick on one GPU
-with all ticks in one launch (NEST GPU's own printed time for that run is 0.52 ms per step; an earlier
-~7x figure, 1.28 ms, was measured with one launch per tick, which the benchmark's timers force);
+with all ticks in one launch (an earlier ~7x figure, 1.28 ms, was measured with one launch per
+tick, which the benchmark's timers force);
 what remains is the cost of a synapse being an agent with its own row and learning rule rather than
 a 12-byte record, `docs/EVENT_DRIVEN_NOTES.md` sections 7 and 15.) It is also why it cannot
 be hardware-aware beyond static effects: there is nowhere to keep device state and no place where

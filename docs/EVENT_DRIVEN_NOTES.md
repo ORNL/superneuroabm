@@ -637,7 +637,7 @@ Previously 647 s (144 us/tick) on the clocked kernels: 9.0x. The authors' own Br
 
 | | SuperNeuroABM (event) | NEST GPU 2.0 |
 |---|---|---|
-| per tick, steady state | 1.22 ms with one launch per tick (ticks 2-400: 0.487 s; the benchmark's verbose timers force this path); **0.28 ms fused**, the path a single-GPU user gets (section 15, measured with the build excluded) | 0.20 ms (ticks 11-400: 0.0786 s by the script's timer; NEST GPU's own printed simulation time for the same 390 ms is 0.201 s, i.e. 0.52 ms/tick) |
+| per tick, steady state | 1.22 ms with one launch per tick (ticks 2-400: 0.487 s; the benchmark's verbose timers force this path); **0.28 ms fused**, the path a single-GPU user gets (section 15, measured with the build excluded) | 0.20 ms (ticks 11-400: 0.0786 s by the script's timer, GPU idle at return; NEST GPU's own printed "Simulation time" of 0.201 s is not this: it is wall time since the end of `Calibrate()`, and ~0.13 s of it was the benchmark script's own work between the calls, section 15) |
 | first tick / calibrate | 6.25 s (device buffer build) | 0.05 s |
 | construction | 25.2 s load + 3.8 s setup | 0.03 s connect |
 | whole run | 46.9 s | 1.85 s |
@@ -674,10 +674,19 @@ What the table says:
    window (every tick today).
 3. **The earlier headline, 1.22-1.28 ms/tick, was the per-tick-launch number**: the
    benchmark turns `verbose_timing` on for its first-tick sub-timers, and that forces one
-   launch per tick. Fused, Brunel runs at 0.28 ms/tick: 1.4x NEST GPU's 0.20 by the
-   script's timer, under NEST GPU's own printed 0.52. The round-2 statement that the fused
-   path was *slower* divided a wall time that included the 4-6 s buffer build by the tick
-   count; `brunel_sna_local.py --fused` now times the first tick apart.
+   launch per tick. Fused, Brunel runs at 0.28 ms/tick: 1.4x NEST GPU's 0.20. The
+   round-2 statement that the fused path was *slower* divided a wall time that included
+   the 4-6 s buffer build by the tick count; `brunel_sna_local.py --fused` now times the
+   first tick apart.
+   The earlier "0.52 ms/tick by NEST GPU's own print" was a misreading of NEST GPU's
+   `Simulation time:` line. Instrumented run (unbuffered C stdout, timestamps around
+   each call, `deviceSynchronize` after each return): that line is `end_real_time_ -
+   build_real_time_`, i.e. wall time since the END OF `Calibrate()`, printed cumulatively
+   after every `Simulate()`, so it also counts whatever the host did between the calls.
+   In the benchmark that is ~0.13 s of `PhaseLog.add` (an `nvidia-smi` call per phase)
+   against 0.077 s inside the two `Simulate()` calls; the device is idle when `Simulate()`
+   returns (sync 0.1 ms). The script's timer around `Simulate(390 ms)` is the number:
+   0.075-0.080 s, 0.19-0.20 ms/tick.
 4. Activity cost at 33 Hz, fused: 0.28 - 0.12 = 0.16 ms for ~420k deliveries per tick.
 
 Where it can be cut, in order of payoff:
