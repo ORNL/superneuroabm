@@ -804,3 +804,36 @@ indexability for any replaced array). `SAGESIM_DIRECT_LAUNCH=0` disables it.
 
 Same 156,183 spikes at 2 ranks. Gate: SAGESim 119 + MPI 1-4, SuperNeuroABM 248 + MPI 1-4.
 The scalar resets (three small device writes, ~0.03 ms) were left alone.
+
+### Step 2b done: the exchange in a fixed number of operations per tick (2026-10-15)
+
+SAGESim's pack, unpack and reverse exchange now do one `take` per field into a
+field-major device buffer, one permutation into a peer-major buffer whose per-peer
+slices are the messages, one pinned host copy (without GPU-aware MPI), and the mirror on
+the receive side; a reduce array's deposits from several peers into one row are summed
+by a segmented kernel in peer order (bitwise what the peer-by-peer adds gave). Planned
+at setup by `plan_exchange_layout`; SAGESim `docs/gpu_cpu_data_flow.md` describes it.
+
+Same probe as section 16, rank 0, ms per tick, before (section 16) -> after steps 2a + 2b:
+
+| N | total | host launch | pack | MPI wait | unpack | reverse | peers |
+|---|---|---|---|---|---|---|---|
+| 2 | 2.06 -> **1.90** | 0.36 -> 0.08 | 0.29 -> 0.25 | 0.16 -> 0.26 | 0.18 -> 0.18 | 0.48 -> 0.48 | 1 |
+| 3 | 3.86 -> **2.16** | 0.55 -> 0.08 | 0.45 -> 0.28 | 0.61 -> 0.26 | 0.45 -> 0.21 | 1.14 -> 0.60 | 2 |
+| 4 | 6.26 -> **2.61** | 0.74 -> 0.08 | 0.70 -> 0.39 | 1.26 -> 0.37 | 0.68 -> 0.22 | 2.14 -> 0.74 | 3 |
+
+Same 156,183 spikes at 2, 3 and 4 ranks, spike for spike, as before the change (and
+1 rank still matches through tick 108). Gate: SAGESim 122 + MPI 1-4, SuperNeuroABM 248
++ MPI 1-4, reduce tests bitwise.
+
+Reading it: with one peer nothing changes, as expected (the old code was already one
+gather per field there); each further peer now adds ~0.2 ms instead of ~1 ms, and what
+remains of the growth is the shared laptop GPU (every device sync waits for the other
+ranks' time slices; `MPI wait` is the skew between ranks). The reverse exchange's 0.48 ms
+at one peer is two device syncs (the host staging copies) plus that skew, not
+operations: on a machine with one GPU per rank and GPU-aware MPI both go away. What is
+structural and carries to Frontier is the operation count: fixed per tick, where it
+used to be O(peers x fields), which at 26 torus peers would have been the tick.
+
+Still open from section 16: ship only the spike slot (a SuperNeuroABM decision), the
+fired-emitter compaction on the GPU side, and an event-based spike exchange.
