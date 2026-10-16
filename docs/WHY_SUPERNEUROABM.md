@@ -235,7 +235,8 @@ code. Equations can be `clock-driven` (integrated every step, and able to read t
 - **Rows 7-8.** CuPy kernels on GPUs; MPI between GPUs, exchanging spikes and synapse outputs.
 
 **The price.** About 10x more GPU memory per synapse than NEST GPU (147 vs 12-16 bytes) and, on a
-Brunel network, about 7x slower per time step (1.28 vs 0.19 ms with 12.5 M synapses), the cost of
+Brunel network, about 1.4x slower per time step (0.28 vs 0.20 ms with 12.5 M synapses, one GPU,
+all ticks in one launch; NEST GPU's own printed time for the same run is 0.52 ms per step), the cost of
 each synapse being an agent with its own row and learning rule rather than a 12-byte record. The
 work is proportional to spikes in both: synapses are stepped only when their presynaptic neuron
 fires. On a single-neuron STDP experiment (Masquelier 2008, 2,000 plastic synapses) SuperNeuroABM

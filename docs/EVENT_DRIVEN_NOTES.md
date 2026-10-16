@@ -344,6 +344,14 @@ agent framework's execution model. Closing that would mean launching per-phase k
 (or CUDA graphs) instead of the fused persistent kernel -- a different SAGESim execution
 backend, not a tuning item -- and is a decision, not a next step.
 
+**Correction (2026-10-15, section 15):** the paragraph above is wrong about where the
+0.63 ms goes. Measured apart, the fused kernel's own fixed cost on a silent Brunel tick is
+0.12 ms (barriers 0.007, soma phase 0.013, wake-expansion scan 0.08); the other ~0.5 ms
+is the host path of launching once per tick, which the benchmark's verbose timers force
+and the single-GPU user path (all ticks in one launch) does not pay. "Fused is slower
+than per-tick launches" in the round-2 table came from dividing a wall time that
+included the 4-6 s buffer build by the tick count. Brunel firing, fused: 0.28 ms/tick.
+
 ## 6. Expected gains (estimates, to be replaced by measurements)
 
 | network | before | after round 1 (push), measured | after round 2 (wake lists), estimate |
@@ -629,8 +637,73 @@ Previously 647 s (144 us/tick) on the clocked kernels: 9.0x. The authors' own Br
 
 | | SuperNeuroABM (event) | NEST GPU 2.0 |
 |---|---|---|
-| per tick, steady state | 1.22 ms (ticks 2-400: 0.487 s) | 0.20 ms (ticks 11-400: 0.0786 s by the script's timer; NEST GPU's own printed simulation time for the same 390 ms is 0.201 s, i.e. 0.52 ms/tick) |
+| per tick, steady state | 1.22 ms with one launch per tick (ticks 2-400: 0.487 s; the benchmark's verbose timers force this path); **0.28 ms fused**, the path a single-GPU user gets (section 15, measured with the build excluded) | 0.20 ms (ticks 11-400: 0.0786 s by the script's timer; NEST GPU's own printed simulation time for the same 390 ms is 0.201 s, i.e. 0.52 ms/tick) |
 | first tick / calibrate | 6.25 s (device buffer build) | 0.05 s |
 | construction | 25.2 s load + 3.8 s setup | 0.03 s connect |
 | whole run | 46.9 s | 1.85 s |
 | firing rate | 32.5 Hz (33.5 steady) | 28.1 Hz |
+
+## 15. The fixed per-tick cost, decomposed (2026-10-15)
+
+The question was where the "fixed" ~0.6 ms of a Brunel tick goes and what of it can be
+cut. Measured on the laptop GPU, build excluded (`simulate(1)` first, then the timed call),
+event stepping, no learning rules. Probes in the session scratchpad (`fixed_cost/`).
+
+| probe | one launch for all ticks (fused) | one launch per tick |
+|---|---|---|
+| 1 soma, no synapses: barriers, tick loop, inbox write-back | 0.007 ms | 0.525 ms |
+| 12,500 `lif_soma`, no synapses: + soma phase | 0.020 ms | 0.521 ms |
+| 12,500 somas + a 12,500-synapse ring: + wake-expansion scan over every emitter | 0.102 ms | 0.708 ms |
+| Brunel K=100, silent | 0.108 ms | |
+| Brunel K=1000, silent | 0.122 ms | 0.672 ms |
+| Brunel K=1000, firing 33 Hz (162,561 spikes, same as every earlier run) | **0.279 ms** | 0.882 ms |
+
+What the table says:
+
+1. **The kernel's own fixed cost is 0.12 ms per tick, not 0.6**, and it does not depend on
+   K. Of it, ~0.08 ms is the wake-expansion scan: every emitter row (12,500 somas) is
+   tested for a raised event by thread 0 of a block, serially, ~174 per block on 72
+   blocks, every tick, silent or not. The soma phase is 0.013 ms, the four software grid
+   barriers plus the tick loop 0.007, the inbox write-back and queue reset the rest.
+2. **The other ~0.5 ms is the host path of one launch**, paid once per `simulate()`
+   window: cupyx.jit's `__call__` re-derives a type signature for all ~60 kernel
+   arguments on every call (0.26 ms; the cupy driver launch underneath is 0.022 ms), the
+   spike-count read-back is 0.044 ms, three device scalar resets ~0.03, and the
+   per-launch bookkeeping and timing prints ~0.15. On one GPU the user path fuses all
+   ticks into one launch and never pays it; a multi-rank run pays it once per exchange
+   window (every tick today).
+3. **The earlier headline, 1.22-1.28 ms/tick, was the per-tick-launch number**: the
+   benchmark turns `verbose_timing` on for its first-tick sub-timers, and that forces one
+   launch per tick. Fused, Brunel runs at 0.28 ms/tick: 1.4x NEST GPU's 0.20 by the
+   script's timer, under NEST GPU's own printed 0.52. The round-2 statement that the fused
+   path was *slower* divided a wall time that included the 4-6 s buffer build by the tick
+   count; `brunel_sna_local.py --fused` now times the first tick apart.
+4. Activity cost at 33 Hz, fused: 0.28 - 0.12 = 0.16 ms for ~420k deliveries per tick.
+
+Where it can be cut, in order of payoff:
+
+- **Compaction of fired emitters (SAGESim, general).** The emitter breed's step already
+  tests its event slot in the generated post-step code (spike recording); append the row
+  to a fired list there and let the expansion stride over the fired list instead of every
+  emitter. O(fired) instead of O(emitters): ~0.08 -> ~0.01 ms on Brunel (tick 0.28 ->
+  ~0.21), and it removes a term that is 6 ms/tick at a million emitters per GPU. Any ABM
+  with event wake benefits. About one day with the bitwise gate (same spikes).
+- **Launch path for the per-window case (SAGESim, general).** Keep the compiled cupy
+  `Function` from the first call and launch it directly with the arguments already
+  typed (-0.24 ms); fold the three scalar resets into one small kernel and read the spike
+  count with the same copy (-0.05); skip the timing bookkeeping unless verbose (-0.1).
+  ~0.5 -> ~0.15 ms per launch; matters for multi-GPU runs, where a launch per exchange
+  window is unavoidable. NEST's answer to the same cost is to exchange every min-delay
+  steps rather than every step; ours would be a buffered-delay exchange, a larger change.
+- **Spike record sizing (SuperNeuroABM, done here).** The record was sized by agents x
+  ticks / 100, and agents include synapses: a fused 400-tick Brunel launch allocated and
+  NaN-filled 400 MB for 162k spikes. Now somas x ticks / 4 (10 MB).
+
+Found on the way: `--no-learning-rules`, which lets the framework intern the soma
+parameters, had been broken since step 4 made every soma read its parameters through the
+`synaptic_current` helper: the generator's seed / logical_ids injection handed a helper
+without an `agent_ids` parameter one argument more than its rewritten definition took
+("takes 10 positional arguments but 11 were given"). Fixed in SAGESim (`_inject_seed`
+adds `logical_ids` at a call site only when the call forwards `agent_ids`, which is the
+only case the definition gets the parameter) with a regression test in
+`tests/test_interning_codegen.py`.

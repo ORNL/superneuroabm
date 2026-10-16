@@ -10,7 +10,7 @@
 # partition, so each file is run at each rank count separately.
 #
 # Usage:
-#   scripts/run_mpi_tests.sh                # ranks 1 2 4
+#   scripts/run_mpi_tests.sh                # ranks 1 2 3 4
 #   scripts/run_mpi_tests.sh 2              # only 2 ranks
 #   PYTHON=/path/to/python scripts/run_mpi_tests.sh
 set -uo pipefail
@@ -19,7 +19,7 @@ cd "$(dirname "$0")/.." || exit 2
 
 PYTHON="${PYTHON:-python}"
 TIMEOUT="${TIMEOUT:-900}"
-RANKS=("${@:-1 2 4}")
+RANKS=("${@:-1 2 3 4}")
 read -r -a RANKS <<< "${RANKS[*]}"
 
 # test_mpi_comparison and test_lif_mixed_synapses_stdp_mpi are written for 4 ranks;

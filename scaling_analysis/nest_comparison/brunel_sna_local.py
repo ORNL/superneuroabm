@@ -193,9 +193,17 @@ def run_once(args, repeat):
           f"lambda={lam:.3f} spikes/tick/soma")
 
     # ---- 5. Simulate ----
+    # The first tick builds the device buffers (seconds); time it apart from the rest so
+    # the fused path's per-tick number is a per-tick number and not (build + ticks) / ticks.
     t0 = time.time()
-    model.simulate(ticks=args.ticks, update_data_ticks=1)
-    sim_wall = time.time() - t0
+    model.simulate(ticks=1, update_data_ticks=1)
+    first_wall = time.time() - t0
+    first_timings = list(getattr(model, "_tick_timings", []) or [])
+    t0 = time.time()
+    model.simulate(ticks=args.ticks - 1, update_data_ticks=1)
+    rest_wall = time.time() - t0
+    rest_timings = list(getattr(model, "_tick_timings", []) or [])
+    sim_wall = first_wall + rest_wall
     # Network activity (all somas are recorded by default): lets a run say whether the
     # per-tick numbers describe a silent or a firing network.
     spikes_by_soma = model.get_all_spike_times()
@@ -237,7 +245,7 @@ def run_once(args, repeat):
     if n_out_spikes == 0:
         print("  WARNING: network is SILENT -- per-tick timings describe the idle scan only.")
 
-    ticks = getattr(model, "_tick_timings", []) or []
+    ticks = first_timings + rest_timings      # simulate() resets _tick_timings per call
     first = ticks[0] if ticks else {}
     log.add("first_tick.total", first.get("total", 0.0))
     log.add("first_tick.neighbor", first.get("neighbor", 0.0))
@@ -267,10 +275,12 @@ def run_once(args, repeat):
     rest = sum(t.get("total", 0.0) for t in ticks[1:])
     log.add(f"ticks_2_{args.ticks}", rest)
     log.add("simulate_wall", sim_wall)
+    log.add("first_tick_wall", first_wall)
     if args.fused:
-        log.add("per_tick_ms_fused", sim_wall / args.ticks * 1000.0)
-        print(f"  fused: {sim_wall / args.ticks * 1000.0:.3f} ms/tick over {args.ticks} ticks "
-              "(includes the first tick's buffer build)")
+        per_tick = rest_wall / max(1, args.ticks - 1) * 1000.0
+        log.add("per_tick_ms_fused", per_tick)
+        print(f"  fused: {per_tick:.3f} ms/tick over ticks 2-{args.ticks} (one launch; "
+              f"first tick incl. buffer build {first_wall:.2f} s)")
     log.add("total", time.time() - t_pipeline)
 
     pool_mb = cp.get_default_memory_pool().used_bytes() / 1e6
