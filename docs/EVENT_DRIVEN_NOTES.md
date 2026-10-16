@@ -716,3 +716,74 @@ without an `agent_ids` parameter one argument more than its rewritten definition
 adds `logical_ids` at a call site only when the call forwards `agent_ids`, which is the
 only case the definition gets the parameter) with a regression test in
 `tests/test_interning_codegen.py`.
+
+## 16. The multi-rank tick, measured (2026-10-15, laptop GPU shared by N ranks)
+
+Step 1 of the next round: where a one-launch-per-tick multi-rank tick goes. Same 12.5k /
+K=1000 Brunel network at every rank count (the single-rank columnar partition split by post
+into contiguous soma blocks, `scratchpad/multirank/split_partition.py`), a partition-invariant
+Poisson drive (one global draw indexed by post-soma id), event stepping, no learning rules,
+400 ticks, SAGESim's per-tick timers on (so N=1 is the per-tick-launch path, not the fused
+one). Per-tick means over ticks 50-400, in ms, rank 0 (ranks agree to ~1 %); two runs each.
+
+| N | total | host launch | GPU (sync) | extras | pack | MPI wait | unpack | reverse | bytes/peer | peers |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 0.96 / 1.02 | 0.37 | 0.32 | 0.14 | - | - | - | - | - | 0 |
+| 2 | 2.06 / 2.31 | 0.36 / 0.46 | 0.35 | 0.12 | 0.29 | 0.16 | 0.18 | 0.48 | 175 kB | 1 |
+| 3 | 3.86 / 3.46 | 0.55 / 0.49 | 0.32 | 0.16 | 0.45 | 0.61 | 0.45 | 1.14 | 117 kB | 2 |
+| 4 | 6.26 / 5.55 | 0.74 / 0.56 | 0.36 | 0.16 | 0.70 | 1.26 | 0.68 | 2.14 | 88 kB | 3 |
+
+Gate: 2, 3 and 4 ranks produce the SAME 156,183 spikes, spike for spike (`compare_spikes.py`).
+The 1-rank run matches them spike for spike through tick 108 (39,925 spikes) and then
+diverges (156,951 in total): one accumulation order for a soma's 1000 deposits (all
+atomics) against local atomics plus peer chunks added afterwards, a last-bit difference
+the chaotic network amplifies after ~100 ticks. That is the float-order nondeterminism
+accepted in section 8, not a timing difference: a one-tick shift anywhere would show at
+tick 13.
+
+What the table says:
+
+1. **The exchange grows with the number of peers, not with bytes.** Bytes per peer fall
+   from 175 kB to 88 kB while pack + unpack + reverse go 0.95 -> 2.0 -> 3.5 ms: about
+   1 ms per peer. A cProfile of rank 0 (`mr_profile.py`) shows why: `_reverse_exchange`
+   spends most of its time in its own Python (per-peer slicing of cupy arrays, a `.get()`
+   per peer, a `cp.asarray` per peer, a gather-add-scatter per peer and per array);
+   pack and unpack loop over peers x visible properties the same way. The code does
+   O(peers x properties) small cupy operations and 2 x peers device syncs per tick.
+2. **MPI wait grows the same way** (0.16 -> 0.61 -> 1.26 ms) because the ranks share one
+   GPU: a rank's `Waitall` waits for its peers' packs, which serialise on the device.
+   Not a property of the machine the code will run on.
+3. **The host launch path is the same 0.37 ms as on one rank** (plus contention at N=4).
+4. **GPU time per tick is flat at 0.32-0.36 ms** at every N: the kernel is not the cost.
+
+Caveats of the laptop: one GPU time-sliced between N processes, no GPU-aware MPI (every
+peer buffer is staged through the host with a `.get()` / `cp.asarray`), 22 cores. The
+per-peer op structure and the launch path are properties of the code and carry over; the
+wait and the staging do not.
+
+Frontier context (pull-era kernel, weak scaling 2026-07-30, `weak_single_4213362.out`,
+rank 37 at tick 50): total 5.1 ms = launch 0.4 + exchange 0.6 + kernel 1.1 + rest. The
+event path cuts the kernel to ~0.3 ms, so on that machine launch + exchange would be
+roughly three quarters of the tick as the code stands.
+
+Where to cut (step 2 of the round):
+
+- **Launch path (SAGESim, general):** keep the compiled cupy `Function` from the first
+  call and launch it with pre-typed arguments; fold the three scalar resets; skip the
+  bookkeeping unless verbose. 0.37 + ~0.15 -> ~0.1 ms per launch.
+- **Exchange in O(1) operations per tick (SAGESim, general):** build at setup one send
+  index array in peer order with per-peer offsets, so a tick is one gather per property
+  (or one for all, with a fixed [property, agent] layout), one device-to-host copy, MPI
+  from host views, one host-to-device copy, one scatter per property; the reverse the
+  same way with one segmented add. Expected: pack + unpack + reverse from ~1 ms per peer
+  to ~0.2 ms per tick regardless of peers. Matters on Frontier's torus (26 peers).
+- **Ship only the spike slot (SuperNeuroABM, decision needed):** 28 of the bytes per
+  ghost soma are 7 floats, of which the event path reads 2 (`output_spikes_tensor`).
+  The other 5 are the soma's `internal_states`, neighbour-visible only because the
+  synapse `internal_states` is flagged visible for the pull-era soma gather and
+  SAGESim's visibility is per property name across breeds. Turning it off halves the
+  per-property work in pack/unpack; a custom kernel that reads a neighbour's
+  `internal_states` (poc/hetero_chip does) would set
+  `set_property_neighbor_visible("internal_states", True)`.
+- Later, bigger: exchange spikes as events (O(spikes) instead of O(ghost rows)); exchange
+  every min-delay ticks instead of every tick.
