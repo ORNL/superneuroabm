@@ -1,0 +1,53 @@
+# Parameters of the Masquelier, Guyonneau & Thorpe (2008) network for tutorial 03.
+#
+# The three breeds are the tutorial-owned kernels next to this file; the breed keys
+# must match the names they are registered under in the notebook. Inside every block
+# the KEY ORDER is the index order the kernel reads (docs/CUSTOM_COMPONENTS.md).
+# Values are those of the paper, as used by Hathway & Goodman (2018).
+
+soma:
+  user_customized_masquelier_soma:
+    masquelier_output_neuron:
+      hyperparameters:
+        T: 500.0            # threshold = 0.5 * number of pattern afferents (1000)
+        tref: 1e-3          # 1 ms absolute refractory period
+        X: 6.3496           # EPSP normalisation (taus/taum)^(taum/(taus-taum)) = 0.25^(-4/3)
+        A: -1500.0          # after-hyperpolarisation amplitude = -K2 * T, K2 = 3
+        taus: 2.5e-3        # after-hyperpolarisation time constant (s)
+        taum: 10e-3         # membrane time constant (s)
+        deltaa: 1.0         # a is set to this at a spike
+        I_in: 0.0           # no constant input
+        tausyn: 2.5e-3      # EPSP time constant (s)
+      internal_states:
+        u: 0.0              # membrane potential
+        tcount: 0.0         # ticks since the start
+        tlast: 0.0          # tick of the last spike (0 = none yet)
+        a: 0.0              # after-hyperpolarisation variable
+        x: 0.0              # summed EPSP
+
+synapse:
+  user_customized_masquelier_synapse:
+    masquelier_afferent:
+      hyperparameters:
+        weight: 0.475       # initial weight = 1.9 * T / 2000
+        synaptic_delay: 1.0 # pinned slot, unused
+        scale: 1.0          # deltax = 1: one afferent spike adds `weight` to x
+      internal_states:
+        unused: 0.0         # the kernel keeps no state; one placeholder slot
+
+learning_rule:
+  user_customized_masquelier_stdp:
+    masquelier_stdp:
+      learning_hyperparameters:
+        stdp_type: -1.0     # placeholder; create_synapse() overrides it with the registered id
+        tau_plus: 16.8e-3   # presynaptic trace time constant (s)
+        tau_minus: 33.7e-3  # postsynaptic trace time constant (s)
+        a_plus: 0.03125     # potentiation per pairing = 2^-5
+        a_minus: 0.0265625  # depression per pairing = 0.85 * a_plus
+        wmin: 0.0
+        wmax: 1.0
+      learning_internal_states:
+        pre_trace: 0.0
+        post_trace: 0.0
+        dW: 0.0
+        last_tick: -1.0     # tick the rule last ran (decay-on-wake), pinned at index 3

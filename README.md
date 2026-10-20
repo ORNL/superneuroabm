@@ -75,9 +75,11 @@ with `NeuromorphicModel(user_config=...)` to override or add parameter sets.
 | [`tutorials/00_simple_heterogenous_network.ipynb`](tutorials/00_simple_heterogenous_network.ipynb) | building a heterogeneous network by hand, injecting spikes, reading spike times and internal state histories |
 | [`tutorials/01_superneuroabm_digits.ipynb`](tutorials/01_superneuroabm_digits.ipynb) | a two-layer feedforward SNN on the sklearn 8x8 digits, trained with semi-supervised bounded STDP and evaluated with spike-count readout |
 | [`tutorials/02_soma_and_synapse_gallery.ipynb`](tutorials/02_soma_and_synapse_gallery.ipynb) | every built-in soma driven and plotted one at a time (LIF, adaptive-threshold LIF, the 20 Izhikevich panels, the AdEx patterns, Hathway-Goodman LIF), the synapse taken apart (weight, sign, channel time constants) and the six learning rules compared on one spike pairing |
+| [`tutorials/03_masquelier_2008_stdp.ipynb`](tutorials/03_masquelier_2008_stdp.ipynb) | the Masquelier, Guyonneau & Thorpe (2008) experiment: one neuron, 2,000 afferents, a 50 ms spike pattern hidden in 450 s of input, found by unsupervised STDP alone; the whole 4.5 M-tick run in one continuous simulation, about 90 s on a laptop GPU, with the soma, synapse and learning rule all tutorial-owned kernels |
 
 Tutorial 01 brings its own components — [`tutorials/user_customized_lif.py`](tutorials/user_customized_lif.py)
-and [`tutorials/user_customized_stdp.py`](tutorials/user_customized_stdp.py) — registered on the
+and [`tutorials/user_customized_stdp.py`](tutorials/user_customized_stdp.py) — and tutorial 03 brings all
+three kinds (`tutorials/user_customized_masquelier_{soma,synapse,stdp}.py`), registered on the
 model at runtime, with no changes to the installed package. See
 [`docs/CUSTOM_COMPONENTS.md`](docs/CUSTOM_COMPONENTS.md) for the full pattern.
 
