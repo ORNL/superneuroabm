@@ -21,6 +21,9 @@ from superneuroabm.step_functions.soma.hg_lif import hg_lif_soma_step_func
 from superneuroabm.step_functions.synapse.single_exp import synapse_single_exp_step_func
 from superneuroabm.step_functions.synapse.weighted_synapse import weighted_synapse_step_func
 from superneuroabm.util import load_component_configurations
+from superneuroabm.step_functions.soma.rf import (
+    resonate_and_fire_soma_step_func,
+    )
 
 
 #: What an agent IS, as far as its initial property values are concerned. Two agents with
@@ -84,6 +87,7 @@ def _default_soma_breeds():
         "lif_soma": (lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif.py"),
         "lif_soma_adaptive_thr": (lif_soma_adaptive_thr_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "lif_soma_adaptive_thr.py"),
         "hg_lif_soma": (hg_lif_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "hg_lif.py"),
+        "rf_soma": (resonate_and_fire_soma_step_func, CURRENT_DIR_ABSPATH / "step_functions" / "soma" / "rf.py"),
     }
 
 

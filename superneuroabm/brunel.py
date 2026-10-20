@@ -843,10 +843,12 @@ def brunel_partition(
     local_ids = np.arange(lo, hi, dtype=np.int64)
 
     # --- Somas owned by this partition ---
-    somas = [
-        {"id": int(t), "breed": soma_breed, "config": soma_config, "overrides": {}}
-        for t in local_ids
-    ]
+    # somas = [
+        # {"id": int(t), "breed": soma_breed, "config": soma_config, "overrides": {}}
+    somas = [{"id": int(t), "breed": soma_breed, "config": soma_config, 
+            "overrides": {"hyperparameters": {"vthr":-45.0*np.random.rand(),
+            "tref":2.0+3.0*np.random.rand(), "vreset":-65.0*np.random.rand()}}}
+             for t in local_ids]
 
     # --- Recurrent presynaptic draw: pre[t, j] = source of target t's j-th in-edge (npp, K) ---
     if topology == "torus3d":
@@ -1108,6 +1110,9 @@ def spatial_smallworld_partition(
     EXT_BASE = total_somas + total_somas * Kmax
 
     somas = [{"id": int(t), "breed": soma_breed, "config": soma_config, "overrides": {}}
+    # somas = [{"id": int(t), "breed": soma_breed, "config": soma_config, 
+    #         "overrides": {"hyperparameters": {"vthr":-45.0*np.random.rand(),
+    #         "tref":2.0+3.0*np.random.rand(), "vreset":-65.0*np.random.rand()}}}
              for t in local_ids]
 
     rng = np.random.default_rng(np.random.SeedSequence([seed, r, 0]))

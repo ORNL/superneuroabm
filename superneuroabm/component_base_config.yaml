@@ -85,6 +85,23 @@ soma:
         tlast: 0.0  # Last spike time
         vthr: -45.0  # Initial spike threshold voltage
 
+  rf_soma:
+    config_0:
+      hyperparameters:
+        damping: 20.0
+        omega: 62.8318530718
+        vthr: 1.0
+        vrest: 0.0
+        vreset: 0.0
+        ureset: 0.0
+        tref: 2e-3
+        I_in: 0.0
+        scaling_factor: 10.0
+      internal_states:
+        v: 0.0
+        u: 0.0
+        tcount: 0.0
+        refractory_remaining: 0.0
 
 synapse:
   single_exp_synapse:
