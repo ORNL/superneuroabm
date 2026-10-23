@@ -1,4 +1,9 @@
 import numpy as np
+from pathlib import Path
+import sys
+
+CURRENT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(CURRENT_DIR.parent))
 
 from superneuroabm.brunel import build_brunel_network
 from superneuroabm.model import NeuromorphicModel
@@ -11,10 +16,25 @@ import time
 somas, synapses = build_brunel_network(
     somas_per_rank=1125,
     excitatory_fraction=0.8,       # 800 excitatory, 200 inhibitory
-    excitatory_in_degree=9000,       # recurrent E inputs per soma
-    inhibitory_in_degree=2250,       # recurrent I inputs per soma
-    inhibitory_weight_ratio=5.5,   # inhibitory weight = -5 × excitatory weight
+    excitatory_in_degree=900,       # recurrent E inputs per soma
+    inhibitory_in_degree=225,       # recurrent I inputs per soma
+    inhibitory_weight_ratio=5.0,   # inhibitory weight = -5 × excitatory weight
     external_synapses_per_soma=1,
+    soma_overrides={"hyperparameters": {
+            "vthr": -50.0,
+            "tref": 2.5,
+        },},
+    soma_config_jitter={
+        "vthr": (-50.0, 1.0),  # mean -50, standard deviation 1
+        "tref": (2.5, 0.2),
+    },
+    synapse_overrides={"hyperparameters": {
+            "tau_fall": 3.0,
+        },},
+    synapse_config_jitter={
+        "tau_fall": (3.0, 0.25),
+        "weight": (0.1, 0.01),
+    },
     seed=42,
 )
 

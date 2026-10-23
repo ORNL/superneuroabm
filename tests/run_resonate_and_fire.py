@@ -1,5 +1,9 @@
 from pathlib import Path
 import numpy as np
+import sys
+
+CURRENT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(CURRENT_DIR.parent))
 
 from superneuroabm.model import NeuromorphicModel
 

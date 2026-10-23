@@ -592,6 +592,11 @@ def brunel_partition(
     soma_config: str = "config_0",
     synapse_breed: str = "single_exp_synapse",
     synapse_config: str = "config_0",
+    soma_overrides: dict | None = None,
+    synapse_overrides: dict | None = None,
+    # --- Add randomness to the soma and synapse configs (e.g. weight jitter) ---
+    soma_config_jitter: dict | None = None,
+    synapse_config_jitter: dict | None = None,
     # --- reproducibility ---
     seed: int = 42,
     # --- on-disk encoding ---
@@ -845,10 +850,45 @@ def brunel_partition(
     # --- Somas owned by this partition ---
     # somas = [
         # {"id": int(t), "breed": soma_breed, "config": soma_config, "overrides": {}}
-    somas = [{"id": int(t), "breed": soma_breed, "config": soma_config, 
-            "overrides": {"hyperparameters": {"vthr":-45.0*np.random.rand(),
-            "tref":2.0+3.0*np.random.rand(), "vreset":-65.0*np.random.rand()}}}
-             for t in local_ids]
+    
+    # NOTE: Modifications added by SK: override soma and synapse hyperparameters with random values
+    base_overrides = dict(soma_overrides or {})
+    # get the base soma hyperparameters that need to be overridden:
+    base_soma_hyperparams = dict(base_overrides.get("hyperparameters", {}))
+
+    soma_jitter = soma_config_jitter or {}
+    soma_rng = np.random.default_rng(np.random.SeedSequence([seed, r, 1]))
+
+    def make_soma(t):
+        hyperparams = {
+            **base_soma_hyperparams,
+            **{
+                key: value + soma_rng.normal(0.0, std)
+                for key, (value, std) in soma_jitter.items()
+            },
+        }
+        return {
+            "id": int(t),
+            "breed": soma_breed,
+            "config": soma_config,
+            "overrides": {**base_overrides, "hyperparameters": hyperparams},
+        }
+
+    # if soma_config_jitter:
+    #     # Add random jitter to soma hyperparameters
+    #     jittered_hyperparams = {
+    #         key: value + np.random.normal(0, jitter) for key, (value, jitter) in soma_config_jitter.items()
+    #     }
+    #     soma_overrides.setdefault("hyperparameters", {}).update(jittered_hyperparams)
+    # somas = [{"id": int(t), "breed": soma_breed, "config": soma_config, 
+    #         "overrides": base_soma_hyperparams["hyperparameters"] if "hyperparameters" in base_soma_hyperparams else {}}
+    #          for t in local_ids]
+    # somas = [{"id": int(t), "breed": soma_breed, "config": soma_config, 
+    #         "overrides": {"hyperparameters": {"vthr":-45.0*np.random.rand(),
+    #         "tref":2.0+3.0*np.random.rand(), "vreset":-65.0*np.random.rand()}}}
+    #          for t in local_ids]
+
+    somas = [make_soma(t) for t in local_ids]
 
     # --- Recurrent presynaptic draw: pre[t, j] = source of target t's j-th in-edge (npp, K) ---
     if topology == "torus3d":
@@ -981,6 +1021,15 @@ def brunel_partition(
             hyper["weight"] = float(w)
         if synaptic_delay_ms is not None:
             hyper["synaptic_delay"] = float(synaptic_delay_ms)
+        base_synapse_hyperparams = dict(synapse_overrides.get("hyperparameters", {}))
+        # Add random jitter to synapse hyperparameters if specified
+        synapse_rng = np.random.default_rng(
+            np.random.SeedSequence([seed, r, sid])
+        )
+        hyper.update(base_synapse_hyperparams)
+        for key, (value, std) in (synapse_config_jitter or {}).items():
+            hyper[key] = value + synapse_rng.normal(0, std)
+            
         synapses.append({
             "id": int(sid),
             "pre": int(p),
