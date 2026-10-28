@@ -47,6 +47,7 @@ from the per-tick number, which is one more reason not to read anything into per
 | `masquelier_sna.py` | SuperNeuroABM Masquelier, one 10 s chunk (`--fused` for the single-launch tick path) |
 | `masquelier_nestgpu.py` | NEST GPU Masquelier: `spike_generator` afferents, `iaf_psc_exp` soma, `stdp` synapse group |
 | `masquelier_brian2.py` | Brian2 Masquelier using the Hathway-Goodman reference equations verbatim |
+| `hpc_benchmark_sna.py` + `hpc_benchmark_sna.yaml` | SuperNeuroABM side of NEST GPU's `hpc_benchmark` (`hpc_benchmark_hg.py` in the nmbenchmarking repo): each MPI rank builds its Brunel slice in memory, model parameters in the YAML (NEST units), timers construct / calibrate / presimulate / simulate. Results 2026-10-27 in `docs/EVENT_DRIVEN_NOTES.md` section 18 |
 
 The three Masquelier scripts share the experiment's own spike-train generator
 (`ns-applications/duplicates/masquelier_2008/experiment_utils.py`) and the same seed, so all
