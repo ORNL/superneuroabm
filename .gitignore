@@ -81,6 +81,8 @@ tests/baselines/
 # Generated data and networks
 **/network_run_*.json
 **/ff_plots_run_*.png
+# MNIST, downloaded on first use by tutorials/diehl_cook_mnist.py
+tutorials/data/
 
 # Temporary test files
 step_func_code.py

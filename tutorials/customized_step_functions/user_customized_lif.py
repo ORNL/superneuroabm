@@ -1,9 +1,9 @@
 """
 user_customized_lif -- a tutorial-owned LIF soma for the digits notebook.
 
-This is what "bring your own soma" looks like: a CUDA kernel that lives next to
-the notebook, is registered on the model at runtime, and needs no change to the
-installed ``superneuroabm`` package.
+This is what "bring your own soma" looks like: a CUDA kernel that lives in
+``tutorials/customized_step_functions/``, is registered on the model at runtime,
+and needs no change to the installed ``superneuroabm`` package.
 
 Why this network does not use the built-in ``lif_soma``
 -------------------------------------------------------
@@ -46,7 +46,7 @@ Before ``setup()`` -- ``register_soma_type`` raises ``RuntimeError`` afterwards:
     model.register_soma_type(
         name="user_customized_lif",
         step_func=user_customized_lif,
-        step_func_path=Path("user_customized_lif.py").resolve(),
+        step_func_path=Path("customized_step_functions/user_customized_lif.py").resolve(),
     )
 
 ``name`` must match the breed key under ``soma:`` in ``digits_config.yaml``, and
