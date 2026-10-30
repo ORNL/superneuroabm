@@ -16,31 +16,32 @@ import time
 somas, synapses = build_brunel_network(
     somas_per_rank=1125,
     excitatory_fraction=0.8,       # 800 excitatory, 200 inhibitory
-    excitatory_in_degree=900,       # recurrent E inputs per soma
-    inhibitory_in_degree=225,       # recurrent I inputs per soma
+    excitatory_in_degree=9000,       # recurrent E inputs per soma
+    inhibitory_in_degree=2250,       # recurrent I inputs per soma
     inhibitory_weight_ratio=5.0,   # inhibitory weight = -5 × excitatory weight
     external_synapses_per_soma=1,
-    soma_overrides={"hyperparameters": {
-            "vthr": -50.0,
-            "tref": 2.5,
-        },},
-    soma_config_jitter={
-        "vthr": (-50.0, 1.0),  # mean -50, standard deviation 1
-        "tref": (2.5, 0.2),
-    },
-    synapse_overrides={"hyperparameters": {
-            "tau_fall": 3.0,
-        },},
-    synapse_config_jitter={
-        "tau_fall": (3.0, 0.25),
-        "weight": (0.1, 0.01),
-    },
+    # soma_overrides={"hyperparameters": {
+    #         "vthr": -40.0,
+    #         "tref": 1e-3,
+    #     },},
+    # soma_config_jitter={
+    #     "vthr": (-50.0, 1.0),  # mean -50, standard deviation 1
+    #     "tref": (2.5, 0.2),
+    # },
+    # synapse_overrides={"hyperparameters": {
+    #         "tau_fall": 5E-3,
+    #     },},
+    # synapse_config_jitter={
+    #     "tau_fall": (3.0, 0.25),
+    #     "weight": (0.1, 0.01),
+    # },
     seed=42,
 )
 
 # Create and initialize the model.
 model = NeuromorphicModel(enable_internal_states_tracking=False)
 model.create_from_lists(somas, synapses)
+model.set_global_property_value("dt", 1E-3)
 model.setup()
 
 # Find external input synapses. Each has pre == -1.
@@ -50,7 +51,7 @@ input_synapse_ids = [
 ]
 
 # Schedule independent Poisson input spikes.
-ticks = 1000       # 5 seconds if the model timestep is 1 ms
+ticks = 300       # model timestep is 1 ms
 dt_ms = 1.0
 rate_hz = 10.0
 p_spike_per_tick = rate_hz * dt_ms / 1000.0

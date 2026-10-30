@@ -1012,6 +1012,11 @@ def brunel_partition(
         raise ValueError(
             f"output_format must be 'records' or 'columns', got {output_format!r}")
 
+    base_synapse_hyperparams = dict(
+        (synapse_overrides or {}).get("hyperparameters", {})
+    )
+    synapse_jitter = synapse_config_jitter or {}
+
     synapses = []
     for sid, p, q, w, exc in zip(syn_ids, pre_flat, post, weights, is_exc):
         # Excitatory: only override weight if the user set an explicit value (else
@@ -1021,13 +1026,12 @@ def brunel_partition(
             hyper["weight"] = float(w)
         if synaptic_delay_ms is not None:
             hyper["synaptic_delay"] = float(synaptic_delay_ms)
-        base_synapse_hyperparams = dict(synapse_overrides.get("hyperparameters", {}))
         # Add random jitter to synapse hyperparameters if specified
         synapse_rng = np.random.default_rng(
             np.random.SeedSequence([seed, r, sid])
         )
         hyper.update(base_synapse_hyperparams)
-        for key, (value, std) in (synapse_config_jitter or {}).items():
+        for key, (value, std) in synapse_jitter.items():
             hyper[key] = value + synapse_rng.normal(0, std)
             
         synapses.append({
@@ -1053,6 +1057,13 @@ def brunel_partition(
                 hyper["weight"] = float(ext_w)
             if synaptic_delay_ms is not None:
                 hyper["synaptic_delay"] = float(synaptic_delay_ms)
+            hyper.update(base_synapse_hyperparams)
+            if synapse_jitter:
+                synapse_rng = np.random.default_rng(
+                    np.random.SeedSequence([seed, r, int(sid)])
+                )
+                for key, (value, std) in synapse_jitter.items():
+                    hyper[key] = value + synapse_rng.normal(0.0, std)
             synapses.append({
                 "id": int(sid),
                 "pre": -1,
