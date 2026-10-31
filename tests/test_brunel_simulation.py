@@ -41,7 +41,7 @@ somas, synapses = build_brunel_network(
 # Create and initialize the model.
 model = NeuromorphicModel(enable_internal_states_tracking=False)
 model.create_from_lists(somas, synapses)
-model.set_global_property_value("dt", 1E-3)
+model.set_global_property_value("dt", 1E-4)
 model.setup()
 
 # Find external input synapses. Each has pre == -1.
@@ -53,7 +53,7 @@ input_synapse_ids = [
 # Schedule independent Poisson input spikes.
 ticks = 300       # model timestep is 1 ms
 dt_ms = 1.0
-rate_hz = 10.0
+rate_hz = 20.0E3
 p_spike_per_tick = rate_hz * dt_ms / 1000.0
 
 rng = np.random.default_rng(123)
