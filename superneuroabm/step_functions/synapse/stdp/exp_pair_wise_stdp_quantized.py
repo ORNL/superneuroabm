@@ -101,9 +101,9 @@ def exp_pair_wise_stdp_quantized(
     # weight = cp.clip(weight, wmin, wmax)
     weight = weight if weight <= wmax else wmax
     weight = weight if weight >= wmin else wmin
-    # quantized_weight = cp.round((weight - wmin) / delta) * delta + wmin
+    #quantized_weight = cp.round((weight - wmin) / delta) * delta + wmin
     quantized_weight = cp.rint((weight - wmin) / delta) * delta + wmin
-    # quantized_weight = int((weight - wmin) / delta + 0.5) * delta + wmin
+    #quantized_weight = int((weight - wmin) / delta + 0.5) * delta + wmin
     weight = quantized_weight
     # ==========================
 
