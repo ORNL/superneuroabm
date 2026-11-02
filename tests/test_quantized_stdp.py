@@ -29,7 +29,7 @@ class TestThreeBitSTDP(unittest.TestCase):
             pre_soma_id=-1,
             post_soma_id=soma,
             config_name="config_0",
-            learning_rule="three_bit_exp_pair_wise_stdp",
+            learning_rule="exp_pair_wise_stdp_quantized",
         )
 
         model.setup()
@@ -66,7 +66,7 @@ class TestThreeBitSTDP(unittest.TestCase):
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
             config_name="config_0",
-            learning_rule="three_bit_exp_pair_wise_stdp",
+            learning_rule="exp_pair_wise_stdp_quantized",
         )
 
         model.setup()
@@ -110,7 +110,12 @@ class TestThreeBitSTDP(unittest.TestCase):
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
             config_name="config_0",
-            learning_rule="three_bit_exp_pair_wise_stdp",
+            learning_rule="exp_pair_wise_stdp_quantized",
+            overrides = {"learning_hyperparameters": {"a_exp_pre":0.1,
+                                             "a_exp_post":0.1,
+                                             "wmin":0.0, "wmax":24, "num_levels":256,
+                                             },
+                         }
         )
 
         model.setup()
@@ -127,7 +132,7 @@ class TestThreeBitSTDP(unittest.TestCase):
         # From config: wmin=0.0, wmax=24.0, num_levels=8
         wmin = 0.0
         wmax = 24.0
-        num_levels = 8
+        num_levels = 256
         delta = (wmax - wmin) / (num_levels - 1)
         valid_levels = [wmin + i * delta for i in range(num_levels)]
 
@@ -159,7 +164,7 @@ class TestThreeBitSTDP(unittest.TestCase):
             pre_soma_id=soma_pre,
             post_soma_id=soma_post,
             config_name="config_0",
-            learning_rule="three_bit_exp_pair_wise_stdp",
+            learning_rule="exp_pair_wise_stdp_quantized",
         )
 
         model.setup()
