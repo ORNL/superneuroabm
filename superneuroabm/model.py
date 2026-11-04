@@ -2965,10 +2965,12 @@ class NeuromorphicModel(Model):
         # on every tick (250 Hz at dt = 1 ms), at least 10k spikes; grow when a longer
         # launch needs more. Only somas spike, so the count must not include synapses:
         # sized by agents, a fused 400-tick Brunel launch allocated and NaN-filled 400 MB
-        # for 162k spikes. Overflow is caught by the guard in the recording code and
-        # reported by _process_kernel_extras.
+        # for 162k spikes. A soma fires at most once per tick, so a one-tick launch (every
+        # multi-rank run, and verbose timing) gets room for all of them: the 10k floor
+        # overflowed when a bursting 12,500-soma rank fired 10,085 in one tick. Overflow is
+        # caught by the guard in the recording code and reported by _process_kernel_extras.
         n_somas = len(self._soma_ids) if self._recorded_soma_ids is None else len(self._recorded_soma_ids)
-        max_slots = max(10000, n_somas * sync_ticks // 4)
+        max_slots = max(10000, n_somas, n_somas * sync_ticks // 4)
         if self._spike_record_gpu is None or self._spike_record_gpu.size < max_slots * 2:
             self._spike_record_gpu = cp.full(max_slots * 2, cp.nan, dtype=cp.float32)
         if self._spike_record_count_gpu is None:
@@ -3005,8 +3007,8 @@ class NeuromorphicModel(Model):
         capacity = self._spike_record_gpu.size // 2
         if count > capacity:
             raise RuntimeError(
-                f"spike record overflow: {count:,} spikes in one simulate() call but room for "
-                f"{capacity:,} (sized as max(10000, somas * ticks / 4)). Call simulate() "
+                f"spike record overflow: {count:,} spikes in one kernel launch but room for "
+                f"{capacity:,} (sized as max(10000, somas, somas * ticks / 4)). Call simulate() "
                 f"in shorter pieces or record fewer somas (set_recorded_somas).")
         if count > 0:
             self._recorded_spikes.extend(
