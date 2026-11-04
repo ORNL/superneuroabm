@@ -16,9 +16,9 @@ what every afferent here is): then ``input_spikes_tensor[agent_index]`` holds th
 ``[tick, value]`` stamp of the spike injected with ``model.add_spikes`` for this tick.
 
 This is a copy of the built-in ``delivery_synapse`` kernel minus its ``channel``
-hyperparameter (one channel is enough here), kept next to the notebook so the synapse
-can be changed without editing the package: a transmission delay, a short-term
-depression, a device model of the weight all go here.
+hyperparameter (one channel is enough here), kept in ``customized_step_functions/`` so
+the synapse can be changed without editing the package: a transmission delay, a
+short-term depression, a device model of the weight all go here.
 
 Registration
 ------------
@@ -27,7 +27,7 @@ Before ``setup()``::
     model.register_synapse_type(
         name="user_customized_masquelier_synapse",
         step_func=user_customized_masquelier_synapse,
-        step_func_path=Path("user_customized_masquelier_synapse.py").resolve(),
+        step_func_path=Path("customized_step_functions/user_customized_masquelier_synapse.py").resolve(),
         event_capable=True,
     )
 

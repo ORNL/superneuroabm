@@ -2,9 +2,9 @@
 user_customized_masquelier_soma -- the output neuron of Masquelier, Guyonneau & Thorpe
 (2008), as a tutorial-owned CUDA kernel.
 
-Like the digits tutorial's soma, this file lives next to the notebook and is registered
-on the model at runtime; the installed ``superneuroabm`` package is not touched. Change
-the dynamics here and re-run the notebook.
+Like the digits tutorial's soma, this file lives in ``customized_step_functions/`` and is
+registered on the model at runtime; the installed ``superneuroabm`` package is not
+touched. Change the dynamics here and re-run the notebook.
 
 The model
 ---------
@@ -51,7 +51,7 @@ Before ``setup()``::
     model.register_soma_type(
         name="user_customized_masquelier_soma",
         step_func=user_customized_masquelier_soma,
-        step_func_path=Path("user_customized_masquelier_soma.py").resolve(),
+        step_func_path=Path("customized_step_functions/user_customized_masquelier_soma.py").resolve(),
     )
 
 ``name`` is the breed key under ``soma:`` in ``masquelier_config.yaml``. The file

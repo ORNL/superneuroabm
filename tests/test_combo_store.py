@@ -207,7 +207,7 @@ class TestBreedOrder(unittest.TestCase):
         # Agents come out in non-decreasing breed order, with the synapses first.
         af = m._agent_factory
         ids = list(af._rank2agentid2agentidx[0])
-        breeds = [af._agent2breed[i] for i in ids]
+        breeds = [af.breed_of(i) for i in ids]
         self.assertEqual(breeds, sorted(breeds), "agents are not in breed order")
         self.assertEqual(breeds[0], syn_idx)
         self.assertEqual(breeds[-1], late_idx)

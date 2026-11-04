@@ -1,0 +1,107 @@
+# Parameters of the Diehl & Cook (2015) network for tutorial 04.
+#
+# The three breeds are the tutorial-owned kernels in customized_step_functions/; the
+# breed keys must match the names they are registered under in the notebook. Inside
+# every block the KEY ORDER is the index order the kernel reads
+# (docs/CUSTOM_COMPONENTS.md). Values are the authors' (peter-u-diehl/stdp-mnist,
+# Diehl&Cook_spiking_MNIST.py and Diehl&Cook_MNIST_random_conn_generator.py).
+#
+# Units: voltages mV, times s, conductances dimensionless, tick counts in ticks of
+# dt = 0.5 ms.
+
+soma:
+  user_customized_diehl_cook_soma:
+    # Excitatory layer: conductance LIF with the homeostatic adaptive threshold.
+    # String reset in Brian 1 -> no membrane clamp; refractory = 5 ms only blocks
+    # spikes for 9 ticks (allowed again at +10), v keeps integrating.
+    diehl_cook_exc:
+      hyperparameters:
+        v_rest: -65.0           # v_rest_e
+        v_reset: -65.0          # v_reset_e
+        v_thresh: -52.0         # v_thresh_e
+        tau_v: 100e-3           # 100 ms membrane time constant
+        e_inh: -100.0           # inhibitory reversal potential of an exc cell
+        theta_plus: 0.05        # theta_plus_e, mV per spike; the notebook sets 0 to freeze
+        offset: 20.0            # threshold offset; theta starts here, so the threshold starts at v_thresh
+        lockout_ticks: 9.0      # refrac_e = 5 ms: no spike at t+1..t+9
+        hold_ticks: 0.0         # string reset: no clamp
+        tau_syn_0: 1e-3         # tau_ge, 1 ms: Euler factor 0.5 per tick
+        tau_syn_1: 2e-3         # tau_gi, 2 ms: Euler factor 0.75 per tick
+      internal_states:
+        v: -105.0               # v_rest_e - 40 mV, the authors' initial value
+        theta: 20.0             # initial theta == offset
+        lockout: 0.0
+        hold: 0.0
+        I_syn_0: 0.0            # ge, summed excitatory conductance
+        I_syn_1: 0.0            # gi, summed inhibitory conductance
+
+    # Inhibitory layer: scalar reset in Brian 1 -> v clamped at v_reset for 4 ticks
+    # after the spike tick, next spike allowed at +4 = 2 ms. No adaptation.
+    diehl_cook_inh:
+      hyperparameters:
+        v_rest: -60.0           # v_rest_i
+        v_reset: -45.0          # v_reset_i
+        v_thresh: -40.0         # v_thresh_i
+        tau_v: 10e-3            # 10 ms membrane time constant
+        e_inh: -85.0            # unused: no inh -> inh connections
+        theta_plus: 0.0
+        offset: 0.0
+        lockout_ticks: 3.0      # refrac_i = 2 ms: no spike at t+1..t+3
+        hold_ticks: 4.0         # v = v_reset at the end of t+1..t+4
+        tau_syn_0: 1e-3         # tau_ge: the only input an inh cell gets
+        tau_syn_1: 2e-3         # tau_gi
+      internal_states:
+        v: -100.0               # v_rest_i - 40 mV
+        theta: 0.0
+        lockout: 0.0
+        hold: 0.0
+        I_syn_0: 0.0
+        I_syn_1: 0.0
+
+synapse:
+  user_customized_diehl_cook_synapse:
+    # Plastic input -> excitatory, 784 x n_exc of them. pre_soma_id = -1 (injected
+    # input); the weight is drawn per synapse when the network is built.
+    diehl_cook_input:
+      hyperparameters:
+        weight: 0.3             # pinned index 0; overridden per synapse
+        synaptic_delay: 1.0     # pinned index 1; unused (the delays are in the injected ticks)
+        channel: 0.0            # excitatory -> ge
+      internal_states:
+        pre_arrived: 0.0
+
+    # Excitatory -> inhibitory, one to one.
+    diehl_cook_exc_to_inh:
+      hyperparameters:
+        weight: 10.4            # weight['ei']
+        synaptic_delay: 1.0
+        channel: 0.0
+      internal_states:
+        pre_arrived: 0.0
+
+    # Inhibitory -> every OTHER excitatory cell: the lateral inhibition. Positive
+    # weight: the driving force (e_inh - v) makes it inhibitory.
+    diehl_cook_inh_to_exc:
+      hyperparameters:
+        weight: 17.0            # weight['ie']
+        synaptic_delay: 1.0
+        channel: 1.0            # inhibitory -> gi
+      internal_states:
+        pre_arrived: 0.0
+
+learning_rule:
+  user_customized_diehl_cook_stdp:
+    diehl_cook_triplet:
+      learning_hyperparameters:
+        stdp_type: -1.0         # placeholder; create_synapse() overrides it with the registered id
+        tc_pre: 20e-3           # tc_pre_ee
+        tc_post_1: 20e-3        # tc_post_1_ee
+        tc_post_2: 40e-3        # tc_post_2_ee
+        nu_pre: 1e-4            # nu_ee_pre
+        nu_post: 1e-2           # nu_ee_post
+        wmax: 1.0               # wmax_ee
+        wmin: 0.0
+      learning_internal_states:
+        pre: 0.0
+        post1: 0.0
+        post2: 0.0

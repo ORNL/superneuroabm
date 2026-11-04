@@ -1,0 +1,13 @@
+{
+  "n_exc": 100,
+  "n_train": 40000,
+  "n_label": 10000,
+  "n_test": 10000,
+  "seed": 0,
+  "rule": "triplet",
+  "lateral_inhibition": true,
+  "adaptive_threshold": true,
+  "normalize": true,
+  "accuracy": 0.7303,
+  "truncated_pixels": 0
+}

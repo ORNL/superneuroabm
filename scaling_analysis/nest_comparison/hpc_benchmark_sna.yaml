@@ -1,0 +1,81 @@
+# Parameters of the Brunel network run by hpc_benchmark_sna.py: the SuperNeuroABM side of
+# NEST GPU's hpc_benchmark (hpc_benchmark_hg.py in the nmbenchmarking repo). Edit the
+# values here; network size, in-degree, drive and run length are command-line flags.
+#
+# Passed to NeuromorphicModel(user_config=...), so the schema is the packaged
+# superneuroabm/component_base_config.yaml's, and it REPLACES the packaged configs: every
+# breed/config the script uses is declared here. Inside each block the KEY ORDER is the
+# index order the kernel reads (lif_soma: C, R, vthr, ... ; delivery_synapse: weight,
+# synaptic_delay, scale, channel). Do not reorder keys.
+#
+# Units: the values below make the built-in LIF read NEST's units -- membrane potential in
+# mV, synaptic weights in pA. C is in farads and R in ohms (R*C = tau_m in seconds), and
+# scaling_factor 1e-9 turns a weight in pA into mV/s through I*scaling_factor/C.
+#
+# What cannot match hpc_benchmark exactly:
+#   * PSC shape. iaf_psc_alpha has alpha-shaped currents; lif_soma filters each input
+#     channel with one exponential (tau_syn_<c>). The weights are chosen for the same
+#     charge per spike (see `synapse:` below); measured EPSP peak 0.147 mV at 1.0 ms,
+#     against NEST's 0.140 mV at 1.7 ms.
+#   * Delay. hpc_benchmark uses 1.5 ms; a delivery_synapse always delivers on the next
+#     tick (synaptic_delay is a placeholder the kernel does not read).
+#   * Initial membrane potentials. hpc_benchmark draws V_m ~ N(5.7, 7.2) mV per neuron;
+#     here every neuron starts at v below. The 50 ms presimulation (both scripts) is there
+#     to wash the start out.
+
+soma:
+  lif_soma:
+    brunel_neuron:                 # hpc_benchmark model_params (iaf_psc_alpha)
+      hyperparameters:
+        C: 250e-12                 # C_m = 250 pF
+        R: 4e7                     # tau_m = R * C = 10 ms
+        vthr: 20.0                 # Theta_rel = 20 mV (potentials relative to E_L = 0)
+        tref: 0.5e-3               # t_ref = 0.5 ms
+        vrest: 0.0                 # E_L = 0 mV
+        vreset: 0.0                # V_reset_rel = 0 mV
+        tref_allows_integration: 0 # clamp during refractoriness, as NEST does
+        I_in: 0.0                  # no DC input (hpc_benchmark use_dc_input: False)
+        scaling_factor: 1e-9       # weights in pA (see Units above)
+        tau_syn_0: 0.32582722403722841e-3   # tau_syn_ex = tau_syn_in = 0.3258 ms
+        tau_syn_1: 0.32582722403722841e-3   # second inbox channel, unused here
+      internal_states:
+        v: 0.0                     # V_m_rel at start
+        tcount: 0.0
+        tlast: 0.0
+        I_syn_0: 0.0
+        I_syn_1: 0.0
+
+# The three synapse kinds of the network. They may differ ONLY in weight: the script
+# checks this and stops otherwise (the columnar loader takes one synapse config plus
+# per-synapse weights).
+#
+# Weights: hpc_benchmark's J_E = 0.14 mV EPSP peak is 45.6096 pA as an alpha current
+# (JE_pA), whose charge is JE_pA * e * tau_syn. An exponential current of amplitude w has
+# charge w * tau_syn, so w = e * JE_pA = 123.9797 pA carries the same charge. The external
+# drive uses the excitatory weight, as hpc_benchmark does; inhibitory is g * that, g = -5.
+synapse:
+  delivery_synapse:
+    excitatory:
+      hyperparameters:
+        weight: 123.9797           # pA = e * 45.6096
+        synaptic_delay: 1.0        # placeholder, delivery is always one tick
+        scale: 1.0
+        channel: 0                 # inbox channel -> the soma's tau_syn_0
+      internal_states:
+        unused: 0.0
+    inhibitory:
+      hyperparameters:
+        weight: -619.8985          # pA = g * excitatory, g = -5
+        synaptic_delay: 1.0
+        scale: 1.0
+        channel: 0
+      internal_states:
+        unused: 0.0
+    external:                      # one per neuron, carries the Poisson drive
+      hyperparameters:
+        weight: 123.9797           # pA, same as excitatory
+        synaptic_delay: 1.0
+        scale: 1.0
+        channel: 0
+      internal_states:
+        unused: 0.0

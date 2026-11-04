@@ -13,6 +13,7 @@ import cupy as cp
 from sagesim.space import NetworkSpace
 from sagesim.model import Model
 from sagesim.columns import IndexedColumn
+from sagesim.agent_index import rows_of
 from sagesim.breed import Breed
 
 from superneuroabm.step_functions.soma.izh import izh_soma_step_func
@@ -149,6 +150,56 @@ def _compute_max_property_sizes(configurations: dict) -> dict:
                             property_maxes.get(prop_type, 0), len(prop_dict)
                         )
     return property_maxes
+
+
+def _unique_rows(mat):
+    """``np.unique(mat, axis=0, return_inverse=True)`` for a 2-D numeric matrix, fast.
+
+    Same distinct rows in the same (lexicographic) order, from a 1-D unique per column
+    combined into one int64 key. ``axis=0`` sorts the rows as structured records, which
+    took 7.4 s for Brunel's 12.5 M x 2 override matrix; this takes 0.5 s. When the next
+    column would overflow the key, the key is first re-compressed to dense codes (order
+    kept, at most ``n`` of them), so any number of columns stays on this path; and once
+    every row is distinct the remaining columns can neither merge nor reorder rows, so
+    they are not read (all-distinct parameters cost one column's unique).
+    """
+    mat = np.asarray(mat)
+    n, k = mat.shape
+    if k == 0:
+        return np.empty((1 if n else 0, 0), dtype=mat.dtype), np.zeros(n, dtype=np.intp)
+    uniques, key, span = [], np.zeros(n, dtype=np.int64), 1
+    compressed = dense = False            # dense: key is exactly the codes 0..span-1
+    for j in range(k):                    # column 0 most significant = lexicographic order
+        u, inv = np.unique(mat[:, j], return_inverse=True)
+        if span * len(u) > np.iinfo(np.int64).max:
+            distinct_keys, key = np.unique(key, return_inverse=True)
+            key, span, compressed = key.ravel().astype(np.int64), len(distinct_keys), True
+            if span == n:
+                dense = True
+                break
+        span *= len(u)
+        uniques.append(u)
+        key = key * len(u) + inv.ravel()
+        if j == 0 and span == n:
+            dense = True
+            break
+    if dense:
+        inverse, n_distinct = key, span
+    else:
+        distinct_keys, inverse = np.unique(key, return_inverse=True)
+        inverse, n_distinct = inverse.ravel(), len(distinct_keys)
+    if dense or compressed:
+        # the key no longer spells every column: take each distinct row from one of the
+        # rows it stands for (they compare equal)
+        rep = np.empty(n_distinct, dtype=np.intp)
+        rep[inverse] = np.arange(n)
+        return mat[rep], inverse
+    distinct = np.empty((n_distinct, k), dtype=mat.dtype)
+    rest = distinct_keys.copy()
+    for j in range(k - 1, -1, -1):
+        rest, digit = np.divmod(rest, len(uniques[j]))
+        distinct[:, j] = uniques[j][digit]
+    return distinct, inverse
 
 
 SYNAPTIC_INPUT_PARAMS = ("synaptic_input", "synaptic_input_idx")
@@ -534,7 +585,10 @@ class NeuromorphicModel(Model):
         """
         Returns the breed of the agent with the given ID.
         """
-        return self._breed_names[self._agent_factory._agent2breed[agent_id]]
+        breed_idx = self._agent_factory.breed_of(agent_id, None)
+        if breed_idx is None:
+            raise KeyError(agent_id)
+        return self._breed_names[breed_idx]
 
     def get_neighbors(self, agent_id: int) -> List[int]:
         """The agent's neighbour list, in its stored slot order (global agent ids).
@@ -1074,13 +1128,12 @@ class NeuromorphicModel(Model):
         if self._buffers_live():
             buf = self._gpu_buffers
             tensor = buf.property_tensors[prop_idx]
-            idxs, ids = [], []
-            for sid in synapse_ids:
-                i = buf.agent_id_to_index.get(sid, -1)
-                if 0 <= i < buf.num_local_agents:
-                    idxs.append(i)
-                    ids.append(sid)
-            if idxs:
+            sids = list(synapse_ids)
+            r = rows_of(buf.agent_id_to_index, sids)
+            keep = (r >= 0) & (r < buf.num_local_agents)
+            idxs = r[keep]
+            ids = [sid for sid, k in zip(sids, keep.tolist()) if k]
+            if idxs.size:
                 rows = self._gpu_buffers.rows(prop_idx, cp.asarray(idxs))
                 vals = rows[:, self._STDP_TYPE_INDEX].get().tolist()
                 out = dict(zip(ids, vals))
@@ -1088,9 +1141,9 @@ class NeuromorphicModel(Model):
             rank = MPI.COMM_WORLD.Get_rank()
             local_agent_map = af._rank2agentid2agentidx.get(rank, {})
             data = af._property_name_2_agent_data_tensor["learning_hyperparameters"]
-            for sid in synapse_ids:
-                idx = local_agent_map.get(sid)
-                if idx is not None:
+            sids = list(synapse_ids)
+            for sid, idx in zip(sids, rows_of(local_agent_map, sids).tolist()):
+                if idx >= 0:
                     out[sid] = float(data[idx][self._STDP_TYPE_INDEX])
         return out
 
@@ -1116,15 +1169,12 @@ class NeuromorphicModel(Model):
         local_agent_map = af._rank2agentid2agentidx.get(self._local_rank, {})
         data = af._property_name_2_agent_data_tensor["learning_hyperparameters"]
 
-        rows, vals = [], []
-        for sid, value in id2value.items():
-            idx = local_agent_map.get(sid)
-            if idx is not None:
-                rows.append(idx)
-                vals.append(float(value))
-        touched = bool(rows)
-        rows = np.asarray(rows, dtype=np.int64)
-        vals = np.asarray(vals, dtype=np.float64)
+        r = rows_of(local_agent_map, list(id2value))
+        keep = r >= 0
+        rows = r[keep]
+        vals = np.fromiter((float(v) for v in id2value.values()), dtype=np.float64,
+                           count=len(id2value))[keep]
+        touched = bool(rows.size)
 
         # Read-modify-write the row: a column stored as a padded array hands out a copy,
         # so an element write through the alias would be lost (and on a list column
@@ -1737,7 +1787,7 @@ class NeuromorphicModel(Model):
         # loaders build it. Somas are round-robin; a synapse follows its post. This keeps
         # the soma's afferent reads local (no ghost synapse rows) and is what push-mode
         # delivery needs (a current deposited into a ghost soma would be dropped).
-        post_rank = (self._agent_factory._agent2rank.get(int(post_soma_id))
+        post_rank = (self._agent_factory.rank_of(int(post_soma_id), None)
                      if post_soma_id != -1 else None)
         synapse_id = self.create_agent_of_breed(
             breed=self._synapse_breeds[breed],
@@ -2551,7 +2601,7 @@ class NeuromorphicModel(Model):
         combo_codes = np.empty(N + M, dtype=np.int32)
         combo_codes[:N] = soma_code
         if M:
-            distinct, inverse = np.unique(hp_vals, axis=0, return_inverse=True)
+            distinct, inverse = _unique_rows(hp_vals)
             syn_codes = np.array([
                 self._intern_combo(
                     "synapse", synapse_breed, synapse_config,
@@ -2797,7 +2847,8 @@ class NeuromorphicModel(Model):
         # tolerate ids owned elsewhere; only the add_local_* variants insist.
         if local or MPI.COMM_WORLD.Get_size() == 1:
             owned = self._agent_factory._rank2agentid2agentidx.get(MPI.COMM_WORLD.Get_rank(), {})
-            unknown = [i for i in np.unique(ids).tolist() if i not in owned]
+            uniq = np.unique(ids)
+            unknown = uniq[rows_of(owned, uniq) < 0].tolist()
             if unknown:
                 raise KeyError(f"synapse id(s) not owned by this rank: {unknown[:5]}")
         if not np.all(ticks == np.floor(ticks)):
@@ -2846,9 +2897,7 @@ class NeuromorphicModel(Model):
         # Resolve ids -> buffer rows once per distinct id, not once per event.
         uniq, inverse = np.unique(ids, return_inverse=True)
         owned = self._agent_factory._rank2agentid2agentidx.get(MPI.COMM_WORLD.Get_rank(), {})
-        rows_u = np.fromiter(
-            (buf.agent_id_to_index.get(i, -1) if i in owned else -1 for i in uniq.tolist()),
-            dtype=np.int64, count=len(uniq))
+        rows_u = np.where(rows_of(owned, uniq) >= 0, rows_of(buf.agent_id_to_index, uniq), -1)
         if MPI.COMM_WORLD.Get_size() == 1 and (rows_u < 0).any():
             raise KeyError(f"add_spike*: unknown synapse id(s) {uniq[rows_u < 0][:5].tolist()}")
         rows = rows_u[inverse.ravel()]
@@ -2933,9 +2982,7 @@ class NeuromorphicModel(Model):
             mask = cp.zeros(buf.agent_capacity, dtype=cp.float32)
             # all somas (synapses produce no output spikes), or the recorded subset
             ids = self._soma_ids if self._recorded_soma_ids is None else self._recorded_soma_ids
-            a2i = buf.agent_id_to_index
-            idx = np.fromiter((a2i.get(int(sid), -1) for sid in ids), dtype=np.int64,
-                              count=len(ids))
+            idx = rows_of(buf.agent_id_to_index, ids)
             idx = idx[(idx >= 0) & (idx < num_local_agents)]
             if idx.size:
                 mask[cp.asarray(idx)] = 1.0
