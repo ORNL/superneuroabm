@@ -1,0 +1,45 @@
+# Parameters of the soma and synapse of tutorial 07.
+#
+# The two breeds are the tutorial-owned kernels in customized_step_functions/; the breed keys
+# must match the names they are registered under. Inside every block the KEY ORDER is the index
+# order the kernel reads (docs/CUSTOM_COMPONENTS.md). Do not reorder keys.
+#
+# All values are in SI units: volts, amperes, farads, seconds. Ticks are set to 0.1 ms in the
+# notebook (the default is 1 ms).
+
+soma:
+  user_customized_brunel_soma:
+    brunel_lif_neuron:
+      hyperparameters:
+        C_m: 250.0e-12         # 250 pF membrane capacitance (F)
+        tau_m: 0.020           # 20 ms membrane time constant (s)
+        tau_syn_0: 0.0005      # 0.5 ms decay of channel 0's current (s)
+        tau_syn_1: 0.0005      # 0.5 ms decay of channel 1's current (s)
+        V_th: 0.020            # 20 mV spike threshold (V)
+        V_reset: 0.0           # 0 mV reset potential (V)
+        E_L: 0.0               # 0 mV leak reversal potential (V)
+        t_ref: 0.002           # 2 ms refractory period (s)
+      internal_states:
+        V_m: 0.0               # membrane potential (V)
+        tcount: 0.0            # ticks since the start
+        tlast: -0.003          # time of the last spike (s); below -t_ref: not refractory at the start
+        I_syn_0: 0.0           # channel 0's current (A)
+        I_syn_1: 0.0           # channel 1's current (A)
+
+synapse:
+  user_customized_brunel_synapse:
+    brunel_excitatory_synapse:
+      hyperparameters:
+        weight: 49.7e-12       # 49.7 pA: moves this soma's membrane by 0.1 mV at its peak (tutorial 07, section 6)
+        synaptic_delay: 0.0015 # pinned slot, not read: the arrival delay is fixed at two ticks
+        channel: 0             # deliver into channel 0
+      internal_states:
+        unused: 0.0            # the kernel keeps no state; one placeholder slot
+
+    brunel_inhibitory_synapse:
+      hyperparameters:
+        weight: -248.5e-12     # -248.5 pA: five times the excitatory weight; the minus sign makes it inhibitory
+        synaptic_delay: 0.0015 # pinned slot, not read: the arrival delay is fixed at two ticks
+        channel: 1             # deliver into channel 1
+      internal_states:
+        unused: 0.0            # the kernel keeps no state; one placeholder slot

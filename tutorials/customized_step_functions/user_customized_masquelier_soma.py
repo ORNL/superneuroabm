@@ -54,7 +54,7 @@ Before ``setup()``::
         step_func_path=Path("customized_step_functions/user_customized_masquelier_soma.py").resolve(),
     )
 
-``name`` is the breed key under ``soma:`` in ``masquelier_config.yaml``. The file
+``name`` is the breed key under ``soma:`` in ``customized_configs/masquelier_config.yaml``. The file
 basename and the function name must both be globally unique: ``setup()`` generates
 ``from <module stem> import *`` for every registered breed, so a file called ``hg_lif.py``
 or a function called ``hg_lif_soma_step_func`` would shadow the built-in of the same

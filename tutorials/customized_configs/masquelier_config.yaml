@@ -1,6 +1,6 @@
 # Parameters of the Masquelier, Guyonneau & Thorpe (2008) network for tutorial 03.
 #
-# The three breeds are the tutorial-owned kernels next to this file; the breed keys
+# The three breeds are the tutorial-owned kernels in customized_step_functions/; the breed keys
 # must match the names they are registered under in the notebook. Inside every block
 # the KEY ORDER is the index order the kernel reads (docs/CUSTOM_COMPONENTS.md).
 # Values are those of the paper, as used by Hathway & Goodman (2018).

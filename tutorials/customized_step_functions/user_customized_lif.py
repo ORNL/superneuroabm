@@ -7,7 +7,7 @@ and needs no change to the installed ``superneuroabm`` package.
 
 Why this network does not use the built-in ``lif_soma``
 -------------------------------------------------------
-``digits_config.yaml`` starts every neuron at ``tlast: -.inf``, so the very first
+``customized_configs/digits_config.yaml`` starts every neuron at ``tlast: -.inf``, so the very first
 spike is never blocked by the refractory test whatever ``tref`` is set to. The
 built-in kernel resets branchlessly::
 
@@ -49,7 +49,7 @@ Before ``setup()`` -- ``register_soma_type`` raises ``RuntimeError`` afterwards:
         step_func_path=Path("customized_step_functions/user_customized_lif.py").resolve(),
     )
 
-``name`` must match the breed key under ``soma:`` in ``digits_config.yaml``, and
+``name`` must match the breed key under ``soma:`` in ``customized_configs/digits_config.yaml``, and
 cannot be ``"lif_soma"``: that name is already taken by the built-in, and
 re-registering it raises ``ValueError``.
 

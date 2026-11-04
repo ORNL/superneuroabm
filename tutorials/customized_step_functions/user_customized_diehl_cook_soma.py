@@ -66,7 +66,7 @@ Before ``setup()``::
         step_func_path=Path("customized_step_functions/user_customized_diehl_cook_soma.py").resolve(),
     )
 
-``name`` is the breed key under ``soma:`` in ``diehl_cook_config.yaml``. A soma kernel
+``name`` is the breed key under ``soma:`` in ``customized_configs/diehl_cook_config.yaml``. A soma kernel
 that ends its parameter list with ``synaptic_input, synaptic_input_idx`` gets an inbox.
 
 Hyperparameters -- the YAML key order *is* the index order read here:
