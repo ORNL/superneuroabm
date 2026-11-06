@@ -336,26 +336,24 @@ class TestLazyIdSets(unittest.TestCase):
 
 
 class TestNeighbourAccessors(unittest.TestCase):
-    """get_neighbors works on every construction path.
+    """get_synapse_connectivity works on every construction path.
 
     Every bulk build now hands SAGESim a prebuilt CSR, and set_prebuilt_csr clears
     space._locations, so reading the `locations` property returns nothing. These pin the
     replacement -- including that it keeps working for an incrementally built model,
-    which still has real per-agent lists.
+    which still has real per-agent lists. (Soma lists: tests/test_soma_neighbour_lists.py.)
     """
 
     def _check(self, m):
         ids = list(m._agent_factory._rank2agentid2agentidx[0])
         syn = next(i for i in ids if m._component_class_of(i) == "synapse")
-        nbrs = m.get_neighbors(syn)
+        nbrs = m.get_synapse_connectivity(syn)
         self.assertIn(len(nbrs), (1, 2),
                       f"synapse neighbours must be [pre] or [pre, post], got {nbrs}")
-        self.assertEqual(m.get_synapse_connectivity(syn), nbrs)
-
-        soma = next(i for i in ids if m._component_class_of(i) == "soma")
-        for s in m.get_neighbors(soma):
-            self.assertEqual(m._component_class_of(s), "synapse",
-                             "a soma's neighbours are its incoming synapses")
+        for soma in nbrs:
+            if soma != -1:
+                self.assertEqual(m._component_class_of(soma), "soma",
+                                 "a synapse's neighbours are its pre and post soma")
 
     def test_record_build(self):
         self._check(_record_model())
@@ -374,7 +372,7 @@ class TestNeighbourAccessors(unittest.TestCase):
     def test_unknown_agent_raises(self):
         m = _columnar_model()
         with self.assertRaises(KeyError):
-            m.get_neighbors(-99999)
+            m.get_synapse_connectivity(-99999)
 
 
 class TestMappingViews(unittest.TestCase):

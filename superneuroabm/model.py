@@ -6,7 +6,9 @@ from collections import defaultdict, namedtuple
 from collections.abc import Mapping
 from typing import Dict, List, Set
 from pathlib import Path
+import ast
 import inspect
+import textwrap
 
 import numpy as np
 import cupy as cp
@@ -213,6 +215,23 @@ def _synaptic_input_arrays(step_func) -> List[str]:
     return ["synaptic_input"] if tuple(params[-2:]) == SYNAPTIC_INPUT_PARAMS else []
 
 
+def _reads_neighbours(step_func, n_globals: int) -> bool:
+    """True when a kernel's body uses its neighbour-list parameter (``locations``: the one
+    after tick, agent_index, the globals, agent_ids and breeds). Any use counts, also
+    handing it to a helper, and a kernel whose source cannot be read counts as a reader:
+    the answer errs towards building the list."""
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(step_func)))
+    except (OSError, TypeError, SyntaxError):
+        return True
+    func = next((node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)), None)
+    index = 2 + n_globals + 2
+    if func is None or len(func.args.args) <= index:
+        return True
+    name = func.args.args[index].arg
+    return any(isinstance(node, ast.Name) and node.id == name for node in ast.walk(func))
+
+
 class NeuromorphicModel(Model):
     def __init__(
         self,
@@ -391,7 +410,7 @@ class NeuromorphicModel(Model):
         self._learning_enabled = True
         self._saved_stdp_type = {}       # synapse_id -> stdp_type saved while disabled
 
-        self._soma_outgoing_synapses = defaultdict(set)  # soma_id -> set(synapse_ids)
+        self._soma_reads_neighbours = {}  # soma breed name -> bool, see _soma_keeps_neighbour_list
         self.agentid2overrides = _ComboField(
             self, lambda c: NeuromorphicModel._overrides_from_key(c.overrides_key))
 
@@ -590,44 +609,53 @@ class NeuromorphicModel(Model):
             raise KeyError(agent_id)
         return self._breed_names[breed_idx]
 
-    def get_neighbors(self, agent_id: int) -> List[int]:
-        """The agent's neighbour list, in its stored slot order (global agent ids).
+    def get_synapse_connectivity(self, synapse_id: int) -> List[int]:
+        """The synapse's neighbour list as global agent ids: ``[pre_soma_id, post_soma_id]``,
+        with ``-1`` in slot 0 for an external input, followed by anything a builder
+        appended after the two somas. This is what the synapse's kernel sees in
+        ``locations[agent_index]`` (there as local rows).
 
-        For a synapse that is positional -- ``[pre]`` or ``[pre, post]``, with ``-1`` in
-        slot 0 for an external input. For a soma it is its incoming synapse ids.
+        It is the one neighbour accessor. The model does not hand a soma's synapses
+        back: whoever built the network knows them, and a soma has no neighbour list
+        unless its kernel uses one (_soma_keeps_neighbour_list).
 
-        Reads the CSR the builder produced rather than the ``locations`` property,
-        because a bulk build hands SAGESim a prebuilt CSR and ``set_prebuilt_csr``
-        clears the per-agent lists. It also survives ``reset()``, which frees the GPU
-        buffers that the property route depends on.
+        Reads the CSR the builder produced, not the ``locations`` property: a bulk build
+        hands SAGESim a prebuilt CSR and ``set_prebuilt_csr`` clears the per-agent lists,
+        so the property route fails on a bulk-built model until the first simulate().
         """
         offsets = getattr(self, "_nbr_offsets", None)
         if offsets is None:
             # Incrementally built (create_soma / create_synapse): the space still holds
             # real per-agent lists.
-            return list(self.get_space().get_location(agent_id))
+            return list(self.get_space().get_location(synapse_id))
         row = self._agent_factory._rank2agentid2agentidx.get(
-            self._local_rank, {}).get(agent_id)
+            self._local_rank, {}).get(synapse_id)
         if row is None:
-            raise KeyError(f"agent {agent_id} is not local to this rank")
+            raise KeyError(f"agent {synapse_id} is not local to this rank")
         return [int(v) for v in self._nbr_values[offsets[row]:offsets[row + 1]]]
 
-    def get_synapse_connectivity(self, synapse_id: int) -> List[int]:
-        """
-        Returns the connectivity of the synapse with the given ID.
-        The connectivity is a list of length 2 containing pre and post soma IDs.
+    def _soma_keeps_neighbour_list(self, breed_name: str) -> bool:
+        """Whether somas of this breed get a neighbour list (their incoming synapse ids).
 
-        Note: This returns the ordered locations [pre_soma_id, post_soma_id].
-        These are agent IDs, not local indices.
+        Synapses deliver into the soma's inbox, so a soma kernel normally never looks at
+        its synapses, and then no list is built, stored or exchanged for it. A soma
+        breed whose kernel uses its ``locations`` parameter (to read its afferents'
+        weights, say) gets the list on every build route.
         """
-        return self.get_neighbors(synapse_id)
+        keeps = self._soma_reads_neighbours.get(breed_name)
+        if keeps is None:
+            n_globals = len(self._global_tensors)
+            keeps = any(_reads_neighbours(func, n_globals)
+                        for func, _path in self._soma_breeds[breed_name].step_funcs.values())
+            self._soma_reads_neighbours[breed_name] = keeps
+        return keeps
 
-    def get_soma_outgoing_synapses(self, soma_id: int) -> Set[int]:
-        """
-        Returns the set of synapse IDs where this soma is the pre-synaptic source.
-        """
-        return self._soma_outgoing_synapses.get(soma_id, set())
-
+    def _somas_keeping_neighbour_lists(self, soma_codes) -> np.ndarray:
+        """Per soma (given its combo code): does its breed keep a neighbour list?"""
+        by_combo = np.array(
+            [c.component_class == "soma" and self._soma_keeps_neighbour_list(c.breed)
+             for c in self._combo_table], dtype=bool)
+        return by_combo[np.asarray(soma_codes, dtype=np.intp)]
 
     def get_agent_config_diff(self, agent_id: int) -> Dict[str, any]:
         """
@@ -1817,17 +1845,26 @@ class NeuromorphicModel(Model):
         # First connection: pre_soma (if exists)
         if pre_soma_id != -1:
             network_space.connect_agents(synapse_id, pre_soma_id, directed=True)
-            self._soma_outgoing_synapses[pre_soma_id].add(synapse_id)
         else:
             # For external input, manually add -1 to locations to maintain [pre, post] order
             network_space.get_location(synapse_id).append(-1)
 
-        # Second connection: post_soma (if exists). Under post-owns, an
-        # incrementally created synapse's post-soma is always local, so the
-        # reverse connection (post reads synapse, for STDP) is always made.
+        # Second connection: post_soma (if exists). The reverse connection (the post
+        # soma lists this synapse) is made only for a soma breed whose kernel reads its
+        # neighbours; the synapse delivers into the soma's inbox either way.
         if post_soma_id != -1:
-            network_space.connect_agents(synapse_id, post_soma_id, directed=True)
-            network_space.connect_agents(post_soma_id, synapse_id, directed=True)
+            if post_soma_id == pre_soma_id:
+                # A synapse from a soma to itself. The list is positional ([pre, post]) and
+                # connect_agents keeps a neighbour only once, which would leave [pre]: the
+                # kernel then finds no post slot and the synapse delivers nowhere. Write
+                # slot 1 directly, as for the -1 sentinels; the bulk builders also keep
+                # [x, x] (_post_owned_csr).
+                network_space.get_location(synapse_id).append(post_soma_id)
+            else:
+                network_space.connect_agents(synapse_id, post_soma_id, directed=True)
+            post_combo = self._combo_of(post_soma_id)
+            if post_combo is None or self._soma_keeps_neighbour_list(post_combo.breed):
+                network_space.connect_agents(post_soma_id, synapse_id, directed=True)
         else:
             # For external output (rare), manually add -1
             network_space.get_location(synapse_id).append(-1)
@@ -2327,8 +2364,8 @@ class NeuromorphicModel(Model):
         # Keep the CSR model-side too. SAGESim's set_prebuilt_csr deliberately CLEARS
         # space._locations (so a wrong-but-plausible empty neighbour list cannot leak),
         # which leaves get_location and any `locations` read broken for every bulk-built
-        # model. get_neighbors() reads these instead, and unlike the old route through
-        # get_agent_property_value it keeps working after reset() frees the GPU buffers.
+        # model. get_synapse_connectivity() reads these instead, and unlike the route
+        # through get_agent_property_value it works before the first simulate().
         self._nbr_offsets = offsets
         self._nbr_values = values
 
@@ -2347,12 +2384,15 @@ class NeuromorphicModel(Model):
         self._load_timings = timings
 
     @staticmethod
-    def _post_owned_csr(soma_ids, synapse_ids, pre, post):
+    def _post_owned_csr(soma_ids, synapse_ids, pre, post, soma_keeps_list=None):
         """Derive the post-owned neighbour CSR. Shared by both post-owned readers.
 
-        Row layout is the agent order [somas..., synapses...]. Soma i's neighbours are
-        its incoming synapse ids (post == i) in synapse-array order; synapse j's are
-        [pre] then [post] when post != -1 (positional slot 0 = pre, 1 = post).
+        Row layout is the agent order [somas..., synapses...]. Synapse j's neighbours are
+        [pre] then [post] when post != -1 (positional slot 0 = pre, 1 = post). Soma i's
+        are its incoming synapse ids (post == i) in synapse-array order when
+        ``soma_keeps_list[i]`` is true, and nothing otherwise: only a soma whose kernel
+        reads its neighbours has a list (_soma_keeps_neighbour_list). ``None`` keeps
+        every soma's list.
 
         Enforces the post-owns constraint the loader is named for: every synapse's
         post-soma must be local, because a post-soma discovers its incoming synapses by
@@ -2382,14 +2422,23 @@ class NeuromorphicModel(Model):
                 f"synapse {int(bad[0])} post {int(post[has_post & ~found][0])}); "
                 "every synapse's post-soma must be co-located (post-owns). Use "
                 "load_from_adjacency() to lift this constraint.")
-        post_local = order[sp_clipped]
-
-        counts_soma = np.bincount(post_local[has_post], minlength=N)
-        soma_offsets = np.empty(N + 1, dtype=np.int64)
-        soma_offsets[0] = 0
-        np.cumsum(counts_soma, out=soma_offsets[1:])
-        grp = np.argsort(post_local[has_post], kind='stable')
-        soma_values = synapse_ids[has_post][grp]
+        keeps = (np.ones(N, dtype=bool) if soma_keeps_list is None
+                 else np.asarray(soma_keeps_list, dtype=bool))
+        if keeps.size != N:
+            raise ValueError(f"soma_keeps_list has {keeps.size} entries for {N} somas")
+        if not keeps.any():
+            # the usual case: no soma kernel reads its synapses, so no soma rows at all
+            soma_offsets = np.zeros(N + 1, dtype=np.int64)
+            soma_values = np.empty(0, dtype=np.int64)
+        else:
+            post_local = order[sp_clipped]
+            listed = has_post & keeps[post_local]       # synapses whose post keeps a list
+            counts_soma = np.bincount(post_local[listed], minlength=N)
+            soma_offsets = np.empty(N + 1, dtype=np.int64)
+            soma_offsets[0] = 0
+            np.cumsum(counts_soma, out=soma_offsets[1:])
+            grp = np.argsort(post_local[listed], kind='stable')
+            soma_values = synapse_ids[listed][grp]
 
         syn_counts = 1 + has_post.astype(np.int64)
         syn_offsets = np.empty(M + 1, dtype=np.int64)
@@ -2456,7 +2505,8 @@ class NeuromorphicModel(Model):
         _t = time.time()
 
         neighbor_offsets, neighbor_values_ids = self._post_owned_csr(
-            soma_ids, synapse_ids, pre, post)
+            soma_ids, synapse_ids, pre, post,
+            soma_keeps_list=self._somas_keeping_neighbour_lists(codes[:n_s]))
         timings['neighbor_csr'] = time.time() - _t
 
         self._input_synapse_ids = synapse_ids[pre < 0].astype(np.int64)
@@ -2500,11 +2550,13 @@ class NeuromorphicModel(Model):
         intern = self._intern_combo
         for i, soma in enumerate(somas):
             agent_ids[i] = soma['id']
-            codes[i] = intern("soma",
-                              soma.get('breed') or soma_breed,
+            breed = soma.get('breed') or soma_breed
+            codes[i] = intern("soma", breed,
                               soma.get('config') or soma_config,
                               overrides=soma.get('overrides'))
-            nbrs = soma['neighbors']
+            # The soma's list is stored only when its kernel reads it; the file's list
+            # is still used below to give a pre-only synapse its post.
+            nbrs = soma['neighbors'] if self._soma_keeps_neighbour_list(breed) else ()
             counts[i] = len(nbrs)
             flat.extend(nbrs)
         # post soma of each locally listed synapse, from the somas' incoming lists
@@ -2613,7 +2665,8 @@ class NeuromorphicModel(Model):
             combo_codes[N:] = syn_codes[np.asarray(inverse, dtype=np.intp).ravel()]
 
         neighbor_offsets, neighbor_values_ids = self._post_owned_csr(
-            soma_ids, synapse_ids, pre, post)
+            soma_ids, synapse_ids, pre, post,
+            soma_keeps_list=np.full(N, self._soma_keeps_neighbour_list(soma_breed)))
 
         timings['neighbor_csr'] = time.time() - _t
 
