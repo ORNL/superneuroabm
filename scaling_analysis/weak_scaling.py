@@ -9,7 +9,7 @@ emerges naturally from the partition -- there is no explicit cross-rank knob.
 
 Phases:
   [1/4] Each rank generates its own partition file (Brunel, local-only).
-  [2/4] Each rank loads its partition via model.load_post_owned().
+  [2/4] Each rank loads its partition via model.load_network().
   [3/4] GPU setup.
   [4/4] Inject Poisson external drive + simulate.
 """
@@ -280,7 +280,7 @@ def main():
 
     t0 = time.time()
     model = NeuromorphicModel(enable_internal_states_tracking=False)
-    model.load_post_owned(partition_file)
+    model.load_network(partition_file)
     # Diagnostics OFF by default: verbose_timing gates the engine's per-tick metric
     # collection (mpi_num_peers, ghost volume, comm seconds). Real timing runs leave it
     # off so the reported numbers don't include metric-collection overhead.

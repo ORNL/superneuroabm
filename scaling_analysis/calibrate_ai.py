@@ -81,7 +81,7 @@ def measure_psp_per_weight(*, probe_weight, ticks, soma_breed="lif_soma",
     }]
 
     model = NeuromorphicModel(enable_internal_states_tracking=True)
-    model.create_from_lists(somas, synapses)
+    model.load_network({"somas": somas, "synapses": synapses})
     model.setup()
     model.add_spike_list(1, [[1, 1.0]])          # single spike at tick 1
     model.simulate(ticks=ticks, update_data_ticks=1)
@@ -136,7 +136,7 @@ def validate_ai(*, external_rate_hz, external_weight, dt_ms, ticks, somas_per_ra
         external_weight=external_weight, synaptic_delay_ms=delay_ms, seed=seed,
     )
     model = NeuromorphicModel(enable_internal_states_tracking=False)
-    model.create_from_lists(somas, synapses)
+    model.load_network({"somas": somas, "synapses": synapses})
     model.setup()
 
     # Poisson drive on every external (pre=-1) synapse.

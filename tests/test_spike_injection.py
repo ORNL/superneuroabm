@@ -252,13 +252,13 @@ class TestAddLocalSpike(unittest.TestCase):
                 f = Path(tmpdir) / f"local_spike_rank{r}.pkl"
                 with open(f, "wb") as fh:
                     pickle.dump({
-                        "somas": [{"id": soma_id, "neighbors": [syn_id]}],
-                        "synapses": [{"id": syn_id, "neighbors": [-1]}],
+                        "somas": [{"id": soma_id}],
+                        "synapses": [{"id": syn_id, "pre": -1, "post": soma_id}],
                         "remote_ranks": {},
                     }, fh)
 
             model = NeuromorphicModel(enable_internal_states_tracking=False)
-            model.load_from_adjacency(str(Path(tmpdir) / f"local_spike_rank{rank}.pkl"))
+            model.load_network(str(Path(tmpdir) / f"local_spike_rank{rank}.pkl"))
             model.setup()
 
             my_syn = 100 + rank

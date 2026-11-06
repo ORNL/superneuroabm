@@ -11,7 +11,7 @@ a calibrated reproduction of a published result, and the rates it prints have no
 
 Three things keep the run short and its timing readable:
 
-  * The network is handed to the model as arrays in one call (load_post_owned), not built with
+  * The network is handed to the model as arrays (create_somas, create_synapses), not built with
     one create_synapse call per synapse.
   * The Poisson drive is drawn once and saved under data/; later runs load that file.
   * The first simulate() call, which also builds the device buffers and the input event list and
@@ -26,7 +26,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-import yaml
 
 from superneuroabm.model import NeuromorphicModel
 
@@ -62,20 +61,14 @@ def create_model():
     return model
 
 
-def synapse_hyperparameters(config_name):
-    """The hyperparameters of one synapse config in the YAML, as (names, values)."""
-    block = yaml.safe_load(CONFIG.read_text())["synapse"][SYNAPSE_BREED][config_name]
-    names = list(block["hyperparameters"])
-    return names, [float(block["hyperparameters"][name]) for name in names]
-
-
 def build_brunel_network(model, order=2500, epsilon=0.1, seed=1234):
     """Create the neurons, the recurrent synapses and the external input synapses.
 
-    The whole network goes to the model as arrays in one load_post_owned call. The caller
-    assigns the ids: neurons 0 .. N-1, then one external input synapse per neuron, then the
-    recurrent synapses. A synapse is its pre and post neuron ids; pre = -1 marks an external
-    input, which delivers nothing by itself: its spikes are injected, see inject_poisson_drive.
+    Neurons and synapses go to the model as arrays: one create_somas call, and one
+    create_synapses call per kind of synapse (external input, excitatory, inhibitory), each
+    naming its block of the YAML. A synapse is its pre and post neuron ids; pre = -1 marks an
+    external input, which delivers nothing by itself: its spikes are injected, see
+    inject_poisson_drive. The calls return the ids of what they made.
 
     :param order: scaling parameter: 4 * order neurons, 80 % excitatory
     :param epsilon: fraction of each population a neuron receives input from
@@ -100,38 +93,19 @@ def build_brunel_network(model, order=2500, epsilon=0.1, seed=1234):
         sources[target, :CE] = rng.choice(NE, size=CE, replace=False)
         sources[target, CE:] = NE + rng.choice(NI, size=CI, replace=False)
 
-    somas = np.arange(N_total, dtype=np.int64)
-    external_synapses = N_total + somas                        # one per neuron
-    recurrent_pre = sources.ravel()
-    recurrent_post = np.repeat(somas, CE + CI)
-    recurrent_inhibitory = np.tile(np.arange(CE + CI) >= CE, N_total)
-    synapse_count = recurrent_pre.size
+    somas = model.create_somas(N_total, breed=SOMA_BREED, config_name="brunel_lif_neuron")
 
-    # The array form names one synapse config for all synapses and takes each synapse's
-    # hyperparameters as a row that is written over that config. The external inputs and the
-    # excitatory synapses get the excitatory block of the YAML, the inhibitory synapses the
-    # inhibitory block.
-    names, excitatory = synapse_hyperparameters("brunel_excitatory_synapse")
-    _, inhibitory = synapse_hyperparameters("brunel_inhibitory_synapse")
-    hyperparameters = np.empty((N_total + synapse_count, len(names)), dtype=np.float64)
-    hyperparameters[:] = excitatory
-    hyperparameters[N_total:][recurrent_inhibitory] = inhibitory
-
-    model.load_post_owned({
-        "schema": "columnar_post_owned_v1",
-        "soma_ids": somas,
-        "soma_breed": SOMA_BREED,
-        "soma_config": "brunel_lif_neuron",
-        "synapse_ids": np.arange(N_total, 2 * N_total + synapse_count, dtype=np.int64),
-        "pre": np.concatenate([np.full(N_total, -1, dtype=np.int64), recurrent_pre]),
-        "post": np.concatenate([somas, recurrent_post]),
-        "synapse_breed": SYNAPSE_BREED,
-        "synapse_config": "brunel_excitatory_synapse",
-        "learning_rule": "",                                    # static synapses
-        "learning_rule_config": "",
-        "syn_hp_keys": np.array(names),
-        "syn_hp_vals": hyperparameters,
-    })
+    # One external input synapse per neuron, then every neuron's CE excitatory and CI
+    # inhibitory incoming synapses.
+    external_synapses = model.create_synapses(
+        -1, somas, breed=SYNAPSE_BREED, config_name="brunel_excitatory_synapse")
+    model.create_synapses(
+        sources[:, :CE].ravel(), np.repeat(somas, CE),
+        breed=SYNAPSE_BREED, config_name="brunel_excitatory_synapse")
+    model.create_synapses(
+        sources[:, CE:].ravel(), np.repeat(somas, CI),
+        breed=SYNAPSE_BREED, config_name="brunel_inhibitory_synapse")
+    synapse_count = N_total * (CE + CI)
 
     print(f"  Created {synapse_count} recurrent and {N_total} external synapses")
 

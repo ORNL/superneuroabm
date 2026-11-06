@@ -1,10 +1,11 @@
 """A synapse from a soma to itself (pre == post) delivers, however the model is built.
 
 create_synapse used to leave such a synapse with the neighbour list ``[pre]``: its two
-connect_agents calls name the same soma and the ordered space keeps a neighbour only once.
+connect_agents calls named the same soma and the ordered space kept a neighbour only once.
 The kernel then found no post slot and the synapse delivered nothing, silently, while the
 bulk builders kept ``[pre, post]`` and delivered. Found on the tutorial Brunel network,
-whose random wiring draws 991 such synapses (docs/EVENT_DRIVEN_NOTES.md section 21).
+whose random wiring draws 991 such synapses (docs/EVENT_DRIVEN_NOTES.md section 21). Every
+route now goes through one builder; this keeps the case covered on each of them.
 """
 
 import unittest
@@ -34,8 +35,19 @@ def _bulk(autapse):
     synapses = [{"id": 1, "pre": -1, "post": 0, "config": SYNAPSE_CONFIG}]
     if autapse:
         synapses.append({"id": 2, "pre": 0, "post": 0, "config": SYNAPSE_CONFIG})
-    model.create_from_lists(somas=[{"id": 0}], synapses=synapses)
+    model.load_network({"somas": [{"id": 0}], "synapses": synapses})
     return model, 0, 1, 2 if autapse else None
+
+
+def _plural(autapse):
+    model = NeuromorphicModel()
+    model.set_seed(42)
+    soma = int(model.create_somas(1, "lif_soma", "config_0")[0])
+    ext = int(model.create_synapses(-1, [soma], "delivery_synapse", SYNAPSE_CONFIG)[0])
+    syn = None
+    if autapse:
+        syn = int(model.create_synapses([soma], [soma], "delivery_synapse", SYNAPSE_CONFIG)[0])
+    return model, soma, ext, syn
 
 
 def _spikes(build, autapse):
@@ -49,13 +61,13 @@ def _spikes(build, autapse):
 
 class TestAutapse(unittest.TestCase):
     def test_neighbour_list_keeps_both_slots(self):
-        for build in (_per_agent, _bulk):
+        for build in (_per_agent, _bulk, _plural):
             _, neighbours, soma = _spikes(build, True)
             self.assertEqual(neighbours, [soma, soma], build.__name__)
 
     def test_autapse_delivers(self):
         """The soma re-excites itself: more spikes with the autapse than without."""
-        for build in (_per_agent, _bulk):
+        for build in (_per_agent, _bulk, _plural):
             without, _, _ = _spikes(build, False)
             with_autapse, _, _ = _spikes(build, True)
             self.assertGreater(len(without), 0, build.__name__)
@@ -63,8 +75,8 @@ class TestAutapse(unittest.TestCase):
 
     def test_both_builds_give_the_same_spikes(self):
         per_agent, _, _ = _spikes(_per_agent, True)
-        bulk, _, _ = _spikes(_bulk, True)
-        self.assertEqual(per_agent, bulk)
+        for build in (_bulk, _plural):
+            self.assertEqual(per_agent, _spikes(build, True)[0], build.__name__)
 
 
 if __name__ == "__main__":

@@ -38,12 +38,12 @@ RESET_PROPS = ("hyperparameters", "learning_hyperparameters",
 def _record_model():
     rec = brunel_partition(output_format="records", **BASE)
     m = NeuromorphicModel(enable_internal_states_tracking=False)
-    m.load_post_owned(rec)
+    m.load_network(rec)
     return m
 
 
 def _created_model():
-    """Built one agent at a time, so its columns are plain Python lists."""
+    """Built one agent at a time (the same builder and columns as every other route)."""
     m = NeuromorphicModel(enable_internal_states_tracking=False)
     a = m.create_soma(breed="lif_soma", config_name="config_0")
     b = m.create_soma(breed="lif_soma", config_name="config_0")
@@ -51,6 +51,7 @@ def _created_model():
                      config_name="config_0")
     m.create_synapse(breed="delivery_synapse", pre_soma_id=a, post_soma_id=b,
                      config_name="config_0", learning_rule="exp_pair_wise_stdp")
+    m._ensure_built()          # these tests look at the columns before setup()
     return m
 
 
@@ -86,12 +87,20 @@ def _perturb(model):
 
 class TestResetRestoresBuiltState(unittest.TestCase):
 
-    def _check_full_reset(self, model):
-        built = _snapshot(model)
+    def _check_full_reset(self, model, as_float32=False):
+        """``as_float32``: compare as the device holds the values. A column that came
+        back from the device is float32, and reset() restores the built values, which
+        the host keeps as they were given (float64)."""
+        def view(snapshot):
+            if not as_float32:
+                return snapshot
+            return {p: [[float(np.float32(x)) for x in row] for row in rows]
+                    for p, rows in snapshot.items()}
+        built = view(_snapshot(model))
         _perturb(model)
-        self.assertNotEqual(_snapshot(model), built, "test premise: perturb did nothing")
+        self.assertNotEqual(view(_snapshot(model)), built, "test premise: perturb did nothing")
         model._reset_agents(retain_parameters=False)
-        self.assertEqual(_snapshot(model), built,
+        self.assertEqual(view(_snapshot(model)), built,
                          "reset did not restore the freshly-built state")
 
     def test_record_built_indexed_columns(self):
@@ -119,7 +128,7 @@ class TestResetRestoresBuiltState(unittest.TestCase):
             data[prop] = ArrayColumn(vals, lens)
         self.assertTrue(any(isinstance(data[p], ArrayColumn) for p in RESET_PROPS),
                         "test premise: no column became an ArrayColumn")
-        self._check_full_reset(m)
+        self._check_full_reset(m, as_float32=True)
 
 
 class TestRetainParameters(unittest.TestCase):

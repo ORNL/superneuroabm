@@ -23,11 +23,11 @@ RANKS=("${@:-1 2 3 4}")
 read -r -a RANKS <<< "${RANKS[*]}"
 
 # test_mpi_comparison and test_lif_mixed_synapses_stdp_mpi are written for 4 ranks;
-# test_spike_injection and test_load_from_adjacency for 2. Each self-skips the
+# test_spike_injection and test_load_network for 1 and 2. Each self-skips the
 # cases that do not apply to the rank count it is given.
 FILES=(
     tests/test_spike_injection.py
-    tests/test_load_from_adjacency.py
+    tests/test_load_network.py
     tests/test_mpi_comparison.py
     tests/test_lif_mixed_synapses_stdp_mpi.py
     tests/test_synaptic_input_push.py

@@ -10,7 +10,7 @@ contract that "columnar encoding" must never mean "different network":
     property tensors and the neighbor CSR are IDENTICAL to the record path's,
     across weight/delay/partition variants — the plan's headline identity check.
   * test_columnar_load_from_npz (CPU, no GPU): the full disk round-trip,
-    save_brunel_partition(output_format="columns") -> load_post_owned(".npz"),
+    save_brunel_partition(output_format="columns") -> load_network(".npz"),
     reproduces the same build (dispatch + mmap read + columnar build).
   * test_columnar_vs_record_firing (GPU): load -> setup -> simulate reproduces
     the record path's spikes; run on a compute node with a GPU.
@@ -56,7 +56,7 @@ VARIANTS = {
 def _record_model(params):
     rec = brunel_partition(output_format="records", **params)
     m = NeuromorphicModel(enable_internal_states_tracking=False)
-    m.load_post_owned(rec)
+    m.load_network(rec)
     return m
 
 
@@ -117,7 +117,7 @@ class TestColumnarLoad(unittest.TestCase):
                 p = {**BASE, **params}
                 mr = _record_model(p)
                 mc = NeuromorphicModel(enable_internal_states_tracking=False)
-                mc.load_post_owned(brunel_partition(output_format="columns", **p))
+                mc.load_network(brunel_partition(output_format="columns", **p))
                 _assert_same_build(self, mr, mc)
 
                 # Input synapses (external, pre == -1) exposed vectorized.
@@ -127,13 +127,13 @@ class TestColumnarLoad(unittest.TestCase):
                 self.assertEqual(sorted(int(x) for x in mc._input_synapse_ids), ext_expected)
 
     def test_columnar_load_from_npz(self):
-        """Full disk round-trip: save columns -> load_post_owned('.npz') == record."""
+        """Full disk round-trip: save columns -> load_network('.npz') == record."""
         p = {**BASE, **VARIANTS["multi_global_r0"]}
         with tempfile.TemporaryDirectory() as d:
             path = save_brunel_partition(output_dir=d, output_format="columns", **p)
             self.assertTrue(path.endswith(".npz"))
             mc = NeuromorphicModel(enable_internal_states_tracking=False)
-            mc.load_post_owned(path)  # dispatch on .npz + mmap read + columnar build
+            mc.load_network(path)  # dispatch on .npz + mmap read + columnar build
         mr = _record_model(p)
         _assert_same_build(self, mr, mc)
 
@@ -148,7 +148,7 @@ class TestColumnarLoad(unittest.TestCase):
         soma_ids = [s["id"] for s in rec["somas"]]
 
         m_rec = NeuromorphicModel(enable_internal_states_tracking=False)
-        m_rec.create_from_lists(rec["somas"], rec["synapses"])
+        m_rec.load_network({"somas": rec["somas"], "synapses": rec["synapses"]})
         m_rec.setup()
         for sid in ext_ids:
             m_rec.add_spike(synapse_id=sid, tick=INPUT_TICK, value=1)
@@ -158,7 +158,7 @@ class TestColumnarLoad(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = save_brunel_partition(output_dir=d, output_format="columns", **p)
             m_col = NeuromorphicModel(enable_internal_states_tracking=False)
-            m_col.load_post_owned(path)
+            m_col.load_network(path)
             m_col.setup()
             for sid in m_col._input_synapse_ids.tolist():
                 m_col.add_spike(synapse_id=int(sid), tick=INPUT_TICK, value=1)
@@ -180,10 +180,10 @@ class TestAutapseKeepsBothSlots(unittest.TestCase):
     input, and nothing caught it because brunel_partition resamples autapses away.
     """
 
-    def test_create_from_lists_keeps_pre_and_post(self):
+    def test_records_keep_pre_and_post(self):
         A, S = 0, 1
         m = NeuromorphicModel(enable_internal_states_tracking=False)
-        m.create_from_lists(somas=[{"id": A}], synapses=[{"id": S, "pre": A, "post": A}])
+        m.load_network({"somas": [{"id": A}], "synapses": [{"id": S, "pre": A, "post": A}]})
 
         off, val = _csr_of(m)
         row = m._agent_factory._rank2agentid2agentidx[0][S]
@@ -196,7 +196,7 @@ class TestAutapseKeepsBothSlots(unittest.TestCase):
         synapses = [{"id": S, "pre": A, "post": A}]
 
         m_rec = NeuromorphicModel(enable_internal_states_tracking=False)
-        m_rec.create_from_lists(somas=somas, synapses=synapses)
+        m_rec.load_network({"somas": somas, "synapses": synapses})
 
         arrays = {
             "schema": np.asarray("columnar_post_owned_v1"),
@@ -216,7 +216,7 @@ class TestAutapseKeepsBothSlots(unittest.TestCase):
             "remote_rank_of": np.empty(0, np.int64),
         }
         m_col = NeuromorphicModel(enable_internal_states_tracking=False)
-        m_col.load_post_owned(arrays)
+        m_col.load_network(arrays)
 
         rec_off, rec_val = _csr_of(m_rec)
         col_off, col_val = _csr_of(m_col)

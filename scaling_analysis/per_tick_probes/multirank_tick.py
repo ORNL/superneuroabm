@@ -44,7 +44,7 @@ def main():
     m = NeuromorphicModel(enable_internal_states_tracking=False, synapse_stepping="event",
                           learning_rule_info={})
     t0 = time.perf_counter()
-    m.load_post_owned(part)
+    m.load_network(part)
     t_load = time.perf_counter() - t0
     t0 = time.perf_counter()
     m.setup()

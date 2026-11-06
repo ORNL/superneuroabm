@@ -205,7 +205,7 @@ def main():
     part, out_base = build_partition(rank, n_ranks, X_te, W, bias, masks, args.rate_max,
                                      args.v_swing, args.static_only)
     model = make_model(args.chip_seed)
-    model.load_post_owned(part)
+    model.load_network(part)
     n_local = (len(part["somas"]), len(part["synapses"]))
     del part
     model.set_recorded_somas(list(range(out_base, out_base + len(DESIGNS) * args.n_test * N_OUT)))

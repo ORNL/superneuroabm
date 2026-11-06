@@ -173,6 +173,7 @@ class TestNamedParameterAPI(unittest.TestCase):
         would edit every agent sharing it. Here two somas are made to share a row
         explicitly; writing to one must not move the other.
         """
+        self.model._ensure_built()            # this test looks at the columns directly
         af = self.model._agent_factory
         rank_map = af._rank2agentid2agentidx[0]
         col = af._property_name_2_agent_data_tensor["hyperparameters"]

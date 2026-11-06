@@ -156,7 +156,7 @@ def main():
         enable_internal_states_tracking=False,
     )
     model.set_seed(args.chip_seed)
-    model.load_post_owned(part)
+    model.load_network(part)
     del part
     model.set_recorded_somas([])                # training-phase spikes are not needed
     ev_ids, ev_ticks = input_events(

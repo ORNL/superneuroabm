@@ -8,8 +8,6 @@ sensor reads a heater owned by another rank. Pass: same spike digest and sensor
 conductances on 1, 2 and 4 ranks, and the conductances are non-zero.
 """
 import hashlib
-import pickle
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -28,18 +26,18 @@ rank, R = comm.Get_rank(), comm.Get_size()
 somas, synapses, remote = [], [], {}
 for r in range(N_RELAY):
     if r % R == rank:
-        somas.append({"id": r, "breed": "r9_relay", "config": "default", "neighbors": [EXT + r]})
-        synapses.append({"id": EXT + r, "breed": "r9_wire", "config": "default", "neighbors": [-1]})
+        somas.append({"id": r, "breed": "r9_relay", "config": "default"})
+        synapses.append({"id": EXT + r, "breed": "r9_wire", "config": "default",
+                         "pre": -1, "post": r})
 for j in range(P):
     if j % R != rank:
         continue
     pre, nb = j % N_RELAY, (j + 1) % P
-    somas.append({"id": POST + j, "breed": "r9_lif", "config": "default",
-                  "neighbors": [HEAT + j, SENS + j]})
+    somas.append({"id": POST + j, "breed": "r9_lif", "config": "default"})
     synapses.append({"id": HEAT + j, "breed": "r9_heater", "config": "default",
-                     "neighbors": [pre, POST + j]})
+                     "pre": pre, "post": POST + j})
     synapses.append({"id": SENS + j, "breed": "r9_sensor", "config": "default",
-                     "neighbors": [HEAT + nb, POST + j]})       # slot 0 = another DEVICE
+                     "pre": HEAT + nb, "post": POST + j})       # slot 0 = another DEVICE
     if pre % R != rank:
         remote[pre] = pre % R
     if nb % R != rank:
@@ -55,10 +53,7 @@ model = NeuromorphicModel(
     enable_internal_states_tracking=False,
 )
 model.set_seed(3)
-with tempfile.TemporaryDirectory() as td:
-    f = Path(td) / f"r{rank}.pkl"
-    f.write_bytes(pickle.dumps({"somas": somas, "synapses": synapses, "remote_ranks": remote}))
-    model.load_from_adjacency(str(f))
+model.load_network({"somas": somas, "synapses": synapses, "remote_ranks": remote})
 model.set_recorded_somas([POST + j for j in range(P)])
 rng = np.random.default_rng(0)
 fire = rng.random((TICKS, N_RELAY)) < 0.05

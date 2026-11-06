@@ -19,9 +19,9 @@ Three entry points:
 * :func:`brunel_partition` -- the core. Builds **one partition's** slice (set
   ``num_partitions=1`` for a whole single-process network). Returns the partition dict.
 * :func:`build_brunel_network` -- convenience for the single-process / in-memory path.
-  Returns ``(somas, synapses)`` ready for ``NeuromorphicModel.create_from_lists``.
+  Returns ``(somas, synapses)``: records for ``NeuromorphicModel.load_network``.
 * :func:`save_brunel_partition` -- writes one rank's ``partition_{rank}.pkl`` for a
-  distributed run consumed by ``NeuromorphicModel.load_post_owned``.
+  distributed run consumed by ``NeuromorphicModel.load_network``.
 
 Plus :func:`brunel_external_rate`, an optional helper for NEST's analytic drive rate.
 
@@ -600,7 +600,7 @@ def brunel_partition(
     """Build one partition's slice of a Brunel balanced random network.
 
     Returns the post-owns partition contract consumed by
-    ``NeuromorphicModel.load_post_owned`` / ``create_from_lists``::
+    ``NeuromorphicModel.load_network``::
 
         {"somas": [...], "synapses": [...], "remote_ranks": {id: rank}}
 
@@ -614,7 +614,7 @@ def brunel_partition(
     - ``"columns"``: a columnar array dict for very large partitions, where the
       row-oriented staging is the host-RAM ceiling. Every per-synapse field is
       one typed array and the uniform categoricals (breed/config/learning rule)
-      are stored once; ``NeuromorphicModel.load_post_owned`` reads it via a
+      are stored once; ``NeuromorphicModel.load_network`` reads it via a
       columnar build that never materializes a per-synapse Python object. The
       schema is::
 
@@ -1168,7 +1168,7 @@ def save_spatial_smallworld_partition(output_dir, *, filename=None, **kwargs):
     """Generate one :func:`spatial_smallworld_partition` and pickle it to ``partition_{rank}.pkl``.
 
     The Deliverable-2 analogue of :func:`save_brunel_partition`: writes the post-owns partition dict
-    to disk in the schema ``NeuromorphicModel.load_post_owned`` reads. Each MPI rank calls this for
+    to disk in the schema ``NeuromorphicModel.load_network`` reads. Each MPI rank calls this for
     its own ``partition_rank`` independently.
     """
     out_dir = Path(output_dir)
@@ -1187,7 +1187,7 @@ def build_brunel_network(**kwargs):
 
     Convenience wrapper over :func:`brunel_partition` with ``num_partitions=1`` (so
     ``somas_per_rank`` *is* the whole network), returning ``(somas, synapses)`` ready
-    for ``NeuromorphicModel.create_from_lists(somas, synapses, ...)``. No disk, no
+    for ``NeuromorphicModel.load_network({"somas": somas, "synapses": synapses})``. No disk, no
     rank/remote concept. Ideal for tests, interactive builds, and a single-GPU oracle.
 
     Accepts every keyword of :func:`brunel_partition` except ``num_partitions`` and
@@ -1210,7 +1210,7 @@ def save_brunel_partition(output_dir, *, filename=None, **kwargs):
     """Generate one partition and write it to ``output_dir/partition_{rank}.{ext}``.
 
     Convenience wrapper over :func:`brunel_partition` that writes the partition to
-    disk in the schema ``NeuromorphicModel.load_post_owned`` reads. Each MPI rank calls
+    disk in the schema ``NeuromorphicModel.load_network`` reads. Each MPI rank calls
     this for its own ``partition_rank`` independently -- no communication is needed
     during generation.
 

@@ -163,7 +163,7 @@ def main():
                               learning_rule_info={})   # static synapses: no STDP kernels
     model.set_global_property_value("dt", args.dt_ms / 1000.0)
     synapses_per_rank = network["synapse_ids"].size   # the same on every rank
-    model.load_post_owned(network)
+    model.load_network(network)
     del network
     t_construct = time.time() - t0
 

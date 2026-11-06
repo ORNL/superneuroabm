@@ -16,7 +16,7 @@ arrays = brunel_partition(somas_per_rank=N, num_partitions=1, partition_rank=0,
 # SNA_SYNAPSE_STEPPING=clocked dumps the clocked path (docs/EVENT_DRIVEN_NOTES.md)
 m = NeuromorphicModel(enable_internal_states_tracking=False,
                       synapse_stepping=os.environ.get('SNA_SYNAPSE_STEPPING', 'event'))
-m.load_post_owned(arrays)
+m.load_network(arrays)
 m.setup()
 inp = m._input_synapse_ids.tolist()
 diagnostics.inject_poisson_drive(m, inp, 500.0, TICKS, 1.0, SEED, 0)

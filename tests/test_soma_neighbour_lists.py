@@ -62,17 +62,27 @@ def _records():
     return [{"id": A}, {"id": B}], synapses
 
 
-def _from_lists(soma_breed):
+def _plural(soma_breed):
+    model = _model(soma_breed)
+    a, b = (int(i) for i in model.create_somas(2, soma_breed, "config_0"))
+    ext = int(model.create_synapses(-1, [a], "delivery_synapse", "config_0",
+                                    overrides=_weight(EXTERNAL_WEIGHT))[0])
+    syns = model.create_synapses(a, np.full(len(WEIGHTS), b), "delivery_synapse", "config_0",
+                                 overrides=_weight(np.array(WEIGHTS)))
+    return model, a, b, ext, [int(s) for s in syns]
+
+
+def _from_records(soma_breed):
     model = _model(soma_breed)
     somas, synapses = _records()
-    model.create_from_lists(somas=somas, synapses=synapses, soma_breed=soma_breed)
+    model.load_network({"somas": somas, "synapses": synapses}, soma_breed=soma_breed)
     return model, A, B, EXT, [FIRST + k for k in range(len(WEIGHTS))]
 
 
 def _from_arrays(soma_breed):
     model = _model(soma_breed)
     n = len(WEIGHTS)
-    model.load_post_owned({
+    model.load_network({
         "schema": "columnar_post_owned_v1",
         "soma_ids": np.array([A, B]), "soma_breed": soma_breed, "soma_config": "config_0",
         "synapse_ids": np.arange(EXT, EXT + 1 + n),
@@ -85,22 +95,18 @@ def _from_arrays(soma_breed):
     return model, A, B, EXT, [FIRST + k for k in range(n)]
 
 
-def _from_adjacency(soma_breed):
+def _from_file(soma_breed):
     model = _model(soma_breed)
     somas, synapses = _records()
-    for soma in somas:
-        soma["neighbors"] = [s["id"] for s in synapses if s["post"] == soma["id"]]
-    for synapse in synapses:
-        synapse["neighbors"] = [synapse.pop("pre"), synapse.pop("post")]
     with tempfile.TemporaryDirectory() as folder:
         path = Path(folder) / "network.pkl"
         with open(path, "wb") as fh:
             pickle.dump({"somas": somas, "synapses": synapses}, fh)
-        model.load_from_adjacency(str(path), soma_breed=soma_breed)
+        model.load_network(str(path), soma_breed=soma_breed)
     return model, A, B, EXT, [FIRST + k for k in range(len(WEIGHTS))]
 
 
-ROUTES = (_per_agent, _from_lists, _from_arrays, _from_adjacency)
+ROUTES = (_per_agent, _plural, _from_records, _from_arrays, _from_file)
 
 
 def _single_rank_only(test):
@@ -143,6 +149,8 @@ class TestSomaNeighbourLists(unittest.TestCase):
                 model.simulate(ticks=2)
                 self.assertEqual(sorted(model.get_agent_property_value(b, "locations")), sorted(syns))
                 self.assertEqual(list(model.get_agent_property_value(a, "locations")), [ext])
+                # creation order, whatever order the synapse rows are laid out in
+                self.assertEqual(list(model.get_agent_property_value(b, "locations")), syns)
                 count_a, sum_a = model.get_agent_property_value(a, "internal_states")[:2]
                 count_b, sum_b = model.get_agent_property_value(b, "internal_states")[:2]
                 self.assertEqual((count_a, sum_a), (1.0, EXTERNAL_WEIGHT))

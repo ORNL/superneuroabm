@@ -26,6 +26,7 @@ sys.path.insert(0, str(CURRENT_DIR.parent))
 
 from superneuroabm.model import NeuromorphicModel
 from superneuroabm.brunel import brunel_partition
+from sagesim.columns import IndexedColumn
 
 
 BASE = dict(somas_per_rank=12, excitatory_in_degree=4, inhibitory_in_degree=2,
@@ -45,14 +46,14 @@ def _columnar_model(learning_rule=None):
         arrays["learning_rule"] = np.asarray(learning_rule)
         arrays["learning_rule_config"] = np.asarray("default")
     m = NeuromorphicModel(enable_internal_states_tracking=False)
-    m.load_post_owned(arrays)
+    m.load_network(arrays)
     return m
 
 
 def _record_model():
     rec = brunel_partition(output_format="records", **BASE)
     m = NeuromorphicModel(enable_internal_states_tracking=False)
-    m.load_post_owned(rec)
+    m.load_network(rec)
     return m
 
 
@@ -149,29 +150,67 @@ class TestComboInterning(unittest.TestCase):
         self.assertTrue((m._combo_codes >= 0).all())
         self.assertTrue((m._combo_codes < len(m._combo_table)).all())
 
-    def test_overrides_key_normalizes_value_spelling(self):
-        """'1e-3', '1E-3' and 0.001 describe the same agent.
+    def test_value_spelling_does_not_matter(self):
+        """'1e-3', '1E-3' and 0.001 describe the same agent: values are coerced with
+        float(), as the config path does -- Cora's overrides carry exactly those string
+        spellings."""
+        m = NeuromorphicModel(enable_internal_states_tracking=False)
+        a = m.create_soma(breed="lif_soma", config_name="config_0")
+        syns = [m.create_synapse(breed="delivery_synapse", pre_soma_id=-1, post_soma_id=a,
+                                 config_name="config_0",
+                                 overrides={"hyperparameters": {"weight": spelling}})
+                for spelling in ("1e-3", "1E-3", 0.001)]
+        weights = [m.get_hyperparameters(s)["weight"] for s in syns]
+        self.assertEqual(weights[0], weights[1])
+        self.assertEqual(weights[1], weights[2])
 
-        The config path coerces with float(), so interning on the raw value would split
-        combos the model treats as identical -- Cora's overrides carry exactly those
-        string spellings.
-        """
-        k1 = NeuromorphicModel._overrides_key({"hyperparameters": {"tau_fall": "1e-3"}})
-        k2 = NeuromorphicModel._overrides_key({"hyperparameters": {"tau_fall": "1E-3"}})
-        k3 = NeuromorphicModel._overrides_key({"hyperparameters": {"tau_fall": 0.001}})
-        self.assertEqual(k1, k2)
-        self.assertEqual(k2, k3)
+    def test_a_value_per_agent_is_not_a_kind(self):
+        """Overrides fill slots of the agent's own row; they never add a kind. (They used
+        to: every distinct override made a new combo, 17 us and 1.4 kB each.)"""
+        m = NeuromorphicModel(enable_internal_states_tracking=False)
+        a = m.create_soma(breed="lif_soma", config_name="config_0")
+        for k in range(50):
+            m.create_synapse(breed="delivery_synapse", pre_soma_id=-1, post_soma_id=a,
+                             config_name="config_0",
+                             overrides={"hyperparameters": {"weight": 1.0 + k}})
+        m._ensure_built()
+        self.assertEqual(len(m._combo_table), 2)        # one soma kind, one synapse kind
+
+    def test_parameters_read_back_as_given_before_the_first_run(self):
+        """The host keeps values as they were given until the device (float32) has run,
+        whether the column is a shared table or one row per agent."""
+        for max_shared in (65536, 4):          # 4: the 50 weights below go one row per agent
+            m = NeuromorphicModel(enable_internal_states_tracking=False)
+            m._MAX_SHARED_ROWS = max_shared
+            a = m.create_soma(breed="lif_soma", config_name="config_0",
+                              overrides={"hyperparameters": {"tref": 0.007}})
+            weights = [0.1 + 0.01 * k for k in range(50)]
+            syns = m.create_synapses(-1, np.full(50, a), "delivery_synapse", "config_0",
+                                     overrides={"hyperparameters": {"weight": weights}})
+            self.assertEqual(m.get_hyperparameters(a)["tref"], 0.007)
+            self.assertEqual([m.get_hyperparameters(int(s))["weight"] for s in syns], weights)
+            dense = not isinstance(
+                m._agent_factory._property_name_2_agent_data_tensor["hyperparameters"],
+                IndexedColumn)
+            self.assertEqual(dense, max_shared == 4)
 
     def test_empty_and_missing_overrides_agree(self):
-        self.assertEqual(NeuromorphicModel._overrides_key(None),
-                         NeuromorphicModel._overrides_key({}))
-        self.assertEqual(NeuromorphicModel._overrides_key({"hyperparameters": {}}),
-                         NeuromorphicModel._overrides_key({}))
+        m = NeuromorphicModel(enable_internal_states_tracking=False)
+        ids = [m.create_soma(breed="lif_soma", config_name="config_0", overrides=o)
+               for o in (None, {}, {"hyperparameters": {}})]
+        rows = [m.get_hyperparameters(i) for i in ids]
+        self.assertEqual(rows[0], rows[1])
+        self.assertEqual(rows[1], rows[2])
+        for i in ids:
+            self.assertEqual(m.agentid2overrides[i], {})
 
     def test_overrides_round_trip(self):
-        original = {"hyperparameters": {"weight": 2.0, "tau_fall": 0.01}}
-        key = NeuromorphicModel._overrides_key(original)
-        self.assertEqual(NeuromorphicModel._overrides_from_key(key), original)
+        original = {"hyperparameters": {"weight": 2.0, "scale": 0.5}}
+        m = NeuromorphicModel(enable_internal_states_tracking=False)
+        a = m.create_soma(breed="lif_soma", config_name="config_0")
+        syn = m.create_synapse(breed="delivery_synapse", pre_soma_id=-1, post_soma_id=a,
+                               config_name="config_0", overrides=original)
+        self.assertEqual(m.agentid2overrides[syn], original)
 
 
 class TestBreedOrder(unittest.TestCase):
@@ -202,7 +241,7 @@ class TestBreedOrder(unittest.TestCase):
 
         arrays = dict(brunel_partition(output_format="columns", **BASE))
         arrays["soma_breed"] = np.asarray("late_lif")
-        m.load_post_owned(arrays)      # used to raise RuntimeError
+        m.load_network(arrays)      # used to raise RuntimeError
 
         # Agents come out in non-decreasing breed order, with the synapses first.
         af = m._agent_factory
@@ -225,11 +264,11 @@ class TestBreedOrder(unittest.TestCase):
             m._component_configurations["soma"]["lif_soma"])
         arrays = dict(brunel_partition(output_format="columns", **BASE))
         arrays["soma_breed"] = np.asarray("late_lif")
-        m.load_post_owned(arrays)
+        m.load_network(arrays)
 
         # Reference: the unsorted build, whose rows are [somas..., synapses...].
         ref = NeuromorphicModel(enable_internal_states_tracking=False)
-        ref.load_post_owned(
+        ref.load_network(
             dict(brunel_partition(output_format="columns", **BASE)))
 
         def neighbours(model):
@@ -338,18 +377,19 @@ class TestLazyIdSets(unittest.TestCase):
 class TestNeighbourAccessors(unittest.TestCase):
     """get_synapse_connectivity works on every construction path.
 
-    Every bulk build now hands SAGESim a prebuilt CSR, and set_prebuilt_csr clears
-    space._locations, so reading the `locations` property returns nothing. These pin the
-    replacement -- including that it keeps working for an incrementally built model,
-    which still has real per-agent lists. (Soma lists: tests/test_soma_neighbour_lists.py.)
+    Every build hands SAGESim a prebuilt neighbour table, and set_prebuilt_csr clears
+    space._locations, so reading the `locations` property returns nothing before the
+    first launch. These pin the accessor that reads the model's own copy of the table.
+    (Soma lists: tests/test_soma_neighbour_lists.py.)
     """
 
     def _check(self, m):
+        m._ensure_built()
         ids = list(m._agent_factory._rank2agentid2agentidx[0])
         syn = next(i for i in ids if m._component_class_of(i) == "synapse")
         nbrs = m.get_synapse_connectivity(syn)
-        self.assertIn(len(nbrs), (1, 2),
-                      f"synapse neighbours must be [pre] or [pre, post], got {nbrs}")
+        self.assertEqual(len(nbrs), 2,
+                         f"synapse neighbours must be [pre, post], got {nbrs}")
         for soma in nbrs:
             if soma != -1:
                 self.assertEqual(m._component_class_of(soma), "soma",

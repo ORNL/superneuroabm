@@ -3,7 +3,7 @@
 Runs under mpirun too (tests/run_mpi_tests.sh): create_synapse places a synapse with its
 post soma, so every deposit here is local; a synapse on another rank than its post soma
 deposits into the soma's ghost row and SAGESim sums it back to the owner (see
-test_load_from_adjacency's split-synapse cases). Either way the two steppings of the
+test_load_network's split-synapse cases). Either way the two steppings of the
 same kernels must agree to the bit at any rank count, a chunked run must equal one
 launch, and a synapse kernel that cannot deliver is refused.
 """

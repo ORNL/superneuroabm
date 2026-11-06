@@ -29,7 +29,7 @@ for a given (N, P) before any allocation is spent.
 
 Phases:
   [1/4] Each rank generates its own partition file (Brunel, local-only).
-  [2/4] Each rank loads its partition via model.load_post_owned().
+  [2/4] Each rank loads its partition via model.load_network().
   [3/4] GPU setup.
   [4/4] Inject Poisson external drive + simulate.
 """
@@ -436,7 +436,7 @@ def main():
 
     t0 = time.time()
     model = NeuromorphicModel(enable_internal_states_tracking=False)
-    model.load_post_owned(partition_file)
+    model.load_network(partition_file)
     # The PROPERTY, not the private attribute: the setter also propagates the flag to the
     # agent factory, which is where half the per-tick timers live.
     model.verbose_timing = args.diagnostics

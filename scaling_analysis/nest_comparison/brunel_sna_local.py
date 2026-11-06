@@ -1,7 +1,7 @@
 """SuperNeuroABM Brunel setup-time benchmark, single GPU.
 
 Mirrors the w=1 point of ``scaling_analysis/weak_scaling.py`` (columnar
-partition -> load_post_owned -> setup -> Poisson drive -> simulate) and reports
+partition -> load_network -> setup -> Poisson drive -> simulate) and reports
 the wall time of every setup and first-tick sub-step, plus the per-property GPU
 tensor allocation table.
 
@@ -145,10 +145,10 @@ def run_once(args, repeat):
             order = np.argsort(np.asarray(arrays["pre"]), kind="stable")
             for k in ("synapse_ids", "pre", "post", "syn_hp_vals"):
                 arrays[k] = np.asarray(arrays[k])[order]
-        # Same builder load_post_owned dispatches to for a .npz, minus the file.
-        model.load_post_owned(arrays)
+        # Same builder load_network dispatches to for a .npz, minus the file.
+        model.load_network(arrays)
     else:
-        model.load_post_owned(str(partition_file))
+        model.load_network(str(partition_file))
     # verbose_timing is required for the first-tick sub-timers. It also unfuses
     # the single-worker tick path, which inflates per-tick cost; that is why the
     # per-tick number here is reported as one aggregate and not analysed.
