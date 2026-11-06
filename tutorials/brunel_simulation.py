@@ -126,15 +126,14 @@ def build_brunel_network(model, order=2500, epsilon=0.1, seed=1234):
 def threshold_rate_hz(model, soma, synapse):
     """The Poisson rate at which the mean membrane potential just reaches threshold.
 
-    One event adds ``weight`` to the current, which decays by P = exp(-dt/tau_syn) per tick, so
-    the mean current at rate r is r * dt * weight / (1 - P), and the soma's mean V - E_L is that
-    times tau_m / C_m. Solved for r at V - E_L = V_th - E_L.
+    One event adds ``weight`` to the current, which then decays with tau_syn and so carries the
+    charge weight * tau_syn. At rate r the mean current is r * weight * tau_syn, and the soma's
+    mean V - E_L is that times tau_m / C_m. Solved for r at V - E_L = V_th - E_L.
     """
     soma_hp = model.get_hyperparameters(soma)
     weight = model.get_hyperparameters(synapse)["weight"]
-    P = np.exp(-DT / soma_hp["tau_syn_0"])
-    return ((soma_hp["V_th"] - soma_hp["E_L"]) * soma_hp["C_m"] * (1 - P)
-            / (weight * DT * soma_hp["tau_m"]))
+    return ((soma_hp["V_th"] - soma_hp["E_L"]) * soma_hp["C_m"]
+            / (weight * soma_hp["tau_syn_0"] * soma_hp["tau_m"]))
 
 
 def poisson_drive(n_inputs, ticks, rate_hz, seed=1234):

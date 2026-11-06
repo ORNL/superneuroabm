@@ -8,11 +8,13 @@ steps, 1.5 s. At the default order 2500: 10,000 neurons, 10 M recurrent synapses
 What is the same: sizes, in-degrees, weights (pA), time constants, threshold, reset,
 refractory period, Poisson rate, step, duration, spike times recorded for every neuron.
 
+The neuron is the same in both: the tutorial's soma takes the exact membrane step iaf_psc_exp
+takes (since 2026-11-06; before that it was forward Euler and this script had a
+`--match-charge` option), so the weights are the YAML's.
+
 What differs, and cannot be removed:
-  * integration: iaf_psc_exp integrates exactly; the tutorial's soma is forward Euler with the
-    current added before the step, which carries dt / (1 - exp(-dt / tau_syn)) / tau_syn
-    = 1.103 times the charge per spike at the same weight. `--match-charge` scales NEST GPU's
-    weights by that factor so a spike moves the membrane by the same amount in both.
+  * refractory period: iaf_psc_exp counts round(t_ref / dt) steps; the tutorial's soma
+    compares times, which float rounding makes 19 or 20 steps.
   * input: NEST GPU draws the Poisson input on the device while it simulates; the tutorial
     loads its drive from a file and replays it as an event list.
   * wiring: fixed_indegree draws sources with replacement (multapses possible); the tutorial
@@ -32,12 +34,10 @@ tutorial once) replayed through one spike_generator per neuron.
 usage (one simulator at a time):
     source ~/software/nest-gpu/install/bin/nestgpu_vars.sh
     python brunel_tutorial_nestgpu.py
-    python brunel_tutorial_nestgpu.py --match-charge
-    python brunel_tutorial_nestgpu.py --match-charge --as-data
+    python brunel_tutorial_nestgpu.py --as-data
 """
 
 import argparse
-import math
 import time
 from pathlib import Path
 
@@ -60,8 +60,6 @@ def parse_args():
     p.add_argument("--sim-ms", type=float, default=1500.0)
     p.add_argument("--burn-in-ms", type=float, default=500.0)
     p.add_argument("--delay-ms", type=float, default=None, help="Default: one step.")
-    p.add_argument("--match-charge", action="store_true",
-                   help="Scale the weights so one spike carries the tutorial's charge.")
     p.add_argument("--as-data", action="store_true",
                    help="Explicit edge list (the tutorial's draws) and the tutorial's saved "
                         "drive through spike_generators, instead of a rule and a generator.")
@@ -104,14 +102,11 @@ def main():
     N = NE + NI
     CE, CI = int(args.epsilon * NE), int(args.epsilon * NI)
 
-    # The tutorial's threshold_rate_hz: the rate at which its Euler soma's mean potential
-    # reaches threshold. Used as is, so both simulators get the same Poisson rate.
-    decay = math.exp(-dt / par["tau_ex"])
-    rate_hz = args.eta * ((par["V_th"] - par["E_L"]) * par["C_m"] * (1 - decay)
-                          / (par["J_E"] * dt * par["tau_m"])) * 1e3
-    charge = dt / (1 - decay) / par["tau_ex"]      # tutorial charge per spike / exact charge
-    scale = charge if args.match_charge else 1.0
-    J_E, J_I = par["J_E"] * scale, par["J_I"] * scale
+    # The tutorial's threshold_rate_hz: the rate at which the soma's mean potential reaches
+    # threshold (one event carries the charge weight * tau_syn). Both simulators get this rate.
+    rate_hz = args.eta * ((par["V_th"] - par["E_L"]) * par["C_m"]
+                          / (par["J_E"] * par["tau_ex"] * par["tau_m"])) * 1e3
+    J_E, J_I = par["J_E"], par["J_I"]
 
     import nestgpu as ngpu
 
@@ -257,7 +252,7 @@ def main():
 
     print(f"\nNEST GPU, tutorial Brunel network: {N} neurons, {N * (CE + CI):,} recurrent "
           f"synapses, {steps} steps of {dt} ms")
-    print(f"  J_E {J_E:.2f} pA, J_I {J_I:.2f} pA (x{scale:.3f}), delay {delay} ms, "
+    print(f"  J_E {J_E:.2f} pA, J_I {J_I:.2f} pA, delay {delay} ms, "
           f"Poisson {rate_hz:.0f} Hz per neuron")
     print("  connections: " + ("explicit edge list" if explicit_edges else "fixed_indegree rule")
           + "; input: " + ("saved drive through spike_generators" if saved_drive

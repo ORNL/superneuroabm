@@ -30,7 +30,7 @@ synapse:
   user_customized_brunel_synapse:
     brunel_excitatory_synapse:
       hyperparameters:
-        weight: 49.7e-12       # 49.7 pA: moves this soma's membrane by 0.1 mV at its peak (tutorial 07, section 6)
+        weight: 54.96e-12      # 54.96 pA: moves this soma's membrane by 0.1 mV at its peak (tutorial 07, section 6)
         synaptic_delay: 0.0015 # pinned slot, not read: the arrival delay is fixed at two ticks
         channel: 0             # deliver into channel 0
       internal_states:
@@ -38,7 +38,7 @@ synapse:
 
     brunel_inhibitory_synapse:
       hyperparameters:
-        weight: -248.5e-12     # -248.5 pA: five times the excitatory weight; the minus sign makes it inhibitory
+        weight: -274.8e-12     # -274.8 pA: five times the excitatory weight; the minus sign makes it inhibitory
         synaptic_delay: 0.0015 # pinned slot, not read: the arrival delay is fixed at two ticks
         channel: 1             # deliver into channel 1
       internal_states:

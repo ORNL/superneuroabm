@@ -7,9 +7,16 @@ reads its parameters and state by position, reads what the synapses delivered in
 last tick, updates its state, and writes its spike and its history::
 
     I_c <- I_c * exp(-dt / tau_syn_c) + (what the synapses delivered into channel c last tick)
-    V   <- V + (-(V - E_L) / tau_m + (I_syn_0 + I_syn_1 + I_bias) / C_m) * dt
+    V   <- E_L + (V - E_L) * P22 + I_syn_0 * P21_0 + I_syn_1 * P21_1 + I_bias * P20
            (V is held while refractory, i.e. for t_ref after a spike)
     spike when V >= V_th and not refractory, then V <- V_reset
+
+The membrane step is exact, not an approximation that improves with a smaller dt: between two
+ticks the currents decay exponentially and nothing else happens, and for that the membrane
+equation dV/dt = -(V - E_L) / tau_m + I / C_m has a closed-form solution. P22, P21_c and P20 are
+its coefficients for one tick (how much of V survives, and how much one unit of each current and
+of the bias adds). NEST's ``iaf_psc_exp`` integrates the same way, so the two give the same
+membrane for the same input. It needs ``tau_syn_c != tau_m``.
 
 Every value is in SI units: volts, amperes, farads, seconds. The current is a single exponential,
 not an alpha function. The soma filters its input itself, so it reads the inbox with
@@ -114,19 +121,23 @@ def user_customized_brunel_soma(
     I_syn_exc = I_syn_exc * decay_exc + I_syn_exc_in
     I_syn_inh = I_syn_inh * decay_inh + I_syn_inh_in
 
-    # === Total synaptic current ===
-    I_syn = I_syn_exc + I_syn_inh  # A
-
     # === Membrane voltage integration ===
-    # dV/dt = -(V - E_L) / tau_m + I / C_m
+    # dV/dt = -(V - E_L) / tau_m + I / C_m, solved exactly over one tick for currents that
+    # decay exponentially from their values now:
+    #   P22   the part of V - E_L that is left after one tick
+    #   P21   what one ampere of a channel's current adds to V over the tick
+    #   P20   what one ampere of constant bias adds to V over the tick
+    P22 = cp.exp(-dt / tau_m)
+    P21_exc = tau_syn_ex * tau_m / (C_m * (tau_m - tau_syn_ex)) * (P22 - decay_exc)
+    P21_inh = tau_syn_in * tau_m / (C_m * (tau_m - tau_syn_in)) * (P22 - decay_inh)
+    P20 = tau_m / C_m * (1.0 - P22)
 
     # Integrate only if enough time has passed since the last spike
     time_since_spike = (dt * tcount) - tlast  # s
     in_refractory = time_since_spike < t_ref
 
     if not in_refractory:
-        dV = (-(V - E_L) / tau_m + (I_syn + I_bias) / C_m) * dt
-        V += dV
+        V = E_L + (V - E_L) * P22 + I_syn_exc * P21_exc + I_syn_inh * P21_inh + I_bias * P20
     # else: V remains unchanged during the refractory period
 
     # === Spike detection and reset ===
