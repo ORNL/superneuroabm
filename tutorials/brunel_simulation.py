@@ -9,6 +9,14 @@ a calibrated reproduction of a published result, and the rates it prints have no
     python brunel_simulation.py          # order 2500: 10,000 neurons, about 10 M synapses
     python brunel_simulation.py 250      # order 250: 1,000 neurons, about 100,000 synapses
 
+Three things keep the run short and its timing readable:
+
+  * The network is handed to the model as arrays in one call (load_post_owned), not built with
+    one create_synapse call per synapse.
+  * The Poisson drive is drawn once and saved under data/; later runs load that file.
+  * The first simulate() call, which also builds the device buffers and the input event list and
+    compiles the kernels, is timed apart from the ticks.
+
 Run it from any directory with the SuperNeuroABM environment active. Generated
 step_func_code_*.py files land in the working directory.
 """
@@ -18,12 +26,14 @@ import time
 from pathlib import Path
 
 import numpy as np
+import yaml
 
 from superneuroabm.model import NeuromorphicModel
 
 TUTORIALS_DIR = Path(__file__).resolve().parent
 CONFIG = TUTORIALS_DIR / "customized_configs" / "brunel_config.yaml"
 STEP_FUNC_DIR = TUTORIALS_DIR / "customized_step_functions"
+DATA_DIR = TUTORIALS_DIR / "data"
 sys.path.insert(0, str(STEP_FUNC_DIR))   # the tutorial-owned kernels are imported by module name
 
 from user_customized_brunel_soma import user_customized_brunel_soma
@@ -52,25 +62,20 @@ def create_model():
     return model
 
 
-def add_poisson_input_synapses(model, somas):
-    """One external input synapse per neuron (pre_soma_id=-1 means no presynaptic soma).
-
-    Creating the synapse delivers nothing by itself: its spikes have to be injected, see
-    inject_poisson_drive.
-    """
-    return [
-        model.create_synapse(
-            breed=SYNAPSE_BREED,
-            pre_soma_id=-1,
-            post_soma_id=soma,
-            config_name="brunel_excitatory_synapse",   # the external input is excitatory
-        )
-        for soma in somas
-    ]
+def synapse_hyperparameters(config_name):
+    """The hyperparameters of one synapse config in the YAML, as (names, values)."""
+    block = yaml.safe_load(CONFIG.read_text())["synapse"][SYNAPSE_BREED][config_name]
+    names = list(block["hyperparameters"])
+    return names, [float(block["hyperparameters"][name]) for name in names]
 
 
 def build_brunel_network(model, order=2500, epsilon=0.1, seed=1234):
     """Create the neurons, the recurrent synapses and the external input synapses.
+
+    The whole network goes to the model as arrays in one load_post_owned call. The caller
+    assigns the ids: neurons 0 .. N-1, then one external input synapse per neuron, then the
+    recurrent synapses. A synapse is its pre and post neuron ids; pre = -1 marks an external
+    input, which delivers nothing by itself: its spikes are injected, see inject_poisson_drive.
 
     :param order: scaling parameter: 4 * order neurons, 80 % excitatory
     :param epsilon: fraction of each population a neuron receives input from
@@ -86,47 +91,49 @@ def build_brunel_network(model, order=2500, epsilon=0.1, seed=1234):
     print(f"  Excitatory in-degree: {CE}")
     print(f"  Inhibitory in-degree: {CI}")
 
-    # All neurons use one config; the first NE are the excitatory ones only because their
-    # outgoing synapses below are the excitatory ones.
-    somas = [
-        model.create_soma(breed=SOMA_BREED, config_name="brunel_lif_neuron")
-        for _ in range(N_total)
-    ]
-
-    external_synapses = add_poisson_input_synapses(model, somas)
-
+    # Each neuron draws CE excitatory sources (neurons 0 .. NE-1) and CI inhibitory sources
+    # (neurons NE .. N-1). The first NE neurons are the excitatory ones only because their
+    # outgoing synapses are the excitatory ones; all neurons use one config.
     rng = np.random.default_rng(seed)
-    synapse_count = 0
+    sources = np.empty((N_total, CE + CI), dtype=np.int64)
+    for target in range(N_total):
+        sources[target, :CE] = rng.choice(NE, size=CE, replace=False)
+        sources[target, CE:] = NE + rng.choice(NI, size=CI, replace=False)
 
-    for target_idx in range(N_total):
-        # Draw CE random excitatory sources (from population 0..NE-1)
-        e_sources = rng.choice(NE, size=CE, replace=False)
+    somas = np.arange(N_total, dtype=np.int64)
+    external_synapses = N_total + somas                        # one per neuron
+    recurrent_pre = sources.ravel()
+    recurrent_post = np.repeat(somas, CE + CI)
+    recurrent_inhibitory = np.tile(np.arange(CE + CI) >= CE, N_total)
+    synapse_count = recurrent_pre.size
 
-        for source_idx in e_sources:
-            model.create_synapse(
-                breed=SYNAPSE_BREED,
-                pre_soma_id=somas[source_idx],
-                post_soma_id=somas[target_idx],
-                config_name="brunel_excitatory_synapse",
-            )
-            synapse_count += 1
+    # The array form names one synapse config for all synapses and takes each synapse's
+    # hyperparameters as a row that is written over that config. The external inputs and the
+    # excitatory synapses get the excitatory block of the YAML, the inhibitory synapses the
+    # inhibitory block.
+    names, excitatory = synapse_hyperparameters("brunel_excitatory_synapse")
+    _, inhibitory = synapse_hyperparameters("brunel_inhibitory_synapse")
+    hyperparameters = np.empty((N_total + synapse_count, len(names)), dtype=np.float64)
+    hyperparameters[:] = excitatory
+    hyperparameters[N_total:][recurrent_inhibitory] = inhibitory
 
-        # Draw CI random inhibitory sources (from population NE..NE+NI-1)
-        i_sources = NE + rng.choice(NI, size=CI, replace=False)
+    model.load_post_owned({
+        "schema": "columnar_post_owned_v1",
+        "soma_ids": somas,
+        "soma_breed": SOMA_BREED,
+        "soma_config": "brunel_lif_neuron",
+        "synapse_ids": np.arange(N_total, 2 * N_total + synapse_count, dtype=np.int64),
+        "pre": np.concatenate([np.full(N_total, -1, dtype=np.int64), recurrent_pre]),
+        "post": np.concatenate([somas, recurrent_post]),
+        "synapse_breed": SYNAPSE_BREED,
+        "synapse_config": "brunel_excitatory_synapse",
+        "learning_rule": "",                                    # static synapses
+        "learning_rule_config": "",
+        "syn_hp_keys": np.array(names),
+        "syn_hp_vals": hyperparameters,
+    })
 
-        for source_idx in i_sources:
-            model.create_synapse(
-                breed=SYNAPSE_BREED,
-                pre_soma_id=somas[source_idx],
-                post_soma_id=somas[target_idx],
-                config_name="brunel_inhibitory_synapse",
-            )
-            synapse_count += 1
-
-        if (target_idx + 1) % 1000 == 0:
-            print(f"  Connected {target_idx + 1}/{N_total} neurons ({synapse_count} synapses so far)")
-
-    print(f"  Created {synapse_count} recurrent and {len(external_synapses)} external synapses")
+    print(f"  Created {synapse_count} recurrent and {N_total} external synapses")
 
     return {
         "num_excitatory": NE,
@@ -137,8 +144,8 @@ def build_brunel_network(model, order=2500, epsilon=0.1, seed=1234):
     }, {
         "CE": CE,
         "CI": CI,
-        "somas": somas,
-        "external_synapses": external_synapses,
+        "somas": somas.tolist(),
+        "external_synapses": external_synapses.tolist(),
     }
 
 
@@ -156,16 +163,42 @@ def threshold_rate_hz(model, soma, synapse):
             / (weight * DT * soma_hp["tau_m"]))
 
 
-def inject_poisson_drive(model, external_synapses, rate_hz, ticks, seed=1234):
-    """Independent Poisson input on each external synapse: the number of events in a tick is
-    delivered as one spike whose value is that count (the synapse multiplies it by its weight)."""
+def poisson_drive(n_inputs, ticks, rate_hz, seed=1234):
+    """Independent Poisson input for each external synapse, as the number of events per tick.
+
+    Drawn once and saved in data/; later runs with the same size, rate and seed load the file,
+    so every run sees the same input and spends no time drawing it.
+
+    :return: (counts, path, loaded): counts[tick, input] as uint8, the file, and whether it
+        was loaded (True) or drawn and saved by this call (False)
+    """
+    path = DATA_DIR / f"brunel_poisson_drive_{n_inputs}x{ticks}.npz"
+    if path.exists():
+        with np.load(path) as saved:
+            if (np.isclose(float(saved["rate_hz"]), rate_hz, rtol=1e-6)
+                    and float(saved["dt"]) == DT and int(saved["seed"]) == seed):
+                return saved["counts"], path, True
+
     rng = np.random.default_rng(seed)
+    counts = np.empty((ticks, n_inputs), dtype=np.uint8)
+    for start in range(0, n_inputs, 1000):
+        drawn = rng.poisson(rate_hz * DT, size=(min(1000, n_inputs - start), ticks))
+        if drawn.max() > 255:
+            raise ValueError(f"{drawn.max()} events in one tick do not fit the saved uint8 counts")
+        counts[:, start:start + drawn.shape[0]] = drawn.T
+    DATA_DIR.mkdir(exist_ok=True)
+    np.savez(path, counts=counts, rate_hz=rate_hz, dt=DT, seed=seed)
+    return counts, path, False
+
+
+def inject_poisson_drive(model, external_synapses, counts):
+    """Schedule the drive: the events of an input in a tick are delivered as one spike whose
+    value is their count (the synapse multiplies it by its weight)."""
     ids = np.asarray(external_synapses, dtype=np.int64)
-    for start in range(0, ids.size, 1000):
-        chunk = ids[start:start + 1000]
-        counts = rng.poisson(rate_hz * DT, size=(chunk.size, ticks))
-        row, tick = np.nonzero(counts)
-        model.add_spikes(chunk[row], tick, counts[row, tick])
+    for start in range(0, counts.shape[0], 1000):
+        window = counts[start:start + 1000]
+        tick, row = np.nonzero(window)
+        model.add_spikes(ids[row], start + tick, window[tick, row])
 
 
 def firing_summary(spike_times, somas, first_tick, last_tick):
@@ -185,32 +218,54 @@ def firing_summary(spike_times, somas, first_tick, last_tick):
 
 
 def run_simulation(order=2500, duration_s=1.5, burn_in_s=0.5, eta=2.0):
-    """Build the network, inject the drive, simulate and summarise.
+    """Build the network, load the drive, simulate and summarise.
 
     :param eta: external Poisson rate as a multiple of threshold_rate_hz
     :return: (summary, spike_times), spike_times being {soma_id: [tick, ...]}
     """
+    t_start = time.time()
     model = create_model()
     net_info, conn_info = build_brunel_network(model, order=order)
     somas = conn_info["somas"]
+    external_synapses = conn_info["external_synapses"]
     NE = net_info["num_excitatory"]
+    build_sec = time.time() - t_start
+    print(f"  built in {build_sec:.1f} s")
 
+    t0 = time.time()
     model.setup()
+    setup_sec = time.time() - t0
+    print(f"setup() in {setup_sec:.1f} s")
 
     ticks = round(duration_s / DT)   # simulate() counts ticks, not milliseconds
-    rate_hz = eta * threshold_rate_hz(model, somas[0], conn_info["external_synapses"][0])
+    rate_hz = eta * threshold_rate_hz(model, somas[0], external_synapses[0])
     print(f"External drive: {rate_hz:.0f} Hz per neuron, {rate_hz * DT:.2f} events per tick")
     t0 = time.time()
-    inject_poisson_drive(model, conn_info["external_synapses"], rate_hz, ticks)
-    print(f"  drawn in {time.time() - t0:.1f} s")
+    counts, drive_file, loaded = poisson_drive(len(external_synapses), ticks, rate_hz)
+    inject_poisson_drive(model, external_synapses, counts)
+    drive_sec = time.time() - t0
+    print(f"  {'loaded from' if loaded else 'drawn and saved to'} {drive_file} "
+          f"({np.count_nonzero(counts):,} spikes) in {drive_sec:.1f} s")
+    del counts
 
+    # The first simulate() call does one-time work before its ticks: it builds the device
+    # buffers, compiles the injected spikes into the event list and compiles the kernels. One
+    # tick is run on its own so that this is not counted as simulation time. simulate() keeps
+    # the spikes of the latest call only, so the two calls' spikes are put together.
     print(f"Simulating {duration_s * 1e3:.0f} ms ({ticks} ticks)...")
     t0 = time.time()
-    model.simulate(ticks=ticks)      # returns None; the kernels compile on the first call
-    wall_clock_sec = time.time() - t0
-    print(f"  done in {wall_clock_sec:.1f} s")
-
+    model.simulate(ticks=1)
+    first_call_sec = time.time() - t0
     spike_times = model.get_all_spike_times()
+    print(f"  first simulate() call (1 tick, one-time device build): {first_call_sec:.1f} s")
+
+    t0 = time.time()
+    model.simulate(ticks=ticks - 1)
+    ticks_sec = time.time() - t0
+    for soma, soma_ticks in model.get_all_spike_times().items():
+        spike_times.setdefault(soma, []).extend(soma_ticks)
+    ms_per_tick = ticks_sec / (ticks - 1) * 1e3
+    print(f"  remaining {ticks - 1} ticks: {ticks_sec:.2f} s ({ms_per_tick:.3f} ms per tick)")
 
     first_tick = round(burn_in_s / DT)
     e_rate, e_cv = firing_summary(spike_times, somas[:NE], first_tick, ticks)
@@ -221,13 +276,19 @@ def run_simulation(order=2500, duration_s=1.5, burn_in_s=0.5, eta=2.0):
     print(f"  I rate {i_rate:.2f} Hz, ISI CV {i_cv:.3f}")
     if not spike_times:
         print("  WARNING: no neuron fired.")
+    print(f"Total {time.time() - t_start:.1f} s")
 
     return {
         "firing_rate_e_hz": e_rate,
         "firing_rate_i_hz": i_rate,
         "isi_cv_e": e_cv,
         "isi_cv_i": i_cv,
-        "wall_clock_sec": wall_clock_sec,
+        "build_sec": build_sec,
+        "setup_sec": setup_sec,
+        "drive_sec": drive_sec,
+        "first_call_sec": first_call_sec,
+        "ticks_sec": ticks_sec,
+        "ms_per_tick": ms_per_tick,
         "ticks": ticks,
         "network": net_info,
     }, spike_times
