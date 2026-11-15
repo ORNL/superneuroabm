@@ -55,7 +55,7 @@ if [ "${TIMERS:-0}" = 1 ]; then
   echo "===== SuperNeuroABM np$n, per-tick timers on  ($(date +%H:%M:%S))"
   MPICH_GPU_SUPPORT_ENABLED=0 timeout -k 15 ${SNA_TIMEOUT:-960} $SRUN --gpus-per-task 1 \
       python -u $NC/run_partitioned_sna.py $P $RUN --tick-timers --out $P/spikes_sna_np${n}_vm_timers.npz 2>&1 \
-    | grep --line-buffered -vE "$SFILTER|^\s+\["
+    | grep --line-buffered -vE "$SFILTER|^\s+\[|^\[Rank|^\[TIMING"
   echo "  -> exit ${PIPESTATUS[0]} (124 = timed out)  ($(date +%H:%M:%S))"
 fi
 conda deactivate

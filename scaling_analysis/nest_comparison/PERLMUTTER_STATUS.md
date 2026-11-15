@@ -306,9 +306,9 @@ the last column is the all-to-all network from "Numbers so far" above.
 | 16 | 11 | 0.948 / 0.538 (0.77 Hz) | 1.307 / 0.613 (38.2 / 45.1 Hz) | | 1.455 / 0.594 |
 | 32 | 17 | pending | pending | | 2.937 / 0.732 |
 | 64 | 26 | 1.298 / 0.655 (0.74 / 0.73 Hz) | 1.992 / 0.828 (32.2 / 34.3 Hz) | | 5.718 / 1.025 |
-| 128 | 26 | not submitted | pending | | 10.932 / 1.513 |
-| 256 | 26 | not submitted | pending | | 23.315 / 2.552 |
-| 512 | 26 | not submitted | pending | | 49.579 / 4.852 |
+| 128 | 26 | pending | pending | | 10.932 / 1.513 |
+| 256 | 26 | pending | pending | | 23.315 / 2.552 |
+| 512 | 26 | pending | pending | | 49.579 / 4.852 |
 
 At 64 GPUs NEST GPU is 2.0 (`library`) to 2.4 (`mixed`) times faster, against 5.6 times on
 the all-to-all network; SuperNeuroABM's tick is 1.3 to 2.0 ms instead of 5.7. NEST GPU is
@@ -346,7 +346,9 @@ Where a tick goes at 64 GPUs, `mixed` (job 61345640, `TIMERS=1`):
   the slowest rank during the warm-up), delivery 0.021, neuron update 0.010; timed tick
   0.825 ms.
 
-**In the queue** (submitted 2026-11-15 07:40, still pending at 08:10; outputs
+**In the queue** (submitted 2026-11-15 07:40 and, the three `library` jobs at 128 to 512
+GPUs, 08:20 at the owner's request: "I want those results in, so we have better ideas when
+we optimizing our code"; all pending at 08:20; outputs
 `torus-scale-<job>.out` in the work directory; parts and spikes in
 `torus_mixed_11250_r17/`, `torus_11250_r17/` (library), `torus_ei_11250_r17/` (exact)):
 
@@ -357,15 +359,18 @@ Where a tick goes at 64 GPUs, `mixed` (job 61345640, `TIMERS=1`):
 | 61345642 | regular | 32 (128) | mixed |
 | 61345643 | regular | 64 (256) | mixed |
 | 61345644 | regular | 128 (512) | mixed, `SNA_TIMEOUT=1500` |
+| 61346213 | regular | 32 (128) | library, `TIMERS=1` (the per-tick breakdown of both simulators on the near-silent network) |
+| 61346214 | regular | 64 (256) | library |
+| 61346215 | regular | 128 (512) | library, `SNA_TIMEOUT=1500` |
 
-**To resume:** `sacct -j 61345638,61345639,61345642,61345643,61345644 -X` for their state;
+**To resume:** `sacct -j 61345638,61345639,61345642,61345643,61345644,61346213,61346214,61346215 -X`
+for their state;
 read each output with
 `grep -vE "^\[Rank|^\[TIMING\]|^\s+\[" torus-scale-<job>.out` (a `TIMERS=1` output holds
 one line per rank per tick, 30 MB); fill the pending cells above. The weak-scaling answer
-is the `mixed` tick from 64 to 512 GPUs for each simulator: flat or not. `library` was
-submitted up to 64 GPUs only, to save allocation; the owner was offered 128 to 512 for it
-(`sbatch -N <nodes> -q regular -t 00:30:00 --export=ALL,NET=library torus_scale.sbatch`) and
-had not answered. A job that fails or times out is resubmitted with the same line as in its
+is the tick from 64 to 512 GPUs for each simulator on each network: flat or not. The owner
+wants the `library` numbers as input for optimizing SuperNeuroABM, so report its per-tick
+breakdown (job 61346213) next to the `mixed` one at 64 GPUs. A job that fails or times out is resubmitted with the same line as in its
 row (`sbatch -N <nodes> [-q regular -t 00:30:00] --export=ALL,NET=<net> torus_scale.sbatch`
 from the work directory); the parts already written are reused.
 
