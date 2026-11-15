@@ -12,6 +12,7 @@ usage: srun -n N python run_partitioned_sna.py <root> [--ms 1500] [--out spikes.
 """
 
 import argparse
+import faulthandler
 import resource
 import sys
 import time
@@ -60,6 +61,10 @@ def main():
     ap.add_argument("--first-tick-timers", action="store_true",
                     help="SAGESim's timers on for the first tick, which builds the device buffers "
                          "and the exchange maps, and each phase printed (seconds)")
+    ap.add_argument("--stack-dump-every", type=float, default=0.0,
+                    help="during the first tick, every rank writes its Python stack every this "
+                         "many seconds to <root>/stacks_np<N>/rank<r>.txt (summarize_stack_dumps.py "
+                         "reads them): where the tick is, also for a run that does not finish")
     ap.add_argument("--out", default=None, help="spikes .npz (default <root>/spikes_sna_np<N>.npz)")
     args = ap.parse_args()
     if args.burn_in_ms is None:
@@ -127,7 +132,17 @@ def main():
     # login node's 30 GiB at 12,500 neurons ------------------------------------------------
     t0 = time.time()
     model.verbose_timing = args.first_tick_timers
+    if args.stack_dump_every > 0:
+        stacks = Path(args.root) / f"stacks_np{P}"
+        stacks.mkdir(exist_ok=True)
+        stack_file = open(stacks / f"rank{rank:04d}.txt", "w")
+        stack_file.write(f"every {args.stack_dump_every} s from {time.strftime('%H:%M:%S')}\n")
+        stack_file.flush()
+        faulthandler.dump_traceback_later(args.stack_dump_every, repeat=True, file=stack_file)
     model.simulate(ticks=1)
+    if args.stack_dump_every > 0:
+        faulthandler.cancel_dump_traceback_later()
+        stack_file.close()
     progress(rank, "first tick")
     timers["first_tick"] = time.time() - t0
     first_tick = {}
