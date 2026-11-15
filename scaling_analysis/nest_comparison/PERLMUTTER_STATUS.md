@@ -1,7 +1,8 @@
 # SuperNeuroABM vs NEST GPU on Perlmutter: status and how to resume
 
-Last updated 2026-11-14, 21:15. This page is the hand-off: what the comparison is, what is
-verified, the numbers so far, what is running and what comes next.
+Last updated 2026-11-15. This page is the hand-off: what the comparison is, what is
+verified, the numbers so far, what is running and what comes next. The comparison has now
+run on 1 to 512 GPUs (128 nodes); the tables are under "Numbers so far".
 
 ## The plan (owner's, 2026-11-14)
 
@@ -38,7 +39,9 @@ submitted jobs), then up to 128 nodes in the regular queue.
 | `regress_12500.sbatch` | both runners on the 12,500-neuron network; run after any change to them |
 | `hpc_node_check.sbatch` | benchmark size on one node: writes the parts for `RANKS`, runs both simulators, compares spikes |
 | `hpc_vm_check.sbatch` | the same with random starting potentials, plus NEST GPU with weights x (1 + 1e-7) |
+| `hpc_scale.sbatch` | benchmark size on N nodes (`sbatch -N <nodes>`): parts, both simulators, spike comparison, NEST GPU's own script |
 | `tick_breakdown.sbatch` | each simulator's own per-tick timers at 2 ranks |
+| `tick_breakdown_32.sbatch` | the same at 32 ranks (8 nodes), and NEST GPU with excitatory weights x (1 + 1e-6) as the rounding control |
 | `nest_own_hpc.sbatch` | NEST GPU's own hpc_benchmark.py, unmodified |
 | `sna_mpi_variants.sbatch` | SuperNeuroABM under three MPI / GPU setups |
 | `own_gpu_first.sh` | wrapper: every GPU visible to a rank, its own first |
@@ -110,9 +113,10 @@ Benchmark size, random starting potentials, 50 ms warm-up then the timed 250 ms,
 | any | drive | draw 1.9 s + to device 0.9 s | draw 1.8 s + generator setup 6.5 s |
 | any | host / GPU memory per rank | 47 to 51 / 20.2 GiB | 10 to 11 / 2.3 to 2.4 GiB |
 
-The same on 2, 4 and 8 nodes (4 GPUs each; jobs 61325020, 61325021, 61325023, script
-`perlmutter/hpc_scale.sbatch`), with one node repeated from above. "Own script" is NEST GPU's
-hpc_benchmark.py, unmodified: rule-based connect, Poisson generator.
+The same on 2 to 128 nodes (4 GPUs each; script `perlmutter/hpc_scale.sbatch`; debug-queue
+jobs 61325020, 61325021, 61325023 for 2, 4, 8 nodes, regular-queue jobs 61326380, 61326383,
+61326384, 61326385 for 16, 32, 64, 128 nodes), with one node repeated from above. "Own
+script" is NEST GPU's hpc_benchmark.py, unmodified: rule-based connect, Poisson generator.
 
 | GPUs | neurons | synapses | simulate 250 ms: SuperNeuroABM | NEST GPU, same files | NEST GPU, own script | rate (Hz): SNA / NEST files / own |
 |---|---|---|---|---|---|---|
@@ -122,21 +126,61 @@ hpc_benchmark.py, unmodified: rule-based connect, Poisson generator.
 | 8 | 90,000 | 1.01 B | 2.345 s (0.933) | 1.318 s (0.527) | 0.893 s | 8.05 / 8.14 / 8.52 |
 | 16 | 180,000 | 2.03 B | 3.656 s (1.455) | 1.486 s (0.594) | 1.077 s | 7.62 / 7.89 / 7.90 |
 | 32 | 360,000 | 4.05 B | 7.382 s (2.937) | 1.830 s (0.732) | 1.431 s | 7.56 / 7.64 / 7.88 |
+| 64 | 720,000 | 8.10 B | 14.370 s (5.718) | 2.563 s (1.025) | 3.906 s | 7.60 / 7.56 / 7.82 |
+| 128 | 1,440,000 | 16.20 B | 27.472 s (10.932) | 3.784 s (1.513) | 6.971 s | 7.58 / 7.52 / 7.71 |
+| 256 | 2,880,000 | 32.40 B | 58.591 s (23.315) | 6.381 s (2.552) | 12.647 s | 7.56 / 7.56 / 7.58 |
+| 512 | 5,760,000 | 64.81 B | 124.591 s (49.579) | 12.131 s (4.852) | 24.768 s | 7.54 / 7.56 / 7.63 |
 
 | GPUs | build: SuperNeuroABM | NEST GPU, same files | NEST GPU, own script |
 |---|---|---|---|
 | 8 | 194 s (load 99.9, setup 4.1, first tick 90.1) | 61 s (read 8.8, boundary 8.0, local 1.4, edge exchange 5.5, remote 36.4 in 43,339 calls, calibrate 0.8) | 0.32 s |
 | 16 | 196 s (load 94.3, setup 4.3, first tick 97.6) | 64 s (remote 36.2 in 48,241 calls, boundary 10.6, edge exchange 7.0) | 0.33 s |
 | 32 | 220 s (load 110.5, setup 4.7, first tick 104.7) | 65 s (remote 36.1 in 52,525 calls, boundary 11.3, edge exchange 6.9) | 0.36 s |
+| 64 | 230 s (load 101.3, setup 5.5, first tick 122.9) | 65 s (remote 36.0 in 57,181 calls, boundary 11.2, edge exchange 6.7) | 0.43 s |
+| 128 | 267 s (load 109.9, setup 9.2, first tick 147.7) | 69 s (remote 37.8 in 63,218 calls, boundary 13.2, edge exchange 6.8) | 0.51 s |
+| 256 | 329 s (load 120.3, setup 12.8, first tick 195.9) | 67 s (remote 36.8 in 71,739 calls, boundary 11.9, edge exchange 7.1) | 0.57 s |
+| 512 | 1,225 s (load 155.1, setup 40.4, first tick 1,029.7) | 73 s (remote 39.8 in 84,062 calls, boundary 13.7, edge exchange 7.7) | 0.73 s |
+
+Build is load + setup + first tick for SuperNeuroABM, read + boundary + create + connect +
+calibrate for NEST GPU, construct + calibrate for its own script. The whole run, start to
+last tick, took 254 / 310 / 415 / 1,406 s for SuperNeuroABM and 93 / 99 / 102 / 119 s for
+NEST GPU on the same files at 64 / 128 / 256 / 512 GPUs. Setting the starting potentials in
+SuperNeuroABM (one get and one set per soma) is a further 33 to 86 s on the slowest rank
+and is in those totals, not in "build".
 
 Spikes, SuperNeuroABM against NEST GPU on the same files: identical for 62.0 ms at 8 GPUs,
-116.6 ms at 16, 27.8 ms at 32, then rounding drift; rates within 1 to 3.5 %. From 8 GPUs on,
-hpc_benchmark.py's own rate (8.5, 7.9, 7.9 Hz) agrees with the file-driven runs; at 2 and 4
-processes it gives 52 and 26 Hz, in the dense regime its docstring warns about (unstable
-below scale 10), and 1 process segfaults.
+116.6 ms at 16, 27.8 ms at 32, 6.3 ms at 64, 11.2 ms at 128, 4.1 ms at 256 and 3.2 ms at 512.
+The first difference is each time one soma firing one tick apart in the two simulators;
+after it the runs separate, with the rates within 1 to 3.5 % up to 32 GPUs and within 0.1 to
+0.7 % from 64 on. From 8 GPUs on, hpc_benchmark.py's own rate (8.5, 7.9, 7.9, 7.8, 7.7, 7.6,
+7.6 Hz) agrees with the file-driven runs; at 2 and 4 processes it gives 52 and 26 Hz, in the
+dense regime its docstring warns about (unstable below scale 10), and 1 process segfaults.
 
-Per rank at every size: SuperNeuroABM 51 GiB host and 20.2 to 20.5 GiB GPU, NEST GPU 11 GiB
-and 2.3 to 2.9 GiB.
+Per rank: SuperNeuroABM 51 to 52 GiB host and 20.2 to 21.9 GiB GPU at every size. NEST GPU
+11 to 12 GiB host up to 256 GPUs and 13.7 at 512; its GPU memory grows with the rank count: 2.3 to
+2.9 GiB up to 32 GPUs, then 3.4 / 4.5 / 6.6 / 10.9 GiB at 64 / 128 / 256 / 512.
+
+### What the 1 to 512 GPU runs say
+
+- **Run time.** One GPU: SuperNeuroABM 1.75 times faster. Several GPUs: NEST GPU on the same
+  files is faster, by 1.25 times at 2 GPUs, 1.8 at 8, 4.0 at 32, 5.6 at 64, 7.3 at 128, 9.2
+  at 256 and 10.3 at 512.
+- **Both ticks grow with the number of peer ranks.** At this size every rank listens to
+  every other. NEST GPU's tick fits 0.45 ms + 0.0086 ms per peer rank within 4 % from 8 to
+  512 GPUs. SuperNeuroABM's costs 0.086 to 0.097 ms per peer rank from 16 to 512 GPUs: ten
+  times NEST GPU's price per peer. NEST GPU sends each peer one message per step holding the
+  ids of the neurons that fired (`mpi_comm.cu`, `MPI_Isend` / `MPI_Irecv` per host, then
+  `MPI_Waitall`); SAGESim sends each peer its ghost somas' state every tick.
+- **NEST GPU's own script is slower than NEST GPU on our files from 64 GPUs on** (1.5 to 2.0
+  times; it is faster up to 32). Known difference: hpc_benchmark.py puts all ranks in one
+  host group, which makes NEST GPU exchange spikes with `MPI_Allgather` / `MPI_Allgatherv`,
+  and our runner calls `RemoteConnect` without a host group, which makes it point to point.
+  Whether that is the whole gap is not tested. So reading the network from files does not
+  handicap NEST GPU's run time; it costs it the build (65 to 73 s against under 1 s).
+- **Build.** NEST GPU from files stays at 65 to 73 s. SuperNeuroABM grows from 194 s at 8
+  GPUs to 329 s at 256, and to 1,225 s at 512, where the first tick alone takes 1,030 s (196 s
+  at 256) and setup 40 s (13 s at 256). What the first tick spends that time on at 512 ranks
+  is not measured yet.
 
 SuperNeuroABM's tick at 2 GPUs by SAGESim's timers (job 61323573): 0.63 ms, of which 0.38 ms
 is the ghost exchange (`data_prep`) and 0.23 ms the per-tick kernel launch; 0.60 ms with GPU
@@ -144,15 +188,18 @@ buffers straight to MPI. One GPU runs all ticks in one launch at 0.09 ms per tic
 
 ## Open
 
-- NEST GPU's own per-tick timers (`--kernel-timers`) must be retaken with the stepped
-  simulation; the ones in `tick-breakdown-61323573.out` had the drive paused.
-- `--perturb 1e-7` is below float32 resolution for these weights and changes nothing; a
-  control run needs 1e-6.
-- In the regular queue since 2026-11-14 21:10: 16, 32, 64 and 128 nodes (jobs 61326380,
-  61326383, 61326384, 61326385; outputs `hpc-scale-<job>.out` in the work directory). Things
-  to watch there: SuperNeuroABM's tick grows with the number of peer ranks (0.93, 1.46,
-  2.94 ms at 7, 15, 31 peers) and its first tick with the ghost somas; the runner's
-  `get_all_spike_times` hands every rank every spike; host memory is at 51 of about 62 GiB
-  per rank.
+- Submitted 2026-11-15, debug queue, job 61334376 (`perlmutter/tick_breakdown_32.sbatch`,
+  output `tick-breakdown-32-<job>.out` in the work directory): NEST GPU's own per-phase
+  timers at 32 and 2 ranks, retaken with the stepped simulation (the ones in
+  `tick-breakdown-61323573.out` had the drive paused); SAGESim's tick timers at 32 ranks;
+  and NEST GPU with excitatory weights x (1 + 1e-6) against its plain run, the control for
+  calling the SuperNeuroABM / NEST GPU differences rounding (1e-7 is below float32
+  resolution for these weights and changes nothing).
+- SuperNeuroABM's first tick at 512 ranks (1,030 s) and its setup there (40 s): find what
+  grows.
+- The 128-node run used 31 of its 45 minutes, 24 of them in SuperNeuroABM. Host memory is at
+  52 of about 62 GiB per rank.
+- The network files take 3.9 TB of scratch (`hpc_11250/np<N>`, 4 GB per rank; np512 alone is
+  2.0 TB). They are rewritten in about a minute by `hpc_scale.sbatch` if deleted.
 - The repo's test gate (pytest and the MPI tests) has not been run for these commits; they
   touch tutorials and the comparison scripts, not the library.

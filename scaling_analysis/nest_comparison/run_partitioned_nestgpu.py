@@ -67,8 +67,9 @@ def main():
                     help="multiply the excitatory weights by 1 + this: the control for how "
                          "fast a rounding-size change separates two runs")
     ap.add_argument("--kernel-timers", action="store_true",
-                    help="NEST GPU prints its own per-phase timers (seconds over each Simulate "
-                         "call, per host): neuron update, spike send / receive, delivery")
+                    help="NEST GPU prints its own per-phase timers at the end (seconds since "
+                         "the start, warm-up included, per host): neuron update, spike send / "
+                         "receive split into MPI and GPU copy, delivery")
     ap.add_argument("--out", default=None, help="spikes .npz (default <root>/spikes_nestgpu_np<N>.npz)")
     args = ap.parse_args()
     if args.burn_in_ms is None:
@@ -140,7 +141,7 @@ def main():
     # array, one per synapse here), which leaves one delay bit, so every delay is the
     # minimum allowed one, and no synapse groups or receptor ports.
     ngpu.SetKernelStatus({
-        "verbosity_level": 3 if args.kernel_timers else 1,
+        "verbosity_level": 4 if args.kernel_timers else 1,
         "time_resolution": pc.DT_MS,
         "max_node_n_bits": 31,
         "max_syn_n_bits": 0,
