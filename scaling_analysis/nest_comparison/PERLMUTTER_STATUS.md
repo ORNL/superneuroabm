@@ -256,8 +256,10 @@ neighbour tiles only:
 | 2 | 1x1x2 | 1 | 11,250 | 74.5 % |
 | 4 | 1x2x2 | 3 | 33,580 | 55.0 % |
 | 8 | 2x2x2 | 7 | 78,000 | 34.2 % |
-| 16, 32 | 2x2x4, 2x4x4 | 11, 17 | (from the jobs below) | |
-| 64 to 512 | 4x4x4 to 8x8x8 | 26 | about 126,000 expected, the same at every size | |
+| 16 | 2x2x4 | 11 | 87,380 | 34.2 % |
+| 32 | 2x4x4 | 17 | (job pending) | |
+| 64 | 4x4x4 | 26 | 124,100 | 34.2 % |
+| 128 to 512 | 4x4x8 to 8x8x8 | 26 | the same as at 64 expected (jobs pending) | |
 
 Against 11,250 x (ranks - 1) on the all-to-all network: 708,750 at 64 GPUs, 5.75 M at 512.
 NEST GPU gains from it too: it exchanges spikes only between host pairs that share
@@ -270,7 +272,7 @@ sources from its ball were run (`NET=` in the job scripts):
 |---|---|---|---|
 | `library` | `brunel_partition`'s own torus3d: one pool of 11,250 | 0.44 / 0.39 / 0.38 / 0.72 Hz | identical spikes over the whole run at 1, 2 and 8 GPUs; at 4, one spike one tick apart at 3.0 ms and nothing else |
 | `exact` | exactly 9,000 excitatory + 2,250 inhibitory (`--exact-ei`), inhibitory neurons where the library puts them | 22-24 / 108-137 / 102-129 / 560 Hz | identical for 26.0 / 14.5 / 3.2 / 7.4 ms |
-| `mixed` | the same exact draw, inhibitory neurons spread evenly over the tile (`--interleave-ei`) | - / - / - / 45-48 Hz | identical for 15.7 ms at 8 GPUs |
+| `mixed` | the same exact draw, inhibitory neurons spread evenly over the tile (`--interleave-ei`) | - / - / - / 45-48 Hz; 38-45 Hz at 16, 32-34 Hz at 64 | identical for 15.7 ms at 8 GPUs, 39.7 ms at 16, 3.7 ms at 64 |
 
 - `library`: the library puts a rank's inhibitory neurons last in its id block, which its
   positions turn into one slab of the tile (x layers 15 to 17 of 18). With one pool per ball
@@ -290,29 +292,82 @@ sources from its ball were run (`NET=` in the job scripts):
 The 64 to 512 GPU runs use `mixed` (it fires, with the benchmark's in-degrees); `library`
 runs to 64 GPUs as the near-silent reference with spike-for-spike agreement.
 
-**Numbers so far**, ms per tick over the timed 250 ms (jobs 61344221, 61344536, 61344538,
-61345199, 61345200):
+**Numbers so far** (jobs 61344221 and 61344536 for 1 to 4 GPUs; 61344538 `exact` at 8;
+61345199 / 61345200 `mixed` / `library` at 8; 61345636 / 61345637 at 16; 61345640 / 61345641
+at 64). Timed 250 ms, ms per tick, SuperNeuroABM / NEST GPU, with the rate each measured;
+the last column is the all-to-all network from "Numbers so far" above.
 
-| GPUs | `library`: SuperNeuroABM / NEST GPU | `exact`: SuperNeuroABM / NEST GPU | `mixed`: SuperNeuroABM / NEST GPU |
-|---|---|---|---|
-| 1 | 0.052 / 0.157 | 0.103 / 0.167 | |
-| 2 | 0.530 / 0.419 | 0.862 / 0.518 | |
-| 4 | 0.713 / 0.449 | 1.070 / 0.556 | |
-| 8 | 0.927 / 0.505 | 2.569 / 0.913 | 1.177 / 0.519 |
+| GPUs | peers | `library` | `mixed` | `exact` | all-to-all |
+|---|---|---|---|---|---|
+| 1 | 0 | 0.052 / 0.157 (0.44 Hz) | | 0.103 / 0.167 (22.5 / 24.3 Hz) | 0.091 / 0.161 (9.8 Hz) |
+| 2 | 1 | 0.530 / 0.419 (0.39 Hz) | | 0.862 / 0.518 (108 / 137 Hz) | 0.577 / 0.462 |
+| 4 | 3 | 0.713 / 0.449 (0.38 Hz) | | 1.070 / 0.556 (102 / 129 Hz) | 0.726 / 0.490 |
+| 8 | 7 | 0.927 / 0.505 (0.72 Hz) | 1.177 / 0.519 (48.0 / 45.5 Hz) | 2.569 / 0.913 (560 Hz) | 0.933 / 0.527 |
+| 16 | 11 | 0.948 / 0.538 (0.77 Hz) | 1.307 / 0.613 (38.2 / 45.1 Hz) | | 1.455 / 0.594 |
+| 32 | 17 | pending | pending | | 2.937 / 0.732 |
+| 64 | 26 | 1.298 / 0.655 (0.74 / 0.73 Hz) | 1.992 / 0.828 (32.2 / 34.3 Hz) | | 5.718 / 1.025 |
+| 128 | 26 | not submitted | pending | | 10.932 / 1.513 |
+| 256 | 26 | not submitted | pending | | 23.315 / 2.552 |
+| 512 | 26 | not submitted | pending | | 49.579 / 4.852 |
 
-**In the queue** (submitted 2026-11-15 07:40; outputs `torus-scale-<job>.out` in the work
-directory; parts in `torus_mixed_11250_r17/`, `torus_11250_r17/`, `torus_ei_11250_r17/`):
+At 64 GPUs NEST GPU is 2.0 (`library`) to 2.4 (`mixed`) times faster, against 5.6 times on
+the all-to-all network; SuperNeuroABM's tick is 1.3 to 2.0 ms instead of 5.7. NEST GPU is
+the faster one at every size but one GPU. At 8 GPUs the torus and the all-to-all network
+have the same peers and remote somas and the ticks are the same (0.927 and 0.933 ms).
+
+Spikes on `library`: identical over the whole run at 1, 2 and 8 GPUs; one spike one tick
+apart and nothing else at 4 (3.0 ms) and at 16 (two spikes, 43,770 each); identical for
+60.9 ms at 64, then apart (169,726 against 168,509 spikes).
+
+Build and whole run, slowest rank, seconds:
+
+| GPUs, `NET` | SuperNeuroABM: load / setup / first tick / whole run | NEST GPU: remote connect (calls per rank) / whole run |
+|---|---|---|
+| 8, library | 64.1 / 4.2 / 71.4 / 146 | 28.3 (75,535) / 67 |
+| 8, mixed | 73.6 / 4.1 / 73.7 / 160 | 29.1 (76,895) / 70 |
+| 16, library | 70.7 / 4.5 / 74.6 / 156 | 32.5 (110,094) / 74 |
+| 16, mixed | 77.2 / 4.2 / 78.8 / 169 | 32.5 (105,994) / 74 |
+| 64, library | 72.4 / 5.4 / 80.3 / 167 | 41.4 (183,586) / 84 |
+| 64, mixed | 74.1 / 5.2 / 80.4 / 174 | 46.8 (221,606) / 89 |
+
+On the all-to-all network at 64 GPUs SuperNeuroABM's whole run took 254 s (first tick
+122.9 s) and NEST GPU's 93 s. Per rank on the torus: SuperNeuroABM 50.9 GiB host and 20.2 GiB
+GPU, NEST GPU 9.7 to 10.0 GiB host and 2.5 (8, 16 GPUs) to 3.15 GiB (64) GPU.
+
+Where a tick goes at 64 GPUs, `mixed` (job 61345640, `TIMERS=1`):
+
+- SuperNeuroABM, timers on, 2.044 ms per tick: ghost exchange (`data_prep`) 1.435 ms, the
+  kernel on the GPU (`gpu_sync`) 0.458 ms, the rest 0.15 ms. On the all-to-all network at 32
+  GPUs (31 peers, 348,750 ghosts) these were 1.279 and 1.411 ms: the kernel's GPU time fell
+  with the ghost somas, the exchange did not (26 peers against 31).
+- NEST GPU, its own timers over all 3,000 steps (`torus_mixed_11250_r17/nest_timers_np64.txt`),
+  ms per step, mean over the hosts: `organizeExternalSpike` 0.203, `copy_ext_spike` 0.161,
+  `SendSpikeToRemote` 0.134 (MPI 0.097), `RecvSpikeFromRemote` 0.506 (includes the wait for
+  the slowest rank during the warm-up), delivery 0.021, neuron update 0.010; timed tick
+  0.825 ms.
+
+**In the queue** (submitted 2026-11-15 07:40, still pending at 08:10; outputs
+`torus-scale-<job>.out` in the work directory; parts and spikes in
+`torus_mixed_11250_r17/`, `torus_11250_r17/` (library), `torus_ei_11250_r17/` (exact)):
 
 | job | queue | nodes (GPUs) | `NET` |
 |---|---|---|---|
-| 61345636, 61345637 | debug | 4 (16) | mixed, library |
-| 61345638, 61345639 | debug | 8 (32) | mixed, library |
-| 61345640 | regular | 16 (64) | mixed, `TIMERS=1` |
-| 61345641 | regular | 16 (64) | library |
-| 61345642, 61345643, 61345644 | regular | 32, 64, 128 (128, 256, 512) | mixed |
+| 61345638 | debug | 8 (32) | mixed |
+| 61345639 | debug | 8 (32) | library |
+| 61345642 | regular | 32 (128) | mixed |
+| 61345643 | regular | 64 (256) | mixed |
+| 61345644 | regular | 128 (512) | mixed, `SNA_TIMEOUT=1500` |
 
-When they are done: fill the tables above, and the weak-scaling answer is the tick from 64
-to 512 GPUs (flat or not) for each simulator.
+**To resume:** `sacct -j 61345638,61345639,61345642,61345643,61345644 -X` for their state;
+read each output with
+`grep -vE "^\[Rank|^\[TIMING\]|^\s+\[" torus-scale-<job>.out` (a `TIMERS=1` output holds
+one line per rank per tick, 30 MB); fill the pending cells above. The weak-scaling answer
+is the `mixed` tick from 64 to 512 GPUs for each simulator: flat or not. `library` was
+submitted up to 64 GPUs only, to save allocation; the owner was offered 128 to 512 for it
+(`sbatch -N <nodes> -q regular -t 00:30:00 --export=ALL,NET=library torus_scale.sbatch`) and
+had not answered. A job that fails or times out is resubmitted with the same line as in its
+row (`sbatch -N <nodes> [-q regular -t 00:30:00] --export=ALL,NET=<net> torus_scale.sbatch`
+from the work directory); the parts already written are reused.
 
 `compare_partitioned_spikes.py` now compares sorted integer keys (4 s for 2 x 12.7 M spikes,
 44 s before with Python sets); same output on six earlier pairs.
