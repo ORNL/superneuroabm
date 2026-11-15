@@ -11,8 +11,17 @@ is the same saved Poisson drive (data/brunel_poisson_drive_*.npz), replayed spik
     source ~/software/nest-gpu/install/bin/nestgpu_vars.sh
     python brunel_simulation_nestgpu.py      # order 2500: 10,000 neurons, about 10 M synapses
     python brunel_simulation_nestgpu.py 250  # order 250 (needs brunel_simulation.py 250 first)
+    python brunel_simulation_nestgpu.py alpha      # iaf_psc_alpha, 1.5 ms delay (needs
+    python brunel_simulation_nestgpu.py 250 alpha  #   brunel_simulation.py [250] alpha first)
 
 Run one simulator at a time: they share the GPU.
+
+``alpha`` runs NEST GPU's iaf_psc_alpha with the parameters of customized_configs/
+brunel_alpha_config.yaml and the YAML's synaptic_delay (1.5 ms) on every connection, generators
+included, against brunel_simulation.py's user_customized_brunel_alpha_soma. That pair agrees to
+float rounding (membrane potentials within ~1e-5 mV, the same spike steps); over a whole network
+run, the rounding is amplified by the network's chaos, so spike trains agree at first and in
+rate after.
 
 Where NEST GPU would normally take a shortcut, and this script does not (marked SHORTCUT below):
 
@@ -50,11 +59,27 @@ SYNAPSE_BREED = "user_customized_brunel_synapse"
 DT_MS = 0.1                      # step: 0.1 ms, as in brunel_simulation.py
 
 
-def tutorial_parameters():
+# The tutorial's two neurons (brunel_simulation.py's PSC table), as NEST GPU models.
+PSC = {
+    "exp": {"config": CONFIG, "soma": SOMA_BREED, "neuron": "brunel_lif_neuron",
+            "excitatory": "brunel_excitatory_synapse", "inhibitory": "brunel_inhibitory_synapse",
+            "model": "iaf_psc_exp", "tau_names": ("tau_ex", "tau_in"), "drive_tag": ""},
+    "alpha": {"config": TUTORIALS_DIR / "customized_configs" / "brunel_alpha_config.yaml",
+              "soma": "user_customized_brunel_alpha_soma", "neuron": "brunel_alpha_lif_neuron",
+              "excitatory": "brunel_alpha_excitatory_synapse",
+              "inhibitory": "brunel_alpha_inhibitory_synapse",
+              "model": "iaf_psc_alpha", "tau_names": ("tau_syn_ex", "tau_syn_in"),
+              "drive_tag": "alpha_"},
+}
+
+
+def tutorial_parameters(psc="exp"):
     """The tutorial's YAML (SI units) in NEST units: pF, ms, mV, pA."""
-    config = yaml.safe_load(CONFIG.read_text())
-    soma = config["soma"][SOMA_BREED]["brunel_lif_neuron"]["hyperparameters"]
+    names = PSC[psc]
+    config = yaml.safe_load(names["config"].read_text())
+    soma = config["soma"][names["soma"]][names["neuron"]]["hyperparameters"]
     synapse = config["synapse"][SYNAPSE_BREED]
+    excitatory = synapse[names["excitatory"]]["hyperparameters"]
     return {
         "C_m": float(soma["C_m"]) * 1e12,
         "tau_m": float(soma["tau_m"]) * 1e3,
@@ -64,19 +89,31 @@ def tutorial_parameters():
         "V_reset": float(soma["V_reset"]) * 1e3,
         "E_L": float(soma["E_L"]) * 1e3,
         "t_ref": float(soma["t_ref"]) * 1e3,
-        "J_E": float(synapse["brunel_excitatory_synapse"]["hyperparameters"]["weight"]) * 1e12,
-        "J_I": float(synapse["brunel_inhibitory_synapse"]["hyperparameters"]["weight"]) * 1e12,
+        "J_E": float(excitatory["weight"]) * 1e12,
+        "J_I": float(synapse[names["inhibitory"]]["hyperparameters"]["weight"]) * 1e12,
+        "delay_ms": float(excitatory["synaptic_delay"]) * 1e3,
     }
 
 
 def run_simulation(order=2500, duration_ms=1500.0, burn_in_ms=500.0, eta=2.0,
-                   epsilon=0.1, seed=1234):
+                   epsilon=0.1, seed=1234, psc="exp"):
+    """Build, replay the saved drive, simulate and summarise.
+
+    :param psc: "exp" (iaf_psc_exp, one-step delay) or "alpha" (iaf_psc_alpha, the YAML's delay)
+    :return: (summary, spike_times), spike_times being {neuron: [step, ...]} with neuron 0..N-1
+        and the step a spike happened in, the ticks brunel_simulation.py reports
+    """
     import nestgpu as ngpu
 
     t_start = time.time()
-    par = tutorial_parameters()
+    names = PSC[psc]
+    par = tutorial_parameters(psc)
     steps = round(duration_ms / DT_MS)
-    delay = DT_MS                # one step: what the tutorial's two-tick arrival amounts to
+    if psc == "exp":
+        delay = DT_MS            # one step: what the tutorial's two-tick arrival amounts to
+    else:
+        delay = par["delay_ms"]  # brunel_simulation.py's soma queue realizes the same delay
+    print(f"Neuron: {names['model']}, delay {delay:.1f} ms")
 
     NE = int(0.8 * (4 * order))
     NI = int(0.2 * (4 * order))
@@ -95,11 +132,12 @@ def run_simulation(order=2500, duration_ms=1500.0, burn_in_ms=500.0, eta=2.0,
     print(f"  Excitatory in-degree: {CE}")
     print(f"  Inhibitory in-degree: {CI}")
     t_build = time.time()
-    neurons = ngpu.Create("iaf_psc_exp", N)
+    neurons = ngpu.Create(names["model"], N)
+    tau_ex_name, tau_in_name = names["tau_names"]
     ngpu.SetStatus(neurons, {
         "tau_m": par["tau_m"], "C_m": par["C_m"], "E_L": par["E_L"], "I_e": 0.0,
         "Theta_rel": par["V_th"] - par["E_L"], "V_reset_rel": par["V_reset"] - par["E_L"],
-        "tau_ex": par["tau_ex"], "tau_in": par["tau_in"], "t_ref": par["t_ref"],
+        tau_ex_name: par["tau_ex"], tau_in_name: par["tau_in"], "t_ref": par["t_ref"],
     })
 
     # ---- Connections: an explicit list of (source, target) pairs -------------------------
@@ -129,9 +167,9 @@ def run_simulation(order=2500, duration_ms=1500.0, burn_in_ms=500.0, eta=2.0,
     # ---- External input: the saved Poisson drive, replayed ------------------------------
     # SHORTCUT NOT TAKEN: one poisson_generator connected to every neuron would draw the
     # input on the GPU at every step; nothing would be loaded or stored.
-    drive_file = DATA_DIR / f"brunel_poisson_drive_{N}x{steps}.npz"
+    drive_file = DATA_DIR / f"brunel_{names['drive_tag']}poisson_drive_{N}x{steps}.npz"
     if not drive_file.exists():
-        raise SystemExit(f"{drive_file} not found: run brunel_simulation.py {order} once, "
+        raise SystemExit(f"{drive_file} not found: run brunel_simulation.py {order} {psc} once, "
                          "it draws and saves the drive.")
     t_drive = time.time()
     with np.load(drive_file) as saved:
@@ -191,13 +229,29 @@ def run_simulation(order=2500, duration_ms=1500.0, burn_in_ms=500.0, eta=2.0,
     print(f"  {total_spikes:,} spikes in the whole run")
     print(f"Total {total_sec:.1f} s")
 
+    # NEST GPU records a spike of step it at time (it + 1) * dt
+    spike_steps = {i: (np.rint(times / DT_MS).astype(np.int64) - 1).tolist()
+                   for i, times in enumerate(spike_times) if times.size}
+
     return {
         "build_sec": build_sec, "drive_load_sec": load_sec, "generators_sec": generators_sec,
         "calibrate_sec": calibrate_sec, "steps_sec": steps_sec,
         "ms_per_step": steps_sec / steps * 1e3, "total_sec": total_sec,
         "rate_e_hz": rate_e, "rate_i_hz": rate_i, "total_spikes": total_spikes,
-    }
+    }, spike_steps
+
+
+def parse_command_line(argv):
+    """``[order] [exp|alpha]`` in either order: (order, psc)."""
+    order, psc = 2500, "exp"
+    for arg in argv:
+        if arg in PSC:
+            psc = arg
+        else:
+            order = int(arg)
+    return order, psc
 
 
 if __name__ == "__main__":
-    run_simulation(order=int(sys.argv[1]) if len(sys.argv) > 1 else 2500)
+    order, psc = parse_command_line(sys.argv[1:])
+    run_simulation(order=order, psc=psc)

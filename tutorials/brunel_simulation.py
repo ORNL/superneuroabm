@@ -8,6 +8,19 @@ a calibrated reproduction of a published result, and the rates it prints have no
 
     python brunel_simulation.py          # order 2500: 10,000 neurons, about 10 M synapses
     python brunel_simulation.py 250      # order 250: 1,000 neurons, about 100,000 synapses
+    python brunel_simulation.py alpha    # the same network with NEST's iaf_psc_alpha and a 1.5 ms delay
+    python brunel_simulation.py 250 alpha
+
+The default neuron has one exponential current per channel and spikes arrive in the framework's
+own two ticks. ``alpha`` swaps in user_customized_brunel_alpha_soma with
+customized_configs/brunel_alpha_config.yaml: the neuron and synapses of NEST's classic
+brunel_alpha_nest.py (alpha-shaped currents, a 0.1 mV PSP peak, a 1.5 ms delay). It matches NEST
+GPU's iaf_psc_alpha to float rounding: in a two-neuron test the membrane potentials agree within
+1e-5 mV and every spike falls on the same step. Over a network run (brunel_simulation_nestgpu.py
+alpha, same edges and drive) the rounding is amplified by the network's chaos: at order 2500 the
+spike trains are identical for the first ~115 ms and the rates agree within 0.1 %. The network sizes
+stay this tutorial's (N_E = 0.8 * 4 * order, epsilon = 0.1 of each population); NEST's example
+uses N_E = 4 * order and N_I = order.
 
 Three things keep the run short and its timing readable:
 
@@ -36,21 +49,42 @@ DATA_DIR = TUTORIALS_DIR / "data"
 sys.path.insert(0, str(STEP_FUNC_DIR))   # the tutorial-owned kernels are imported by module name
 
 from user_customized_brunel_soma import user_customized_brunel_soma
+from user_customized_brunel_alpha_soma import user_customized_brunel_alpha_soma
 from user_customized_brunel_synapse import user_customized_brunel_synapse
 
 SOMA_BREED = "user_customized_brunel_soma"
 SYNAPSE_BREED = "user_customized_brunel_synapse"
 DT = 1e-4   # seconds per tick: 0.1 ms (the default is 1 ms)
 
+# The two neurons this tutorial can run. "charge" is the charge one event of weight w carries,
+# in units of w * tau_syn: an exponential current carries w * tau_syn, an alpha current whose
+# peak is w carries e * w * tau_syn.
+PSC = {
+    "exp": {"config": CONFIG, "soma": SOMA_BREED, "soma_kernel": user_customized_brunel_soma,
+            "neuron": "brunel_lif_neuron", "excitatory": "brunel_excitatory_synapse",
+            "inhibitory": "brunel_inhibitory_synapse", "charge": 1.0, "drive_tag": ""},
+    "alpha": {"config": TUTORIALS_DIR / "customized_configs" / "brunel_alpha_config.yaml",
+              "soma": "user_customized_brunel_alpha_soma",
+              "soma_kernel": user_customized_brunel_alpha_soma,
+              "neuron": "brunel_alpha_lif_neuron", "excitatory": "brunel_alpha_excitatory_synapse",
+              "inhibitory": "brunel_alpha_inhibitory_synapse", "charge": np.e,
+              "drive_tag": "alpha_"},
+}
 
-def create_model():
+# A spike reaches the post soma's membrane in two ticks on its own: the synapse delivers it the
+# tick after the spike, and the soma reads its inbox the tick after that. The alpha soma's
+# delay_ticks adds the rest of a longer delay.
+FRAMEWORK_TICKS = 2
+
+
+def create_model(psc="exp"):
     """A model with the two kernels registered, ready for neurons and synapses."""
-    model = NeuromorphicModel(user_config=CONFIG, enable_internal_states_tracking=False)
+    model = NeuromorphicModel(user_config=PSC[psc]["config"], enable_internal_states_tracking=False)
     model.set_global_property_value("dt", DT)
     model.register_soma_type(
-        name=SOMA_BREED,
-        step_func=user_customized_brunel_soma,
-        step_func_path=STEP_FUNC_DIR / f"{SOMA_BREED}.py",
+        name=PSC[psc]["soma"],
+        step_func=PSC[psc]["soma_kernel"],
+        step_func_path=STEP_FUNC_DIR / f"{PSC[psc]['soma']}.py",
     )
     model.register_synapse_type(
         name=SYNAPSE_BREED,
@@ -61,7 +95,7 @@ def create_model():
     return model
 
 
-def build_brunel_network(model, order=2500, epsilon=0.1, seed=1234):
+def build_brunel_network(model, order=2500, epsilon=0.1, seed=1234, psc="exp"):
     """Create the neurons, the recurrent synapses and the external input synapses.
 
     Neurons and synapses go to the model as arrays: one create_somas call, and one
@@ -93,18 +127,19 @@ def build_brunel_network(model, order=2500, epsilon=0.1, seed=1234):
         sources[target, :CE] = rng.choice(NE, size=CE, replace=False)
         sources[target, CE:] = NE + rng.choice(NI, size=CI, replace=False)
 
-    somas = model.create_somas(N_total, breed=SOMA_BREED, config_name="brunel_lif_neuron")
+    names = PSC[psc]
+    somas = model.create_somas(N_total, breed=names["soma"], config_name=names["neuron"])
 
     # One external input synapse per neuron, then every neuron's CE excitatory and CI
     # inhibitory incoming synapses.
     external_synapses = model.create_synapses(
-        -1, somas, breed=SYNAPSE_BREED, config_name="brunel_excitatory_synapse")
+        -1, somas, breed=SYNAPSE_BREED, config_name=names["excitatory"])
     model.create_synapses(
         sources[:, :CE].ravel(), np.repeat(somas, CE),
-        breed=SYNAPSE_BREED, config_name="brunel_excitatory_synapse")
+        breed=SYNAPSE_BREED, config_name=names["excitatory"])
     model.create_synapses(
         sources[:, CE:].ravel(), np.repeat(somas, CI),
-        breed=SYNAPSE_BREED, config_name="brunel_inhibitory_synapse")
+        breed=SYNAPSE_BREED, config_name=names["inhibitory"])
     synapse_count = N_total * (CE + CI)
 
     print(f"  Created {synapse_count} recurrent and {N_total} external synapses")
@@ -123,29 +158,48 @@ def build_brunel_network(model, order=2500, epsilon=0.1, seed=1234):
     }
 
 
-def threshold_rate_hz(model, soma, synapse):
+def threshold_rate_hz(model, soma, synapse, charge=1.0):
     """The Poisson rate at which the mean membrane potential just reaches threshold.
 
     One event adds ``weight`` to the current, which then decays with tau_syn and so carries the
-    charge weight * tau_syn. At rate r the mean current is r * weight * tau_syn, and the soma's
-    mean V - E_L is that times tau_m / C_m. Solved for r at V - E_L = V_th - E_L.
+    charge weight * tau_syn (an exponential current; an alpha current peaking at ``weight``
+    carries e times that, ``charge=np.e``). At rate r the mean current is r times the charge,
+    and the soma's mean V - E_L is that times tau_m / C_m. Solved for r at V - E_L = V_th - E_L.
+    For the alpha neuron this is brunel_alpha_nest.py's ``nu_th * CE``.
     """
     soma_hp = model.get_hyperparameters(soma)
     weight = model.get_hyperparameters(synapse)["weight"]
     return ((soma_hp["V_th"] - soma_hp["E_L"]) * soma_hp["C_m"]
-            / (weight * soma_hp["tau_syn_0"] * soma_hp["tau_m"]))
+            / (charge * weight * soma_hp["tau_syn_0"] * soma_hp["tau_m"]))
 
 
-def poisson_drive(n_inputs, ticks, rate_hz, seed=1234):
+def delay_ticks(model, soma, synapse):
+    """The alpha soma's emission delay, checked against the synapses' synaptic_delay (which is
+    what NEST GPU is given): delay_ticks + FRAMEWORK_TICKS must be the delay in ticks. 0 for a
+    soma without one."""
+    soma_hp = model.get_hyperparameters(soma)
+    if "delay_ticks" not in soma_hp:
+        return 0
+    extra = int(round(soma_hp["delay_ticks"]))
+    wanted = int(round(model.get_hyperparameters(synapse)["synaptic_delay"] / DT))
+    if extra + FRAMEWORK_TICKS != wanted:
+        raise ValueError(f"delay_ticks {extra} + {FRAMEWORK_TICKS} framework ticks is not the "
+                         f"synaptic_delay of {wanted} ticks: set delay_ticks to "
+                         f"{wanted - FRAMEWORK_TICKS} in the YAML")
+    return extra
+
+
+def poisson_drive(n_inputs, ticks, rate_hz, seed=1234, tag=""):
     """Independent Poisson input for each external synapse, as the number of events per tick.
 
     Drawn once and saved in data/; later runs with the same size, rate and seed load the file,
-    so every run sees the same input and spends no time drawing it.
+    so every run sees the same input and spends no time drawing it. ``tag`` keeps the alpha
+    neuron's drive (a different rate) in its own file.
 
     :return: (counts, path, loaded): counts[tick, input] as uint8, the file, and whether it
         was loaded (True) or drawn and saved by this call (False)
     """
-    path = DATA_DIR / f"brunel_poisson_drive_{n_inputs}x{ticks}.npz"
+    path = DATA_DIR / f"brunel_{tag}poisson_drive_{n_inputs}x{ticks}.npz"
     if path.exists():
         with np.load(path) as saved:
             if (np.isclose(float(saved["rate_hz"]), rate_hz, rtol=1e-6)
@@ -164,14 +218,21 @@ def poisson_drive(n_inputs, ticks, rate_hz, seed=1234):
     return counts, path, False
 
 
-def inject_poisson_drive(model, external_synapses, counts):
+def inject_poisson_drive(model, external_synapses, counts, shift=0, last_tick=None):
     """Schedule the drive: the events of an input in a tick are delivered as one spike whose
-    value is their count (the synapse multiplies it by its weight)."""
+    value is their count (the synapse multiplies it by its weight).
+
+    ``shift`` delays every event by that many ticks: injected input passes through no soma's
+    delay queue, so the alpha neuron's drive is shifted by the whole delay (NEST GPU's
+    generators are connected with the same delay as the recurrent synapses). Events at or after
+    ``last_tick`` are dropped."""
     ids = np.asarray(external_synapses, dtype=np.int64)
     for start in range(0, counts.shape[0], 1000):
         window = counts[start:start + 1000]
         tick, row = np.nonzero(window)
-        model.add_spikes(ids[row], start + tick, window[tick, row])
+        at = start + tick + shift
+        keep = at < last_tick if last_tick is not None else slice(None)
+        model.add_spikes(ids[row][keep], at[keep], window[tick, row][keep])
 
 
 def firing_summary(spike_times, somas, first_tick, last_tick):
@@ -190,15 +251,17 @@ def firing_summary(spike_times, somas, first_tick, last_tick):
     return count / (len(somas) * (last_tick - first_tick) * DT), cv
 
 
-def run_simulation(order=2500, duration_s=1.5, burn_in_s=0.5, eta=2.0):
+def run_simulation(order=2500, duration_s=1.5, burn_in_s=0.5, eta=2.0, psc="exp"):
     """Build the network, load the drive, simulate and summarise.
 
     :param eta: external Poisson rate as a multiple of threshold_rate_hz
+    :param psc: "exp" (the tutorial's neuron) or "alpha" (NEST's iaf_psc_alpha, 1.5 ms delay)
     :return: (summary, spike_times), spike_times being {soma_id: [tick, ...]}
     """
     t_start = time.time()
-    model = create_model()
-    net_info, conn_info = build_brunel_network(model, order=order)
+    print(f"Neuron: {PSC[psc]['soma']} ({psc} currents)")
+    model = create_model(psc)
+    net_info, conn_info = build_brunel_network(model, order=order, psc=psc)
     somas = conn_info["somas"]
     external_synapses = conn_info["external_synapses"]
     NE = net_info["num_excitatory"]
@@ -211,11 +274,21 @@ def run_simulation(order=2500, duration_s=1.5, burn_in_s=0.5, eta=2.0):
     print(f"setup() in {setup_sec:.1f} s")
 
     ticks = round(duration_s / DT)   # simulate() counts ticks, not milliseconds
-    rate_hz = eta * threshold_rate_hz(model, somas[0], external_synapses[0])
+    rate_hz = eta * threshold_rate_hz(model, somas[0], external_synapses[0],
+                                      charge=PSC[psc]["charge"])
     print(f"External drive: {rate_hz:.0f} Hz per neuron, {rate_hz * DT:.2f} events per tick")
+
+    # With a delay queue the soma emits each spike `extra` ticks after it fires: run that many
+    # more ticks so the last ones come out, and inject the drive by the whole delay.
+    extra = delay_ticks(model, somas[0], external_synapses[0])
+    if extra:
+        print(f"Delay: {extra + FRAMEWORK_TICKS} ticks ({(extra + FRAMEWORK_TICKS) * DT * 1e3:.1f} ms), "
+              f"{extra} of them in the soma's queue")
     t0 = time.time()
-    counts, drive_file, loaded = poisson_drive(len(external_synapses), ticks, rate_hz)
-    inject_poisson_drive(model, external_synapses, counts)
+    counts, drive_file, loaded = poisson_drive(len(external_synapses), ticks, rate_hz,
+                                               tag=PSC[psc]["drive_tag"])
+    inject_poisson_drive(model, external_synapses, counts,
+                         shift=extra + FRAMEWORK_TICKS if extra else 0, last_tick=ticks + extra)
     drive_sec = time.time() - t0
     print(f"  {'loaded from' if loaded else 'drawn and saved to'} {drive_file} "
           f"({np.count_nonzero(counts):,} spikes) in {drive_sec:.1f} s")
@@ -233,12 +306,17 @@ def run_simulation(order=2500, duration_s=1.5, burn_in_s=0.5, eta=2.0):
     print(f"  first simulate() call (1 tick, one-time device build): {first_call_sec:.1f} s")
 
     t0 = time.time()
-    model.simulate(ticks=ticks - 1)
+    model.simulate(ticks=ticks - 1 + extra)
     ticks_sec = time.time() - t0
     for soma, soma_ticks in model.get_all_spike_times().items():
         spike_times.setdefault(soma, []).extend(soma_ticks)
-    ms_per_tick = ticks_sec / (ticks - 1) * 1e3
-    print(f"  remaining {ticks - 1} ticks: {ticks_sec:.2f} s ({ms_per_tick:.3f} ms per tick)")
+    if extra:
+        # recorded ticks are emission ticks: back to the ticks the somas fired at
+        spike_times = {soma: [t - extra for t in soma_ticks if extra <= t < ticks + extra]
+                       for soma, soma_ticks in spike_times.items()}
+        spike_times = {soma: soma_ticks for soma, soma_ticks in spike_times.items() if soma_ticks}
+    ms_per_tick = ticks_sec / (ticks - 1 + extra) * 1e3
+    print(f"  remaining {ticks - 1 + extra} ticks: {ticks_sec:.2f} s ({ms_per_tick:.3f} ms per tick)")
 
     first_tick = round(burn_in_s / DT)
     e_rate, e_cv = firing_summary(spike_times, somas[:NE], first_tick, ticks)
@@ -267,5 +345,17 @@ def run_simulation(order=2500, duration_s=1.5, burn_in_s=0.5, eta=2.0):
     }, spike_times
 
 
+def parse_command_line(argv):
+    """``[order] [exp|alpha]`` in either order: (order, psc)."""
+    order, psc = 2500, "exp"
+    for arg in argv:
+        if arg in PSC:
+            psc = arg
+        else:
+            order = int(arg)
+    return order, psc
+
+
 if __name__ == "__main__":
-    run_simulation(order=int(sys.argv[1]) if len(sys.argv) > 1 else 2500)
+    order, psc = parse_command_line(sys.argv[1:])
+    run_simulation(order=order, psc=psc)

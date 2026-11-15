@@ -24,6 +24,7 @@ registration call.
 | `user_customized_conductance_lif.py` | soma: LIF whose two inbox channels are conductances with reversal potentials | 06 |
 | `user_customized_brunel_soma.py` | soma: LIF with one exponential current per inbox channel, explained line by line | 07 |
 | `user_customized_brunel_synapse.py` | synapse: delivery only, event-capable, explained line by line | 07 |
+| `user_customized_brunel_alpha_soma.py` | soma: NEST's `iaf_psc_alpha` (alpha currents, exact propagators) with an emission-delay queue for a uniform transmission delay | `brunel_simulation.py alpha` |
 
 The notebooks put this folder on `sys.path` and import each kernel by its module name. The
 file basename and the function name must both be globally unique: `setup()` generates

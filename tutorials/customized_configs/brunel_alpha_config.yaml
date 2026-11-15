@@ -1,0 +1,47 @@
+# Parameters of the alpha-current Brunel tutorial network: brunel_simulation.py alpha and
+# brunel_simulation_nestgpu.py alpha. NEST's classic brunel_alpha_nest.py neuron and synapses
+# (iaf_psc_alpha, 0.1 mV PSP peak, g = 5, delay 1.5 ms), in SI units. The network sizes are
+# the tutorial's, which differ from that example's: see brunel_simulation.py.
+#
+# Passed to NeuromorphicModel(user_config=...): it replaces the packaged configs, so every
+# breed/config the tutorial uses is declared here. Inside each block the KEY ORDER is the
+# index order the kernel reads. Do not reorder keys.
+
+soma:
+  user_customized_brunel_alpha_soma:
+    brunel_alpha_lif_neuron:
+      hyperparameters:
+        C_m: 250.0e-12         # 250 pF membrane capacitance (F)
+        tau_m: 0.020           # 20 ms membrane time constant (s)
+        tau_syn_0: 0.0005      # 0.5 ms rise time of channel 0's alpha current (s)
+        tau_syn_1: 0.0005      # 0.5 ms rise time of channel 1's alpha current (s)
+        V_th: 0.020            # 20 mV spike threshold (V)
+        V_reset: 0.0           # 0 mV reset potential (V)
+        E_L: 0.0               # 0 mV leak reversal potential (V)
+        t_ref: 0.002           # 2 ms refractory period (s): 20 ticks
+        delay_ticks: 13        # emission delay: 13 + the framework's own 2 ticks = 15 ticks = the 1.5 ms below
+      internal_states:
+        V_m: 0.0               # membrane potential (V)
+        refractory: 0.0        # refractory ticks left
+        I_syn_0: 0.0           # channel 0's current (A)
+        I_syn_1: 0.0           # channel 1's current (A)
+        dI_syn_0: 0.0          # channel 0's current derivative (A/s)
+        dI_syn_1: 0.0          # channel 1's current derivative (A/s)
+        spike_queue: 0.0       # the last delay_ticks spikes, as bits
+
+synapse:
+  user_customized_brunel_synapse:
+    brunel_alpha_excitatory_synapse:
+      hyperparameters:
+        weight: 20.68015524367846e-12   # 20.68 pA: a 0.1 mV PSP peak on this soma (NEST's ComputePSPnorm)
+        synaptic_delay: 0.0015          # 1.5 ms: what NEST GPU is given; the soma's delay_ticks realizes it
+        channel: 0                      # deliver into channel 0
+      internal_states:
+        unused: 0.0                     # the kernel keeps no state; one placeholder slot
+    brunel_alpha_inhibitory_synapse:
+      hyperparameters:
+        weight: -103.4007762183923e-12  # -103.4 pA: g = 5 times the excitatory weight, inhibitory
+        synaptic_delay: 0.0015
+        channel: 1                      # deliver into channel 1
+      internal_states:
+        unused: 0.0
