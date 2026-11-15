@@ -59,6 +59,73 @@ def place(frames, depth):
     return " < ".join(short(f) for f in shown)
 
 
+def memory_table(files, show):
+    """Per node, from its ranks' memory samples (memory_sampler.py) during the first tick: the
+    most its job used against its limit, how often it hit the limit, the worst memory pressure,
+    and the system CPU time its ranks spent. The ``show`` nodes that used the most system time."""
+    nodes = defaultdict(lambda: defaultdict(float))
+    settings = ""
+    for f in files:
+        lines = f.read_text().splitlines()
+        if len(lines) < 3:
+            continue
+        settings = re.sub(r"node=\S+; |start=\S+; |cgroup=\S+; ", "", lines[0].lstrip("# "))
+        node = re.search(r"node=([^;]+)", lines[0]).group(1)
+        cols = lines[1].split("\t")
+        t_first = t_last = None
+        rows = []
+        for line in lines[2:]:
+            if line.startswith("# t=") and "first tick starts" in line:
+                t_first = float(line.split()[1][2:])
+            elif line.startswith("# t=") and "first tick ends" in line:
+                t_last = float(line.split()[1][2:])
+            elif not line.startswith("#"):
+                rows.append(dict(zip(cols, line.split("\t"))))
+        if t_first is None:
+            continue
+        tick = [r for r in rows if float(r["t"]) >= t_first and (t_last is None or float(r["t"]) <= t_last)]
+        if not tick:
+            continue
+
+        def num(row, key):
+            try:
+                return float(row[key])
+            except (KeyError, ValueError):
+                return 0.0
+
+        n = nodes[node]
+        n["ranks"] += 1
+        n["rss_peak"] += max(num(r, "rss") for r in tick)
+        n["stime"] += num(tick[-1], "stime") - num(tick[0], "stime")
+        n["utime"] += num(tick[-1], "utime") - num(tick[0], "utime")
+        n["limit"] = num(tick[0], "cg_limit")
+        n["use"] = max(n["use"], max(num(r, "cg_use") for r in tick))
+        n["file_min"] = min(num(r, "cg_file") for r in tick)
+        n["file_start"] = num(tick[0], "cg_file")
+        n["hits"] = max(n["hits"], num(tick[-1], "cg_hit_limit") - num(tick[0], "cg_hit_limit"))
+        n["some"] = max(n["some"], max(num(r, "cg_some10") for r in tick))
+        n["full"] = max(n["full"], max(num(r, "cg_full10") for r in tick))
+        n["available_min"] = min(num(r, "node_available") for r in tick)
+        n["allocstall"] = max(n["allocstall"], num(tick[-1], "allocstall") - num(tick[0], "allocstall"))
+        n["compact"] = max(n["compact"], num(tick[-1], "compact_stall") - num(tick[0], "compact_stall"))
+        n["samples"] += len(tick)
+    if not nodes:
+        return
+    print(f"memory during the first tick, {len(nodes)} nodes ({settings})")
+    print("  node        ranks  sum of rank peaks  job use / limit  file cache start > least  hit limit  "
+          "pressure some / full (% of 10 s)  least available  sys / user CPU s  reclaim stalls  compaction stalls")
+    order = sorted(nodes, key=lambda k: -nodes[k]["stime"])
+    for node in order[:show] + (["..."] if len(order) > show + 1 else []) + order[show:][-1:]:
+        if node == "...":
+            print("  ...")
+            continue
+        n = nodes[node]
+        print(f"  {node:10s}  {n['ranks']:5.0f}  {n['rss_peak']:13.1f} GiB  {n['use']:6.1f} / {n['limit']:5.1f}  "
+              f"{n['file_start']:12.1f} > {n['file_min']:5.1f}  {n['hits']:9.0f}  "
+              f"{n['some']:15.1f} / {n['full']:5.1f}  {n['available_min']:20.1f}  "
+              f"{n['stime']:7.0f} / {n['utime']:6.0f}  {n['allocstall']:14.0f}  {n['compact']:17.0f}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("dir")
@@ -66,7 +133,10 @@ def main():
     ap.add_argument("--top", type=int, default=4, help="places shown per dump time")
     ap.add_argument("--name-up-to", type=int, default=6,
                     help="a place with at most this many ranks lists them and their nodes")
+    ap.add_argument("--nodes", type=int, default=6,
+                    help="nodes shown in the memory table: those with the most system CPU time")
     args = ap.parse_args()
+    memory_table(sorted(Path(args.dir).glob("mem*.txt")), args.nodes)
     files = sorted(Path(args.dir).glob("rank*.txt"))
     ranks = [int(f.stem[4:]) for f in files]
     per_rank = [dumps_of(f) for f in files]

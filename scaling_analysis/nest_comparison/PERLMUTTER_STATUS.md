@@ -320,35 +320,58 @@ Jobs 61345638 / 61345639 (32 GPUs), 61345642 (128 `mixed`), 61346213 (128 `libra
   doubling. NEST GPU is 2.4 to 2.7 times faster at 64 and 128 GPUs. Why SuperNeuroABM's
   tick grows here and not on `library` is open; the two differ in activity only.
 
-**SuperNeuroABM's first tick blows up from 128 GPUs on at the same work per rank, and it
-is what stops the weak-scaling runs.** First tick, slowest rank, seconds:
+**SuperNeuroABM's first tick does not grow with the rank count: in a slow run one node
+stalls and every other rank waits for it. It is what stops the weak-scaling runs.** First
+tick, slowest rank, seconds:
 
 | GPUs | `mixed` | `library` | strong scaling (92,160 neurons in all) |
 |---|---|---|---|
 | 8 | 73.7 | 71.4 | 79.8 |
 | 16 | 78.8 | 74.6 | 37.9 |
 | 32 | 78.2 | 79.6 | 20.2 |
-| 64 | 80.4, 81.3 | 80.3 | 11.6 |
-| 128 | 309.4, over 489 (killed) | 664.8, 626.8 | 7.3 |
+| 64 | 80.4, 81.3, 402.6 | 80.3 | 11.6 |
+| 128 | 309.4, over 489 (killed), 1,396.2 | 664.8, 626.8 | 7.3 |
 | 256 | over 801 (killed) | | pending |
 
-- Peers and ghost somas are the same from 64 GPUs on, so it is not the halo.
-- It is not the rank count alone: 128 ranks of 720 neurons each build in 7.3 s (strong
-  scaling, job 61346441). It takes many ranks and full-size ranks (126.6 M synapses each).
-- It is not steady: the same parts on 128 GPUs took 309.4 s (job 61345642) and over 489 s
-  (job 61347857, killed by its 780 s limit; that run was slow before the first tick too,
-  211 s from the end of the load to the end of setup against about 60). The two `library`
-  runs of one job, on the same nodes, took 664.8 and 626.8 s.
-- 64-GPU runs took 80 to 81 s every time (three runs), one of them while 128-GPU jobs were
-  running.
-- On the all-to-all network the first tick was 123 / 148 / 196 / 1,030 s at 64 / 128 / 256 /
-  512 GPUs, so the torus is slower here at 128 and 256 GPUs although it has a fifth to a
-  twenty-third of the ghost somas.
-- The whole SuperNeuroABM run at 128 GPUs took 421 s (`mixed`) and 785 s (`library`), 171 s
-  at 32; NEST GPU's 81 / 90 / 96 s at 32 / 128 / 256 GPUs.
+What the stack dumps show (`run_partitioned_sna.py --stack-dump-every 20`: every rank writes
+its Python stack every 20 s during the first tick, `summarize_stack_dumps.py` tallies where
+the ranks are; jobs 61350811 at 64 GPUs, 402.6 s, and 61350810 at 128 GPUs, 1,396.2 s):
 
-The first tick by phase at 64 GPUs (`run_partitioned_sna.py --first-tick-timers`, SAGESim's
-own timers, mean over the ranks; job 61347856, 81.0 s in all):
+- All ranks but four are through their build after 60 to 80 s and then sit in the first
+  collective of the exchange-map setup (`Alltoall`, `gpu_kernels.py:811`) until the tick ends.
+- The four are the ranks of one node: nid002688 in the 64-GPU job, nid002077 in the 128-GPU
+  job. They keep pace with the others for 40 to 60 s and then crawl through the event
+  wake-list build at the end of `_build_gpu_buffers` (`sagesim/model.py` 2198 to 2230): plain
+  numpy lines over the 126.6 M synapses of the rank (an index, a compare, a stable argsort, a
+  unique), each allocating a new array of about 1 GB. A line that takes a second on the other
+  nodes takes 100 to 300 s there (`nb = values_h[start[ok]]` alone 220 s at 128 GPUs).
+- SAGESim's timers say the same: `gpu_buffer_build` mean 73 / 91 s and slowest rank 373 /
+  1,367 s at 64 / 128 GPUs, `comm_init` (the wait) 315 / 1,291 s on average.
+- So the chance of a slow first tick grows with the number of nodes, not the work with the
+  number of ranks: five of five 128-GPU runs had a slow node, one of four 64-GPU runs, none
+  at 8 to 32 GPUs, and 128 ranks of 720 neurons (strong scaling) build in 7.3 s.
+
+Why that node (hypothesis, under test): the job's host memory limit. Slurm confines a job
+to 229,802 MB = 224.4 GiB per GPU node (`RealMemory` 257,100 MB less `MemSpecLimit` 27,298 MB,
+`ConstrainRAMSpace=yes`). Slurm's accounting gives 53.4 GiB as the largest rank (`MaxRSS`,
+52.3 GiB on average), so four ranks are 209 to 214 GiB at the peak of the build, and the
+node's page cache holds another 17 GiB of part files that count against the same limit. The
+wake-list build is where a rank's host memory peaks (16.5 GiB after setup, 50.5 GiB at the
+most). The slow nodes looked like the others when the tick began (251 GiB, 159 to 161 GiB
+available, 17 GiB page cache), every rank used its CPU throughout (least CPU time 24:51 of
+25:32 minutes), and there were few major faults (at most 692): allocation that has to
+reclaim first, not a broken node and not paging from disk. Job 61353758 (128 GPUs) samples
+every node's memory, the job's use against its limit and the kernel's reclaim counters
+every 5 s (`memory_sampler.py`, `mem<rank>.txt` next to the stack dumps, summed per node by
+`summarize_stack_dumps.py`), in two runs on the same nodes: first with the part files
+dropped from the page cache after the load (`--drop-file-cache`), then as it is.
+
+If it holds, the 1,030 s first tick of the all-to-all run at 512 GPUs has the same cause
+(same 52 GiB per rank), and what the owner can act on is the transient host memory of the
+first tick, about 34 GiB above the 16.5 GiB a rank holds after setup.
+
+The first tick by phase when no node stalls, 64 GPUs (`--first-tick-timers`, SAGESim's own
+timers, mean over the ranks; job 61347856, 81.0 s in all):
 
 | phase | seconds | what it is |
 |---|---|---|
@@ -359,14 +382,6 @@ own timers, mean over the ranks; job 61347856, 81.0 s in all):
 | - `mpi_sync` | 5.2 (8.5 on the slowest) | two `Allreduce`: the wait for the slowest rank |
 | - property tensors | 0.9 | |
 | `comm_init` | 17.3 | exchange maps (`Alltoall`, id lists) and the first ghost exchange (0.06 s) |
-
-Nothing in these phases loops over the ranks, and none takes an id-range-sized table
-(`AgentIndex` and `convert_agent_ids_to_indices` fall back to sorted ids when the span is
-over 3 times the count; read 2026-11-15). The timers print only when the tick ends, so the
-128-GPU job (61347857) gave nothing. The next diagnostic writes every rank's Python stack
-every 20 s during the first tick (`--stack-dump-every 20`, files in `<parts>/stacks_np<N>/`;
-`summarize_stack_dumps.py` tallies where the ranks are at each dump) and lets the run go to
-26 minutes: `perlmutter/torus_first_tick.sbatch`, jobs 61350810 (128 GPUs) and 61350811 (64).
 
 Also uneven across the ranks, in the runner and not in the library: the starting potentials,
 one `get_agent_property_value` per soma (2 to 4 s on the fastest rank, 22 to 51 s on the
@@ -424,24 +439,24 @@ timers cost 0.9 ms here and 0.05 ms on `mixed` at 64 GPUs, so they overstate the
 on the near-silent network. The job ran out of its 30 minutes (two SuperNeuroABM builds of
 11 minutes) before NEST GPU's timers.
 
-**In the queue** at 2026-11-15 11:00 (outputs `torus-scale-<job>.out` and
+**In the queue** at 2026-11-15 11:40 (outputs `torus-scale-<job>.out` and
 `torus-first-tick-<job>.out` in the work directory; parts and spikes in
 `torus_mixed_11250_r17/`, `torus_11250_r17/` (library), `torus_ei_11250_r17/` (exact)):
 
 | job | queue | nodes (GPUs) | what |
 |---|---|---|---|
-| 61350810 | regular | 32 (128) | SuperNeuroABM's first tick, `mixed`: stack dumps every 20 s and SAGESim's timers, up to 26 minutes |
-| 61350811 | regular | 16 (64) | the same at 64 GPUs, for the same dumps where the tick takes 80 s |
+| 61353758 | regular | 32 (128) | SuperNeuroABM's first tick, `mixed`, with the memory sampler: first with the part files dropped from the page cache, then as it is; 600 s limit per run |
 | 61346443 | regular | 64 (256) | strong scaling, below |
 
 **To resume:** `sacct -X -S 2026-11-15T07:30 --format=JobID,JobName%18,NNodes,State,Elapsed,Start`
 for the state of all of them; read a `torus-scale` output with
-`grep -vE "^\[Rank|^\[TIMING\]|^\s+\[|Killed" torus-scale-<job>.out`. First the two
-first-tick jobs (`torus-first-tick-<job>.out` ends with the summary of the dumps; more
-frames with `python summarize_stack_dumps.py torus_mixed_11250_r17/stacks_np128 --depth 6`):
-where the ranks sit from 80 s on at 128 GPUs is the lead for the owner, who wants these runs
-as input for optimizing SuperNeuroABM. A job that fails is resubmitted from the work
-directory with
+`grep -vE "^\[Rank|^\[TIMING\]|^\s+\[|Killed" torus-scale-<job>.out`. First job 61353758:
+`torus-first-tick-61353758.out` holds, per run, the timers, then a table of the nodes' memory
+during the first tick (the nodes with the most system CPU time first) and the tally of the
+stack dumps; the samples are in `torus_mixed_11250_r17/stacks_np128_dropcache/` and
+`stacks_np128_plain/`. What to read off: does the node whose ranks crawl reach its limit
+(`job use / limit`, `hit limit`, pressure), and does the run with the cache dropped go
+through in 80 s. A job that fails is resubmitted from the work directory with
 `sbatch -N <nodes> [-q regular -t 00:30:00] --export=ALL,NET=<net>[,STRONG=92160][,TIMERS=1] torus_scale.sbatch`;
 the parts already written are reused.
 
@@ -537,10 +552,12 @@ documents, not a dependence on the partition.
 
 - The torus comparison: the queued jobs above, then the pending cells (strong scaling at
   256 GPUs).
-- SuperNeuroABM's first tick with full-size ranks (80 s at 64 GPUs, 309 to 665 s at 128,
-  over 800 s at 256 on the torus; 7 s at 128 GPUs with 720 neurons each): the stack dumps of
-  jobs 61350810 / 61350811 should name the place, then the cause. It decides whether weak
-  scaling beyond 128 GPUs can be measured at all.
+- SuperNeuroABM's first tick: one node's four ranks stall in the wake-list build and all
+  others wait (80 s without a stalled node, 309 to 1,396 s with one at 128 GPUs). Job
+  61353758 tests whether that node is at the job's 224 GiB host memory limit. It decides
+  whether weak scaling beyond 128 GPUs can be measured at all; a way to run that avoids it
+  (dropping the file cache, three ranks per node) is the runner's business, lowering the
+  transient host memory of the first tick is SAGESim's and the owner's call.
 - SuperNeuroABM's tick on `mixed` is 17 % longer at 128 GPUs than at 64 with the same peers
   and ghosts, and 3 % on `library`: not explained.
 - NEST GPU alone at 256 and 512 GPUs on the torus (the SuperNeuroABM halves cannot run until

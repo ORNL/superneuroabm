@@ -13,6 +13,7 @@ usage: srun -n N python run_partitioned_sna.py <root> [--ms 1500] [--out spikes.
 
 import argparse
 import faulthandler
+import os
 import resource
 import socket
 import sys
@@ -24,6 +25,7 @@ import numpy as np
 from mpi4py import MPI
 from sagesim.agent_index import rows_of
 
+import memory_sampler
 import partitioned_common as pc
 
 sys.path.insert(0, str(pc.STEP_FUNC_DIR))
@@ -65,7 +67,12 @@ def main():
     ap.add_argument("--stack-dump-every", type=float, default=0.0,
                     help="during the first tick, every rank writes its Python stack every this "
                          "many seconds to <root>/stacks_np<N>/rank<r>.txt (summarize_stack_dumps.py "
-                         "reads them): where the tick is, also for a run that does not finish")
+                         "reads them): where the tick is, also for a run that does not finish. "
+                         "From the start to the end of that tick it also samples its own and its "
+                         "node's memory into mem<r>.txt there (memory_sampler.py)")
+    ap.add_argument("--drop-file-cache", action="store_true",
+                    help="after the load, ask the kernel to drop the part file from the page cache "
+                         "(about 4 GB per rank that counts against the job's memory limit)")
     ap.add_argument("--out", default=None, help="spikes .npz (default <root>/spikes_sna_np<N>.npz)")
     args = ap.parse_args()
     if args.burn_in_ms is None:
@@ -77,6 +84,13 @@ def main():
     t_all = time.time()
     par = pc.alpha_parameters(args.config)
     extra = par["delay_ticks"]
+
+    stop_sampler, mark = None, lambda text: None
+    if args.stack_dump_every > 0:                   # memory by the side of the stack dumps
+        stacks = Path(args.root) / f"stacks_np{P}"
+        stacks.mkdir(exist_ok=True)
+        stop_sampler, mark = memory_sampler.start(stacks / f"mem{rank:04d}.txt",
+                                                  min(5.0, args.stack_dump_every))
 
     # ---- load this rank's part -----------------------------------------------------------
     t0 = time.time()
@@ -90,7 +104,12 @@ def main():
                                 step_func_path=pc.STEP_FUNC_DIR / f"{pc.SYNAPSE_BREED}.py",
                                 event_capable=True)
     model.load_network(str(path))
+    if args.drop_file_cache:
+        fd = os.open(path, os.O_RDONLY)
+        os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+        os.close(fd)
     progress(rank, "load_network")
+    mark("loaded")
     soma_ids, syn_of_soma, n_synapses = pc.read_external_inputs(path)
     timers["load"] = time.time() - t0
 
@@ -107,6 +126,7 @@ def main():
     t0 = time.time()
     model.setup()
     progress(rank, "setup")
+    mark("set up")
     timers["setup"] = time.time() - t0
 
     # ---- external drive: each soma's events on its external input synapse, delayed by the
@@ -150,10 +170,13 @@ def main():
             f"free {gpu_free / 2**30:.0f}\n")
         stack_file.flush()
         faulthandler.dump_traceback_later(args.stack_dump_every, repeat=True, file=stack_file)
+    mark("first tick starts")
     model.simulate(ticks=1)
     if args.stack_dump_every > 0:
         faulthandler.cancel_dump_traceback_later()
         stack_file.close()
+        mark("first tick ends")
+        stop_sampler()
     progress(rank, "first tick")
     timers["first_tick"] = time.time() - t0
     first_tick = {}
