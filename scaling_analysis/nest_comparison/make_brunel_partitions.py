@@ -1,7 +1,8 @@
 """Write a Brunel network as per-rank partition files for run_partitioned_sna.py and
 run_partitioned_nestgpu.py.
 
-Two ways, both through superneuroabm.brunel.brunel_partition (global fixed in-degree):
+Two ways, both through superneuroabm.brunel.brunel_partition (fixed in-degree; sources from
+the whole network, or with --topology torus3d from a ball around each soma on a 3D torus):
 
   * one network at every rank count (the default): generated once as a single-rank partition,
     then split by post soma into N post-owned parts (per_tick_probes/split_partition.py). The
@@ -19,6 +20,21 @@ Two ways, both through superneuroabm.brunel.brunel_partition (global fixed in-de
             --neurons 11250 --excitatory-in-degree 9000 --inhibitory-in-degree 2250 \\
             --config hpc_alpha_config.yaml
 
+    The same size with only the structure changed, the 3D torus of the weak-scaling runs
+    (docs/BRUNEL_SCALING.md 5.5a): every rank is one 18 x 25 x 25 tile of neurons and a soma
+    draws its 11,250 sources, without repeats, from the neurons within --connection-radius of
+    it, so a rank listens to its neighbour tiles only (26 of them from 64 ranks on). The
+    radius must stay below the smallest grid dimension (18 on one rank). With --exact-ei the
+    soma draws its 9,000 excitatory and 2,250 inhibitory sources apart, from the neurons of
+    each kind in the ball, as the whole-network draw does: brunel_partition's own torus3d
+    draws one pool, a rank's inhibitory neurons are one slab of its tile, and an excitatory
+    soma then gets up to 44 % more inhibitory sources than an inhibitory one, which silences
+    the excitatory neurons at these weights (measured 2026-11-15: 0.4 Hz, against 8 to 10 Hz).
+
+        srun -n 8 python make_brunel_partitions.py partitions/torus --ranks 1 2 4 8 \\
+            --neurons 11250 --excitatory-in-degree 9000 --inhibitory-in-degree 2250 \\
+            --config hpc_alpha_config.yaml --topology torus3d --connection-radius 17 --exact-ei
+
 The weights are the alpha neuron's, from --config (inhibitory = -g x excitatory), with one
 external input synapse per soma. Both write <root>/np<N>/partition_<r>.npz.
 """
@@ -34,7 +50,65 @@ import partitioned_common as pc
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "per_tick_probes"))
 from split_partition import split                                   # noqa: E402
+from superneuroabm import brunel                                    # noqa: E402
 from superneuroabm.brunel import brunel_partition                   # noqa: E402
+
+
+def exact_ei_ball_draw(c_e, c_i, interleave, excitatory_fraction=0.8, chunk=1024):
+    """A stand-in for brunel._draw_sources_radius (same arguments, same (somas, in-degree)
+    result, same grid of rank tiles and the same ball) that gives every soma exactly c_e
+    excitatory sources followed by c_i inhibitory ones, each drawn without repeats among the
+    ball's neurons of that kind.
+
+    interleave: where a rank's inhibitory neurons sit in its tile. brunel_partition's ids put
+    them last in the rank's block, which its positions turn into one slab of the tile; with
+    interleave they are spread evenly instead (every fifth position at 20 %), so that every
+    ball holds both kinds in the network's proportion. The ids, and with them which neuron is
+    inhibitory, stay brunel_partition's."""
+
+    def draw(rng, rank, ranks, npp, in_degree, radius, allow_autapses):
+        assert in_degree == c_e + c_i
+        a, b, c = brunel._grid_factorization_3d(ranks)
+        gx, gy, gz = brunel._factor_near_cube(npp)
+        A, B, C = a * gx, b * gy, c * gz
+        if radius >= min(A, B, C):                  # also what keeps a soma out of its own ball
+            raise ValueError(f"radius {radius} must be below the smallest grid dimension {min(A, B, C)}")
+        exc_per_rank = round(excitatory_fraction * npp)             # brunel_partition's rule
+        q = np.arange(npp, dtype=np.int64)          # positions in the tile, x-major
+        if interleave:
+            n_inh = npp - exc_per_rank
+            inh_at = ((q + 1) * n_inh) // npp > (q * n_inh) // npp
+            position_of = np.concatenate([q[~inh_at], q[inh_at]])   # of a rank's k-th soma
+        else:
+            position_of = q
+        soma_at = np.empty(npp, dtype=np.int64)
+        soma_at[position_of] = q
+        ix, rest = np.divmod(position_of, gy * gz)
+        iy, iz = np.divmod(rest, gz)
+        tx, rest = divmod(rank, b * c)
+        ty, tz = divmod(rest, c)
+        X, Y, Z = tx * gx + ix, ty * gy + iy, tz * gz + iz           # this rank's somas
+        off = brunel._ball_offsets(radius)
+        pre = np.empty((npp, in_degree), dtype=np.int64)
+        for lo in range(0, npp, chunk):
+            hi = min(lo + chunk, npp)
+            cx, jx = np.divmod((X[lo:hi, None] + off[None, :, 0]) % A, gx)
+            cy, jy = np.divmod((Y[lo:hi, None] + off[None, :, 1]) % B, gy)
+            cz, jz = np.divmod((Z[lo:hi, None] + off[None, :, 2]) % C, gz)
+            k = soma_at[jx * (gy * gz) + jy * gz + jz]
+            cand = (cx * (b * c) + cy * c + cz) * npp + k
+            is_exc = k < exc_per_rank
+            del cx, cy, cz, jx, jy, jz, k
+            keys = rng.random(cand.shape)
+            for first, n, kind in ((0, c_e, is_exc), (c_e, c_i, ~is_exc)):
+                if kind.sum(axis=1).min() < n:
+                    raise ValueError(f"a ball of radius {radius} holds fewer than {n} neurons of "
+                                     "one kind for some soma: use a larger --connection-radius")
+                chosen = np.argpartition(np.where(kind, keys, 2.0), n - 1, axis=1)[:, :n]
+                pre[lo:hi, first:first + n] = np.take_along_axis(cand, chosen, axis=1)
+        return pre
+
+    return draw
 
 
 def main():
@@ -47,6 +121,18 @@ def main():
     ap.add_argument("--g", type=float, default=5.0, help="inhibitory / excitatory weight")
     ap.add_argument("--seed", type=int, default=42, help="connectivity seed")
     ap.add_argument("--config", default=str(pc.ALPHA_YAML), help="the alpha neuron's YAML")
+    ap.add_argument("--topology", choices=("global", "torus3d"), default="global",
+                    help="where a soma's sources come from: the whole network, or a ball "
+                         "around it on a 3D torus of rank tiles")
+    ap.add_argument("--connection-radius", type=float, default=None,
+                    help="torus3d: the ball's radius in neurons (default: the smallest ball "
+                         "holding twice the in-degree)")
+    ap.add_argument("--exact-ei", action="store_true",
+                    help="torus3d: exactly --excitatory-in-degree and --inhibitory-in-degree "
+                         "sources per soma, each from its own kind in the ball")
+    ap.add_argument("--interleave-ei", action="store_true",
+                    help="with --exact-ei: a rank's inhibitory neurons spread evenly over its "
+                         "tile, not in one slab of it")
     ap.add_argument("--split", type=int, nargs="*", default=[], help="rank counts to split for")
     ap.add_argument("--ranks", type=int, nargs="*", default=[],
                     help="rank counts of a network with --neurons on every rank")
@@ -54,13 +140,21 @@ def main():
 
     par = pc.alpha_parameters(args.config)
     w = par["J_E"] * 1e-12                                       # pA -> A, the YAML's units
+    if args.exact_ei:
+        if args.topology != "torus3d":
+            ap.error("--exact-ei goes with --topology torus3d (the global draw is already exact)")
+        brunel._draw_sources_radius = exact_ei_ball_draw(
+            args.excitatory_in_degree, args.inhibitory_in_degree, args.interleave_ei)
+    elif args.interleave_ei:
+        ap.error("--interleave-ei goes with --exact-ei")
     root = Path(args.root)
 
     def part(ranks, rank):
         return brunel_partition(
             somas_per_rank=args.neurons, num_partitions=ranks, partition_rank=rank,
             excitatory_in_degree=args.excitatory_in_degree,
-            inhibitory_in_degree=args.inhibitory_in_degree, topology="global",
+            inhibitory_in_degree=args.inhibitory_in_degree, topology=args.topology,
+            connection_radius=args.connection_radius,
             excitatory_weight=w, inhibitory_weight_ratio=args.g, external_weight=w,
             soma_breed=pc.SOMA_BREED, soma_config=pc.SOMA_CONFIG,
             synapse_breed=pc.SYNAPSE_BREED, synapse_config=pc.SYNAPSE_CONFIG,
@@ -80,8 +174,16 @@ def main():
             tmp = out.with_suffix(".tmp.npz")
             np.savez(tmp, **net)
             tmp.rename(out)                       # a part is either whole or absent
-            print(f"{out}: {np.asarray(net['soma_ids']).size:,} somas, "
-                  f"{np.asarray(net['pre']).size:,} synapses, {time.time() - t0:.1f} s", flush=True)
+            pre, n = np.asarray(net["pre"]), np.asarray(net["soma_ids"]).size
+            own = (pre >= r * args.neurons) & (pre < (r + 1) * args.neurons)
+            inh = np.asarray(net["syn_hp_vals"])[:, 0] < 0
+            inh = np.bincount(np.asarray(net["post"])[inh] - r * args.neurons, minlength=n)
+            print(f"{out}: {n:,} somas, {pre.size:,} synapses ({100 * own.sum() / (pre >= 0).sum():.1f} % "
+                  f"from its own rank; inhibitory per soma {inh.min():,} to {inh.max():,}), "
+                  f"{np.asarray(net['remote_ids']).size:,} remote somas on "
+                  f"{np.unique(np.asarray(net['remote_rank_of'])).size} ranks, "
+                  f"{time.time() - t0:.1f} s", flush=True)
+            del pre, own, inh
             del net
         return
 

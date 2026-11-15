@@ -2,7 +2,9 @@
 
 Last updated 2026-11-15. This page is the hand-off: what the comparison is, what is
 verified, the numbers so far, what is running and what comes next. The comparison has now
-run on 1 to 512 GPUs (128 nodes); the tables are under "Numbers so far".
+run on 1 to 512 GPUs (128 nodes); the tables are under "Numbers so far". The same benchmark
+on a 3D torus is under way: see "The same benchmark on a 3D torus", which lists the jobs in
+the queue.
 
 ## The plan (owner's, 2026-11-14)
 
@@ -43,6 +45,8 @@ submitted jobs), then up to 128 nodes in the regular queue.
 | `tick_breakdown.sbatch` | each simulator's own per-tick timers at 2 ranks |
 | `tick_breakdown_32.sbatch` | the same at 32 ranks (8 nodes), and NEST GPU with excitatory weights x (1 + 1e-6) as the rounding control |
 | `nest_own_hpc.sbatch` | NEST GPU's own hpc_benchmark.py, unmodified |
+| `torus_node_check.sbatch` | the benchmark on a 3D torus, one node (`NET=library`, `exact` or `mixed`): parts for `RANKS`, both simulators, spike comparison |
+| `torus_scale.sbatch` | the same on N nodes (`sbatch -N <nodes> --export=ALL,NET=mixed`); `TIMERS=1` adds a run of each simulator with its per-tick timers |
 | `sna_mpi_variants.sbatch` | SuperNeuroABM under three MPI / GPU setups |
 | `own_gpu_first.sh` | wrapper: every GPU visible to a rank, its own first |
 
@@ -231,7 +235,94 @@ receive is what the other phases leave, about 0.015 ms at 2 GPUs and 0.15 ms at 
 0.35 ms of NEST GPU's step is the same at 2 and 32 GPUs; the MPI send and receive are what
 grow.
 
+## The same benchmark on a 3D torus (2026-11-15, under way)
+
+The owner's question: the all-to-all benchmark above is no weak-scaling test for
+SuperNeuroABM, whose exchange costs per ghost soma; is the 3D torus of the Frontier
+weak-scaling runs (`docs/BRUNEL_SCALING.md` 5.5a) better for it, and how do the two
+simulators compare there? Same neuron, weights, replayed drive, starting potentials and size
+(11,250 neurons and in-degree 11,250 per GPU, 126.6 M synapses); only the structure changes.
+
+**The structure.** `make_brunel_partitions.py --topology torus3d --connection-radius 17`:
+every rank is one 18 x 25 x 25 tile of neurons, the tiles form a periodic near-cube grid,
+and a soma draws its 11,250 sources without repeats from the 20,478 neurons within radius 17
+of it. Radius 17 because the library's default for this in-degree, 18, is not allowed on 1,
+2 and 4 ranks (it must stay below the 18-neuron tile edge). A rank then listens to its
+neighbour tiles only:
+
+| GPUs | grid of tiles | peer ranks | remote somas a rank listens to | sources from its own rank |
+|---|---|---|---|---|
+| 1 | 1x1x1 | 0 | 0 | 100 % |
+| 2 | 1x1x2 | 1 | 11,250 | 74.5 % |
+| 4 | 1x2x2 | 3 | 33,580 | 55.0 % |
+| 8 | 2x2x2 | 7 | 78,000 | 34.2 % |
+| 16, 32 | 2x2x4, 2x4x4 | 11, 17 | (from the jobs below) | |
+| 64 to 512 | 4x4x4 to 8x8x8 | 26 | about 126,000 expected, the same at every size | |
+
+Against 11,250 x (ranks - 1) on the all-to-all network: 708,750 at 64 GPUs, 5.75 M at 512.
+NEST GPU gains from it too: it exchanges spikes only between host pairs that share
+connections (`mpi_comm.cu`, `p2p_host_conn_matrix`).
+
+**The firing rate does not survive the change of structure.** Three ways to draw a soma's
+sources from its ball were run (`NET=` in the job scripts):
+
+| `NET` | the draw | rate at 1 / 2 / 4 / 8 GPUs | SuperNeuroABM against NEST GPU |
+|---|---|---|---|
+| `library` | `brunel_partition`'s own torus3d: one pool of 11,250 | 0.44 / 0.39 / 0.38 / 0.72 Hz | identical spikes over the whole run at 1, 2 and 8 GPUs; at 4, one spike one tick apart at 3.0 ms and nothing else |
+| `exact` | exactly 9,000 excitatory + 2,250 inhibitory (`--exact-ei`), inhibitory neurons where the library puts them | 22-24 / 108-137 / 102-129 / 560 Hz | identical for 26.0 / 14.5 / 3.2 / 7.4 ms |
+| `mixed` | the same exact draw, inhibitory neurons spread evenly over the tile (`--interleave-ei`) | - / - / - / 45-48 Hz | identical for 15.7 ms at 8 GPUs |
+
+- `library`: the library puts a rank's inhibitory neurons last in its id block, which its
+  positions turn into one slab of the tile (x layers 15 to 17 of 18). With one pool per ball
+  an excitatory soma in the middle of its slab gets 2,590 inhibitory sources and an
+  inhibitory soma 1,800 (per soma 1,704 to 2,676 measured, 2,250 in the benchmark). The
+  inhibitory neurons fire at 2 to 3 Hz and hold the excitatory ones silent (0.00 to 0.08 Hz
+  per layer; job 61344221). This is the wiring of the Frontier weak-scaling campaign, so a
+  firing campaign there needs a look at this too.
+- `exact`: every soma has the benchmark's in-degrees, and the network saturates: at 8 GPUs
+  a part of the excitatory somas fire at up to 1,588 Hz (the refractory limit is 2,000) and
+  the mean is 560 Hz (job 61344538).
+- `mixed`: fires at 45 to 48 Hz in bursts (spikes per 50 ms window between 125,000 and
+  273,000 at 8 GPUs; job 61345199). Not the 7.5 Hz of the all-to-all network: at this
+  in-degree a soma takes 55 % of its ball, a local density the all-to-all network has only
+  at 2 GPUs.
+
+The 64 to 512 GPU runs use `mixed` (it fires, with the benchmark's in-degrees); `library`
+runs to 64 GPUs as the near-silent reference with spike-for-spike agreement.
+
+**Numbers so far**, ms per tick over the timed 250 ms (jobs 61344221, 61344536, 61344538,
+61345199, 61345200):
+
+| GPUs | `library`: SuperNeuroABM / NEST GPU | `exact`: SuperNeuroABM / NEST GPU | `mixed`: SuperNeuroABM / NEST GPU |
+|---|---|---|---|
+| 1 | 0.052 / 0.157 | 0.103 / 0.167 | |
+| 2 | 0.530 / 0.419 | 0.862 / 0.518 | |
+| 4 | 0.713 / 0.449 | 1.070 / 0.556 | |
+| 8 | 0.927 / 0.505 | 2.569 / 0.913 | 1.177 / 0.519 |
+
+**In the queue** (submitted 2026-11-15 07:40; outputs `torus-scale-<job>.out` in the work
+directory; parts in `torus_mixed_11250_r17/`, `torus_11250_r17/`, `torus_ei_11250_r17/`):
+
+| job | queue | nodes (GPUs) | `NET` |
+|---|---|---|---|
+| 61345636, 61345637 | debug | 4 (16) | mixed, library |
+| 61345638, 61345639 | debug | 8 (32) | mixed, library |
+| 61345640 | regular | 16 (64) | mixed, `TIMERS=1` |
+| 61345641 | regular | 16 (64) | library |
+| 61345642, 61345643, 61345644 | regular | 32, 64, 128 (128, 256, 512) | mixed |
+
+When they are done: fill the tables above, and the weak-scaling answer is the tick from 64
+to 512 GPUs (flat or not) for each simulator.
+
+`compare_partitioned_spikes.py` now compares sorted integer keys (4 s for 2 x 12.7 M spikes,
+44 s before with Python sets); same output on six earlier pairs.
+
 ## Open
+
+- The torus comparison: the queued jobs above, then the tables and the weak-scaling answer.
+- A torus network that fires near the benchmark's 7.5 Hz was not found by changing the
+  structure alone (0.4 to 0.7, 45 to 48 or 560 Hz). Whether to tune the drive or the
+  in-degree for it is the owner's call.
 
 - SuperNeuroABM's kernel takes 1.41 ms of GPU time per tick at 32 ranks against 0.12 ms at
   2: find what in it works over the ghost somas.

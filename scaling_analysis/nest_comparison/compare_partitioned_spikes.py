@@ -35,27 +35,37 @@ def main():
         n, steps = int(r["n_somas"]), int(r["steps"])
         late = r["tick"] >= burn
         print(f"{name:28s} {r['tick'].size:9,} spikes   rate {late.sum() / n / ((steps - burn) * DT_MS / 1000):8.3f} Hz")
+    def keys(r, n):
+        """A run's spikes as sorted integers, tick * n + soma. save_spikes orders by tick then
+        soma, so this is already sorted and 10^8 spikes compare in seconds."""
+        k = r["tick"].astype(np.int64) * n + r["soma"]
+        return k if np.all(k[1:] > k[:-1]) else np.unique(k)
+
+    def missing_from(x, y):
+        """Which entries of sorted x are not in sorted y."""
+        at = np.minimum(np.searchsorted(y, x), max(y.size - 1, 0))
+        return y[at] != x if y.size else np.ones(x.size, dtype=bool)
+
     for (na, a), (nb, b) in combinations(runs.items(), 2):
-        A = set(zip(a["soma"].tolist(), a["tick"].tolist()))
-        B = set(zip(b["soma"].tolist(), b["tick"].tolist()))
-        diff = A ^ B
+        n = max(int(a["n_somas"]), int(b["n_somas"]), int(a["soma"].max(initial=0)) + 1,
+                int(b["soma"].max(initial=0)) + 1)
+        A, B = keys(a, n), keys(b, n)
+        a_only, b_only = missing_from(A, B), missing_from(B, A)
         print(f"\n{na} vs {nb}:")
-        if not diff:
+        if not a_only.any() and not b_only.any():
             print("  identical over the whole run")
             continue
-        first = min(t for _, t in diff)
+        early = [[(int(k // n), int(k % n)) for k in x[only][:3]] for x, only in ((A, a_only), (B, b_only))]
+        first = min(e[0][0] for e in early if e)
         print(f"  first difference at tick {first} ({first * DT_MS:.1f} ms); "
-              f"only in first: {sorted((t, s) for s, t in A - B)[:3]}  "
-              f"only in second: {sorted((t, s) for s, t in B - A)[:3]}  (tick, soma)")
-        steps = int(a["steps"])
-        windows = []
-        for lo in range(0, steps, width):
-            a_w = {p for p in A if lo <= p[1] < lo + width}
-            b_w = {p for p in B if lo <= p[1] < lo + width}
-            windows.append(f"{100 * len(a_w & b_w) / max(len(a_w | b_w), 1):.1f}")
-        print(f"  % identical per {args.window_ms:.0f} ms window: {' '.join(windows)}")
-        counts = [f"{np.sum((r['tick'] >= lo) & (r['tick'] < lo + width)):,}"
-                  for lo in range(0, steps, width) for r in (a, b)]
+              f"only in first: {early[0]}  only in second: {early[1]}  (tick, soma)")
+        edges = np.arange(0, int(a["steps"]) + width, width)
+        both = np.histogram(A[~a_only] // n, edges)[0]
+        either = np.histogram(A // n, edges)[0] + np.histogram(B[b_only] // n, edges)[0]
+        shares = " ".join(f"{100 * x / max(y, 1):.1f}" for x, y in zip(both, either))
+        print(f"  % identical per {args.window_ms:.0f} ms window: {shares}")
+        counts = [f"{c:,}" for pair in zip(np.histogram(a["tick"], edges)[0],
+                                           np.histogram(b["tick"], edges)[0]) for c in pair]
         print(f"  spikes per window (first, second): {' '.join(counts)}")
 
 
