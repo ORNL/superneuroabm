@@ -7,6 +7,8 @@ tutorials/brunel_simulation.py alpha), and partitioned_common.drive replayed on 
 external input synapse.
 
 usage: srun -n N python run_partitioned_sna.py <root> [--ms 1500] [--out spikes.npz]
+       ... <root> --config hpc_alpha_config.yaml --eta 1.685 --presim-ms 50 --ms 300
+           (NEST GPU's hpc_benchmark: 50 ms untimed warm-up, then the timed 250 ms)
 """
 
 import argparse
@@ -41,24 +43,30 @@ def progress(rank, what):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("root")
-    ap.add_argument("--ms", type=float, default=1500.0, help="simulated time (ms)")
-    ap.add_argument("--burn-in-ms", type=float, default=500.0)
+    ap.add_argument("--ms", type=float, default=1500.0, help="simulated time (ms), warm-up included")
+    ap.add_argument("--presim-ms", type=float, default=0.0,
+                    help="warm-up at the start of --ms, timed apart (presimulate)")
+    ap.add_argument("--burn-in-ms", type=float, default=None,
+                    help="the rate is taken after this (default: --presim-ms, or 500)")
     ap.add_argument("--eta", type=float, default=2.0, help="drive / threshold rate")
     ap.add_argument("--seed", type=int, default=1234, help="drive seed")
+    ap.add_argument("--config", default=str(pc.ALPHA_YAML), help="the alpha neuron's YAML")
     ap.add_argument("--out", default=None, help="spikes .npz (default <root>/spikes_sna_np<N>.npz)")
     args = ap.parse_args()
+    if args.burn_in_ms is None:
+        args.burn_in_ms = args.presim_ms if args.presim_ms > 0 else 500.0
 
     comm = MPI.COMM_WORLD
     rank, P = comm.Get_rank(), comm.Get_size()
     timers = {}
     t_all = time.time()
-    par = pc.alpha_parameters()
+    par = pc.alpha_parameters(args.config)
     extra = par["delay_ticks"]
 
     # ---- load this rank's part -----------------------------------------------------------
     t0 = time.time()
     path = Path(args.root) / f"np{P}" / f"partition_{rank}.npz"
-    model = NeuromorphicModel(user_config=pc.ALPHA_YAML, enable_internal_states_tracking=False,
+    model = NeuromorphicModel(user_config=args.config, enable_internal_states_tracking=False,
                               learning_rule_info={})          # static synapses: no STDP kernels
     model.set_global_property_value("dt", pc.DT_MS / 1000.0)
     model.register_soma_type(name=pc.SOMA_BREED, step_func=user_customized_brunel_alpha_soma,
@@ -68,7 +76,7 @@ def main():
                                 event_capable=True)
     model.load_network(str(path))
     progress(rank, "load_network")
-    part = pc.read_partition(path)
+    soma_ids, syn_of_soma, n_synapses = pc.read_external_inputs(path)
     timers["load"] = time.time() - t0
 
     t0 = time.time()
@@ -80,16 +88,10 @@ def main():
     # whole delay (injected input does not pass through the soma's queue) -------------------
     t0 = time.time()
     steps = int(round(args.ms / pc.DT_MS))
+    presim = int(round(args.presim_ms / pc.DT_MS))
+    if not 0 <= presim < steps:
+        raise ValueError("--presim-ms must be shorter than --ms")
     rate_hz = args.eta * pc.threshold_rate_hz(par)
-    soma_ids = np.sort(np.asarray(part["soma_ids"], dtype=np.int64))
-    pre = np.asarray(part["pre"], dtype=np.int64)
-    ext_syn = np.asarray(part["synapse_ids"], dtype=np.int64)[pre < 0]
-    ext_post = np.asarray(part["post"], dtype=np.int64)[pre < 0]
-    syn_of_soma = np.empty(soma_ids.size, dtype=np.int64)
-    k = np.searchsorted(soma_ids, ext_post)
-    if np.unique(k).size != soma_ids.size or ext_syn.size != soma_ids.size:
-        raise ValueError(f"{path}: expected exactly one external input per soma")
-    syn_of_soma[k] = ext_syn
     idx, tick, count = pc.drive(soma_ids, steps, rate_hz, args.seed)
     at = tick + par["delay_steps"]
     keep = at < steps + extra
@@ -118,15 +120,26 @@ def main():
     del idx, at, count
     timers["drive_to_device"] = time.time() - t0
     progress(rank, "set_input_events")
+    done = 1
+    if presim > 1:                                  # the warm-up, timed apart
+        t0 = time.time()
+        model.simulate(ticks=presim - 1)
+        timers["presimulate"] = time.time() - t0
+        progress(rank, "presimulate")
+        for soma, ticks in model.get_all_spike_times().items():
+            recorded.setdefault(soma, []).extend(ticks)
+        done = presim
     t0 = time.time()
-    model.simulate(ticks=steps - 1 + extra)
-    progress(rank, "simulate")
+    model.simulate(ticks=steps - done + extra)
     timers["simulate"] = time.time() - t0
+    progress(rank, "simulate")
     for soma, ticks in model.get_all_spike_times().items():
         recorded.setdefault(soma, []).extend(ticks)
     timers["total"] = time.time() - t_all
+    free, total = cp.cuda.Device().mem_info
+    memory = (pc.host_peak_gib(), (total - free) / 2**30)
 
-    gathered = comm.gather((timers, soma_ids.size, int(pre.size)), root=0)
+    gathered = comm.gather((timers, soma_ids.size, n_synapses, memory), root=0)
     if rank == 0:
         # emission ticks -> the ticks the somas fired at
         soma = np.concatenate([np.full(len(v), s, np.int64) for s, v in recorded.items()]
@@ -142,6 +155,10 @@ def main():
         for key in timers:
             vals = [g[0][key] for g in gathered]
             print(f"  {key:18s} max {max(vals):8.3f} s   min {min(vals):8.3f} s")
+        print(f"  timed simulate: {(steps - done) * pc.DT_MS:.0f} ms of network time, "
+              f"{max(g[0]['simulate'] for g in gathered) / (steps - done + extra) * 1e3:.3f} ms per tick")
+        print(f"  peak host memory per rank: max {max(g[3][0] for g in gathered):.2f} GiB;  "
+              f"GPU memory in use at the end: max {max(g[3][1] for g in gathered):.2f} GiB")
         burn = int(round(args.burn_in_ms / pc.DT_MS))
         late = tick >= burn
         print(f"  rate after {args.burn_in_ms:.0f} ms: "

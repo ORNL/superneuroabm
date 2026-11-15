@@ -40,9 +40,10 @@ DT_MS = 0.1
 FRAMEWORK_TICKS = 2
 
 
-def alpha_parameters():
-    """The alpha neuron's YAML (SI units) in NEST units: pF, ms, mV, pA."""
-    config = yaml.safe_load(ALPHA_YAML.read_text())
+def alpha_parameters(yaml_path=ALPHA_YAML):
+    """The alpha neuron's YAML (SI units) in NEST units: pF, ms, mV, pA. The default is the
+    tutorial's network; hpc_alpha_config.yaml next to this file is NEST GPU's hpc_benchmark."""
+    config = yaml.safe_load(Path(yaml_path).read_text())
     soma = config["soma"][SOMA_BREED][SOMA_CONFIG]["hyperparameters"]
     synapse = config["synapse"][SYNAPSE_BREED][SYNAPSE_CONFIG]["hyperparameters"]
     par = {
@@ -60,7 +61,7 @@ def alpha_parameters():
     }
     steps = int(round(par["delay_ms"] / DT_MS))
     if par["delay_ticks"] + FRAMEWORK_TICKS != steps:
-        raise ValueError(f"{ALPHA_YAML}: delay_ticks {par['delay_ticks']} + {FRAMEWORK_TICKS} "
+        raise ValueError(f"{yaml_path}: delay_ticks {par['delay_ticks']} + {FRAMEWORK_TICKS} "
                          f"!= synaptic_delay of {steps} ticks")
     par["delay_steps"] = steps
     return par
@@ -77,6 +78,30 @@ def read_partition(path):
     """One rank's partition (columnar post-owned npz) as a dict of arrays/scalars."""
     with np.load(path, allow_pickle=True) as z:
         return {k: (z[k].item() if z[k].ndim == 0 else z[k]) for k in z.files}
+
+
+def read_external_inputs(path):
+    """(sorted soma ids, the external input synapse id of each, number of synapses) of one
+    partition, reading one column at a time: at hpc_benchmark size the columns are 1 GB each."""
+    with np.load(path, allow_pickle=True) as z:
+        soma_ids = np.sort(np.asarray(z["soma_ids"], dtype=np.int64))
+        pre = np.asarray(z["pre"])
+        external, n_synapses = np.flatnonzero(pre < 0), int(pre.size)
+        del pre
+        ext_syn = np.asarray(z["synapse_ids"], dtype=np.int64)[external]
+        ext_post = np.asarray(z["post"], dtype=np.int64)[external]
+    k = np.searchsorted(soma_ids, ext_post)
+    if ext_syn.size != soma_ids.size or np.unique(k).size != soma_ids.size:
+        raise ValueError(f"{path}: expected exactly one external input per soma")
+    syn_of_soma = np.empty(soma_ids.size, dtype=np.int64)
+    syn_of_soma[k] = ext_syn
+    return soma_ids, syn_of_soma, n_synapses
+
+
+def host_peak_gib():
+    """Peak resident memory of this process, GiB."""
+    import resource
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20
 
 
 def synapse_weights(part, default_weight):

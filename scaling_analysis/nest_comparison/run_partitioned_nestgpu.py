@@ -23,9 +23,13 @@ How a rank builds:
     local node indices on their owners (timer boundary_exchange).
 
 usage: srun -n N python run_partitioned_nestgpu.py <root> [--ms 1500] [--out spikes.npz]
+       ... <root> --config hpc_alpha_config.yaml --eta 1.685 --presim-ms 50 --ms 300
+           (NEST GPU's hpc_benchmark: 50 ms untimed warm-up, then the timed 250 ms)
 """
 
 import argparse
+import ctypes
+import subprocess
 import time
 from pathlib import Path
 
@@ -35,15 +39,33 @@ from mpi4py import MPI        # first: NEST GPU's MPI_Init is skipped when MPI i
 import partitioned_common as pc
 
 
+def gpu_used_gib():
+    """Memory in use on this rank's GPU (the only one it sees under --gpus-per-task 1)."""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=30).stdout.split()
+        return float(out[0]) / 1024 if len(out) == 1 else float("nan")
+    except Exception:
+        return float("nan")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("root")
-    ap.add_argument("--ms", type=float, default=1500.0, help="simulated time (ms)")
-    ap.add_argument("--burn-in-ms", type=float, default=500.0)
+    ap.add_argument("--ms", type=float, default=1500.0, help="simulated time (ms), warm-up included")
+    ap.add_argument("--presim-ms", type=float, default=0.0,
+                    help="warm-up at the start of --ms, timed apart (presimulate)")
+    ap.add_argument("--burn-in-ms", type=float, default=None,
+                    help="the rate is taken after this (default: --presim-ms, or 500)")
     ap.add_argument("--eta", type=float, default=2.0, help="drive / threshold rate")
     ap.add_argument("--seed", type=int, default=1234, help="drive seed")
+    ap.add_argument("--config", default=str(pc.ALPHA_YAML), help="the alpha neuron's YAML")
     ap.add_argument("--out", default=None, help="spikes .npz (default <root>/spikes_nestgpu_np<N>.npz)")
     args = ap.parse_args()
+    if args.burn_in_ms is None:
+        args.burn_in_ms = args.presim_ms if args.presim_ms > 0 else 500.0
+    if not 0 <= args.presim_ms < args.ms:
+        raise ValueError("--presim-ms must be shorter than --ms")
 
     import nestgpu as ngpu
     ngpu.ConnectMpiInit()
@@ -55,7 +77,7 @@ def main():
 
     # ---- read this rank's part ----------------------------------------------------------
     t0 = time.time()
-    par = pc.alpha_parameters()
+    par = pc.alpha_parameters(args.config)
     path = Path(args.root) / f"np{P}" / f"partition_{rank}.npz"
     part = pc.read_partition(path)
     soma_ids = np.sort(np.asarray(part["soma_ids"], dtype=np.int64))
@@ -74,21 +96,27 @@ def main():
         return idx
 
     external = pre < 0
-    local_pre = ~external & np.isin(pre, soma_ids)
+    at = np.minimum(np.searchsorted(soma_ids, pre), n_local - 1)
+    local_pre = ~external & (soma_ids[at] == pre)
     remote_pre = ~external & ~local_pre
     order = np.argsort(remote_ids)
     remote_ids, remote_rank_of = remote_ids[order], remote_rank_of[order]
-    at = np.searchsorted(remote_ids, pre[remote_pre])
-    if remote_pre.any() and (at.max() >= remote_ids.size
-                             or not np.array_equal(remote_ids[at], pre[remote_pre])):
+    remote_syn = np.flatnonzero(remote_pre)             # the cross-rank synapses, grouped by
+    at = np.searchsorted(remote_ids, pre[remote_syn])   # the rank that owns their pre soma
+    if remote_syn.size and (at.max() >= remote_ids.size
+                            or not np.array_equal(remote_ids[at], pre[remote_syn])):
         raise ValueError(f"{path}: a remote pre soma is missing from remote_ids")
-    owner = np.full(pre.size, -1, dtype=np.int64)
-    owner[remote_pre] = remote_rank_of[at]
+    owner = remote_rank_of[at]
+    order = np.argsort(owner, kind="stable")
+    remote_syn = remote_syn[order]
+    cut = np.searchsorted(owner[order], np.arange(P + 1))
+    from_rank = [remote_syn[cut[i]:cut[i + 1]] for i in range(P)]   # synapse rows with pre on i
+    del at, owner, order, remote_syn
     post_l = local_index(post)
 
     # ---- boundary: who listens to whom, in local node indices -----------------------------
     t0 = time.time()
-    listened = [np.unique(pre[remote_pre & (owner == i)]) for i in range(P)]   # global ids on i
+    listened = [np.unique(pre[rows]) for rows in from_rank]         # global ids on rank i
     asked = comm.alltoall(listened)                   # asked[j]: my somas rank j listens to
     asked_local = [local_index(np.asarray(a, dtype=np.int64)) for a in asked]
     listened_local = comm.alltoall(asked_local)       # listened_local[i]: listened[i] on rank i
@@ -120,32 +148,50 @@ def main():
     timers["create"] = time.time() - t0
 
     delay = par["delay_ms"]
+    one_to_one = ngpu.conn_rule_name.index("one_to_one")
 
-    def connect_groups(src, tgt, w, connect):
+    def connect(src, tgt, wv, hosts=None):
+        """ngpu.Connect, or ngpu.RemoteConnect between hosts = (source, target): one_to_one,
+        one weight, the delay. The wrappers take Python lists and copy them element by element
+        into a C array; this hands the same C calls the numpy buffers instead."""
+        src = np.ascontiguousarray(src, dtype=np.int32)
+        tgt = np.ascontiguousarray(tgt, dtype=np.int32)
+        ngpu.ConnSpecInit()
+        ngpu.SynSpecInit()
+        ngpu.SetConnSpecParam("rule", one_to_one)
+        ngpu.SetSynSpecFloatParam("weight", float(wv))
+        ngpu.SetSynSpecFloatParam("delay", delay)
+        s, t = src.ctypes.data_as(ctypes.c_void_p), tgt.ctypes.data_as(ctypes.c_void_p)
+        if hosts is None:
+            ngpu.NESTGPU_ConnectGroupGroup(s, src.size, t, tgt.size)
+        else:
+            ngpu.NESTGPU_RemoteConnectGroupGroup(hosts[0], s, src.size, hosts[1], t, tgt.size, -1)
+        if ngpu.GetErrorCode() != 0:
+            raise ValueError(ngpu.GetErrorMessage())
+
+    def connect_groups(src, tgt, w):
         for wv in np.unique(w):                     # one call per distinct weight, in order
             m = w == wv
-            connect(src[m].tolist(), tgt[m].tolist(), {"rule": "one_to_one"},
-                    {"weight": float(wv), "delay": delay})
+            connect(src[m], tgt[m], wv)
 
     # ---- local recurrent synapses ---------------------------------------------------------
     t0 = time.time()
-    connect_groups(local_index(pre[local_pre]), post_l[local_pre], weight[local_pre], ngpu.Connect)
+    connect_groups(local_index(pre[local_pre]), post_l[local_pre], weight[local_pre])
     timers["connect_local"] = time.time() - t0
 
     # ---- remote synapses: the source rank mirrors the target rank's calls -------------------
     t0 = time.time()
     calls_in = [[] for _ in range(P)]     # calls_in[i]: (weight, src on i, tgt here), by weight
     n_remote = 0
-    for i in range(P):
-        sel = remote_pre & (owner == i)
-        if i == rank or not sel.any():
+    for i, rows in enumerate(from_rank):
+        if i == rank or rows.size == 0:
             continue
-        src_on_i = listened_local[i][np.searchsorted(listened[i], pre[sel])].astype(np.int32)
-        tgt, w = post_l[sel].astype(np.int32), weight[sel]
+        src_on_i = listened_local[i][np.searchsorted(listened[i], pre[rows])].astype(np.int32)
+        tgt, w = post_l[rows].astype(np.int32), weight[rows]
         for wv in np.unique(w):
             m = w == wv
             calls_in[i].append((float(wv), src_on_i[m], tgt[m]))
-        n_remote += int(sel.sum())
+        n_remote += int(rows.size)
     calls_out = comm.alltoall(calls_in)   # calls_out[j]: the calls rank j makes with me as source
     timers["edge_exchange"] = time.time() - t0
 
@@ -172,8 +218,7 @@ def main():
                 continue
             for wv, s, t in (calls_in[a] if b == rank else calls_out[b]):
                 for sl, tl in distinct_source_calls(s, t):
-                    ngpu.RemoteConnect(a, sl.tolist(), b, tl.tolist(), {"rule": "one_to_one"},
-                                       {"weight": wv, "delay": delay})
+                    connect(sl, tl, wv, hosts=(a, b))
                     n_calls += 1
     timers["connect_remote"] = time.time() - t0
 
@@ -194,7 +239,7 @@ def main():
     ext_post = post_l[external]
     if np.unique(ext_post).size != ext_post.size or ext_post.size != n_local:
         raise ValueError(f"{path}: expected exactly one external input per soma")
-    connect_groups(generators.i0 + ext_post, ext_post, weight[external], ngpu.Connect)
+    connect_groups(generators.i0 + ext_post, ext_post, weight[external])
     timers["drive_setup"] = time.time() - t0
 
     # ---- run -----------------------------------------------------------------------------
@@ -202,10 +247,15 @@ def main():
     t0 = time.time()
     ngpu.Calibrate()
     timers["calibrate"] = time.time() - t0
+    if args.presim_ms > 0:                          # the warm-up, timed apart
+        t0 = time.time()
+        ngpu.Simulate(args.presim_ms)
+        timers["presimulate"] = time.time() - t0
     t0 = time.time()
-    ngpu.Simulate(args.ms)
+    ngpu.Simulate(args.ms - args.presim_ms)
     timers["simulate"] = time.time() - t0
     timers["total"] = time.time() - t_all
+    memory = (pc.host_peak_gib(), gpu_used_gib())
 
     # ---- spikes: (soma id, step), gathered on rank 0 -------------------------------------
     times = ngpu.GetRecSpikeTimes(neurons)
@@ -214,8 +264,8 @@ def main():
                           or [np.zeros(0, np.int64)])
     step = np.concatenate([np.rint(np.asarray(t) / pc.DT_MS).astype(np.int64) - 1 for t in times]
                           or [np.zeros(0, np.int64)])
-    gathered = comm.gather((soma, step, timers, n_local, int(pre.size), n_remote, full, n_calls),
-                           root=0)
+    gathered = comm.gather((soma, step, timers, n_local, int(pre.size), n_remote, full, n_calls,
+                            memory), root=0)
     if rank == 0:
         soma = np.concatenate([g[0] for g in gathered])
         step = np.concatenate([g[1] for g in gathered])
@@ -230,6 +280,11 @@ def main():
         for key in timers:
             vals = [g[2][key] for g in gathered]
             print(f"  {key:18s} max {max(vals):8.3f} s   min {min(vals):8.3f} s")
+        timed = int(round((args.ms - args.presim_ms) / pc.DT_MS))
+        print(f"  timed simulate: {timed * pc.DT_MS:.0f} ms of network time, "
+              f"{max(g[2]['simulate'] for g in gathered) / timed * 1e3:.3f} ms per tick")
+        print(f"  peak host memory per rank: max {max(g[8][0] for g in gathered):.2f} GiB;  "
+              f"GPU memory in use at the end: max {np.nanmax([g[8][1] for g in gathered]):.2f} GiB")
         burn = int(round(args.burn_in_ms / pc.DT_MS))
         late = step >= burn
         print(f"  rate after {args.burn_in_ms:.0f} ms: "

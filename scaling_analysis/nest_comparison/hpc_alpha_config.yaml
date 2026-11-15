@@ -1,0 +1,47 @@
+# NEST GPU's hpc_benchmark.py (python/examples/hpc_benchmark, v2.0) on the tutorial's alpha
+# neuron: the same component names as tutorials/customized_configs/brunel_alpha_config.yaml,
+# with hpc_benchmark's model_params. SI units, as the kernels expect.
+#
+#   run_partitioned_sna.py / run_partitioned_nestgpu.py <root> --config hpc_alpha_config.yaml --eta 1.685
+#
+# hpc_benchmark values that are flags of the runners and of make_brunel_partitions.py, not
+# of this file: 11,250 neurons per rank, in-degree 9,000 + 2,250, eta = 1.685, dt = 0.1 ms.
+
+soma:
+  user_customized_brunel_alpha_soma:
+    brunel_alpha_lif_neuron:
+      hyperparameters:
+        C_m: 250.0e-12                       # C_m = 250 pF
+        tau_m: 0.010                         # tau_m = 10 ms
+        tau_syn_0: 0.32582722403722841e-3    # tau_syn_ex: alpha rise time 0.3258 ms
+        tau_syn_1: 0.32582722403722841e-3    # tau_syn_in
+        V_th: 0.020                          # Theta_rel = 20 mV
+        V_reset: 0.0                         # V_reset_rel = 0 mV
+        E_L: 0.0                             # E_L = 0 mV
+        t_ref: 0.0005                        # t_ref = 0.5 ms: 5 ticks
+        delay_ticks: 13                      # 13 + the framework's own 2 ticks = 15 ticks = 1.5 ms
+      internal_states:
+        V_m: 0.0                             # every neuron starts at rest (hpc_benchmark draws V_m)
+        refractory: 0.0
+        I_syn_0: 0.0
+        I_syn_1: 0.0
+        dI_syn_0: 0.0
+        dI_syn_1: 0.0
+        spike_queue: 0.0
+
+synapse:
+  user_customized_brunel_synapse:
+    brunel_alpha_excitatory_synapse:
+      hyperparameters:
+        weight: 45.609600316540956e-12       # JE_pA: a 0.14 mV PSP peak (convert_synapse_weight)
+        synaptic_delay: 0.0015               # delay = 1.5 ms
+        channel: 0
+      internal_states:
+        unused: 0.0
+    brunel_alpha_inhibitory_synapse:
+      hyperparameters:
+        weight: -228.04800158270479e-12      # g * JE_pA, g = -5
+        synaptic_delay: 0.0015
+        channel: 1
+      internal_states:
+        unused: 0.0
