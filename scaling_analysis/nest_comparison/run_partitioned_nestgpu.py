@@ -261,14 +261,30 @@ def main():
     t0 = time.time()
     ngpu.Calibrate()
     timers["calibrate"] = time.time() - t0
-    if args.presim_ms > 0:                          # the warm-up, timed apart
+    # One simulation, stepped from here, with the warm-up steps timed apart. Not two
+    # Simulate() calls: a spike_generator matches its spike times against the step counter,
+    # which restarts at 0 in every Simulate() (nestgpu.cu StartSimulation, spike_generator.cu),
+    # so after a first call of T ms the replayed drive is silent for T ms and then late by T
+    # (measured 2026-11-14: 35 spikes in the 50 ms after a 50 ms warm-up, 13,454 expected).
+    # Simulate() itself is StartSimulation() and this loop.
+    lib = ngpu._nestgpu
+    presim = int(round(args.presim_ms / pc.DT_MS))
+    ngpu.SetSimTime(args.ms)
+    lib.NESTGPU_StartSimulation()
+    if presim:                                      # the warm-up, timed apart
         t0 = time.time()
-        ngpu.Simulate(args.presim_ms)
+        for _ in range(presim):
+            lib.NESTGPU_SimulationStep()
         timers["presimulate"] = time.time() - t0
     t0 = time.time()
-    ngpu.Simulate(args.ms - args.presim_ms)
+    for _ in range(steps - presim):
+        lib.NESTGPU_SimulationStep()
     timers["simulate"] = time.time() - t0
+    if ngpu.GetErrorCode() != 0:
+        raise ValueError(ngpu.GetErrorMessage())
     timers["total"] = time.time() - t_all
+    if args.kernel_timers:
+        ngpu.Simulate(0.0)                          # no steps: only prints NEST GPU's timers
     memory = (pc.host_peak_gib(), gpu_used_gib())
 
     # ---- spikes: (soma id, step), gathered on rank 0 -------------------------------------

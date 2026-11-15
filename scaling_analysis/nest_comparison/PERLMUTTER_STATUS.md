@@ -1,6 +1,6 @@
 # SuperNeuroABM vs NEST GPU on Perlmutter: status and how to resume
 
-Last updated 2026-11-14 (evening). This page is the hand-off: what the comparison is, what is
+Last updated 2026-11-14, 20:45. This page is the hand-off: what the comparison is, what is
 verified, the numbers so far, what is running and what comes next.
 
 ## The plan (owner's, 2026-11-14)
@@ -57,7 +57,14 @@ On the 12,500-neuron test network (15.6 M synapses, 1.5 s, about 29 Hz):
   837 ms), so that is the criterion.
 - SuperNeuroABM against NEST GPU at 1 rank: identical for 94 ms, rates within 0.1 %.
 
-## Three things learned the hard way
+At benchmark size, every soma started at normal(5.7, 7.2) mV as hpc_benchmark.py does
+(`--vm-sigma 7.2`), 300 ms (job 61324320):
+
+- 1 GPU: SuperNeuroABM and NEST GPU give the same 32,712 spikes, spike for spike (9.80 Hz).
+- 2 GPUs: the same 64,194 spikes, spike for spike (9.50 Hz).
+- 4 GPUs: identical for 253.7 ms, then 105,231 against 106,329 spikes (7.95 and 8.05 Hz).
+
+## Four things learned the hard way
 
 1. **NEST GPU, cross-rank connections from data.** A `RemoteConnect` call must not name a
    source node twice: only the first entry of a repeated source is mapped to the right image
@@ -73,37 +80,54 @@ On the 12,500-neuron test network (15.6 M synapses, 1.5 s, about 29 Hz):
    (host-staged, used so far), or every GPU visible to every rank
    (`srun --gpus N --gpu-bind=none own_gpu_first.sh ...`), or `MPICH_GPU_IPC_ENABLED=0` (twice
    as slow on one node). Not yet tried across nodes.
-3. **Job hygiene.** Wrap every `srun` in `timeout`, pipe through `grep --line-buffered`, and
+3. **NEST GPU, replayed input and two Simulate() calls.** A `spike_generator` matches its
+   spike times against the step counter, which restarts at 0 in every `Simulate()` call
+   (`nestgpu.cu` StartSimulation, `spike_generator.cu`). After a warm-up call of T ms the
+   replayed drive is silent for T ms and then T late: 35 spikes instead of 13,454 in the
+   50 ms after a 50 ms warm-up. The runner therefore runs ONE simulation, stepped from Python
+   with `NESTGPU_StartSimulation` / `NESTGPU_SimulationStep` (what `Simulate()` does), and
+   times the warm-up steps apart. NEST GPU numbers at benchmark size from jobs 61322433,
+   61323427 and 61323573 were taken with the drive paused and are void.
+4. **Job hygiene.** Wrap every `srun` in `timeout`, pipe through `grep --line-buffered`, and
    remember that debugging with `srun --jobid --overlap` uses up step numbers.
 
 ## Numbers so far
 
-Test network, simulate 1.5 s: NEST GPU 2.45 / 5.18 / 4.67 s at 1 / 2 / 4 GPUs, SuperNeuroABM
-0.95 / 7.85 / 8.36 s.
+Test network, simulate 1.5 s: NEST GPU 2.46 / 5.15 / 4.69 s at 1 / 2 / 4 GPUs, SuperNeuroABM
+0.95 / 7.77 / 8.36 s.
 
-Benchmark size, neurons started at rest, 50 ms warm-up then the timed 250 ms (job 61322433):
+Benchmark size, random starting potentials, 50 ms warm-up then the timed 250 ms, one node
+(job 61324320; the two simulators' spikes are the same, see Verified):
 
-| | SuperNeuroABM | NEST GPU, same files | NEST GPU, own script |
+| GPUs | | SuperNeuroABM | NEST GPU, same files |
 |---|---|---|---|
-| 1 GPU: simulate 250 ms | 0.236 s | 0.344 s | segfault |
-| 1 GPU: build | 74.9 s (load 52.6, setup 4.0, first tick 18.3) | 12.0 s (read 7.7, connect 3.7, calibrate 0.7) | |
-| 1 GPU: host / GPU memory | 47 / 20.2 GiB | 11 / 2.3 GiB | |
-| 2 GPUs: simulate 250 ms | 1.475 s | 0.944 s | 0.549 s (at 52 Hz) |
-| 2 GPUs: build | 88.8 s | 40.7 s (22.8 s in 23,531 RemoteConnect calls) | 0.26 s |
+| 1 | simulate 250 ms | 0.230 s (0.091 ms per tick) | 0.403 s (0.161 ms per tick) |
+| 1 | build | 71.4 s (load 54.4, setup 4.0, first tick 13.0) | 11.6 s (read 7.3, connect 3.6, calibrate 0.7) |
+| 2 | simulate 250 ms | 1.450 s (0.577 ms per tick) | 1.156 s (0.462 ms per tick) |
+| 2 | build | 102.0 s (load 64.5, setup 4.3, first tick 33.2) | 38.8 s (read 8.0, boundary 2.1, local 3.5, edge exchange 2.3, remote 22.1 in 23,531 calls, calibrate 0.8) |
+| 4 | simulate 250 ms | 1.824 s (0.726 ms per tick) | 1.224 s (0.490 ms per tick) |
+| 4 | build | 151.8 s (load 88.5, setup 5.1, first tick 58.2) | 54.4 s (read 8.6, boundary 5.6, local 2.4, edge exchange 4.4, remote 32.7 in 36,107 calls, calibrate 0.7) |
+| any | drive | draw 1.9 s + to device 0.9 s | draw 1.8 s + generator setup 6.5 s |
+| any | host / GPU memory per rank | 47 to 51 / 20.2 GiB | 10 to 11 / 2.3 to 2.4 GiB |
+
+NEST GPU's own hpc_benchmark.py, unmodified (rule-based connect, Poisson generator; job
+61322561): 1 process segfaults; 2 processes construct 0.14 s, calibrate 0.12 s, simulate
+0.549 s at 52 Hz; 4 processes construct 0.10 s, simulate 0.642 s at 26 Hz. Its rates are far
+from the 9.5 and 8.0 Hz of the same-size network from files, on which SuperNeuroABM and NEST
+GPU agree spike for spike; its docstring says the dynamics are unstable below scale 10.
 
 SuperNeuroABM's tick at 2 GPUs by SAGESim's timers (job 61323573): 0.63 ms, of which 0.38 ms
-is the ghost exchange (`data_prep`) and 0.23 ms the per-tick kernel launch; one GPU runs all
-ticks in one launch at 0.09 ms per tick.
+is the ghost exchange (`data_prep`) and 0.23 ms the per-tick kernel launch; 0.60 ms with GPU
+buffers straight to MPI. One GPU runs all ticks in one launch at 0.09 ms per tick.
 
 ## Open
 
-- Activity at benchmark size is not matched yet: the two simulators agree spike for spike
-  for 31 ms (1 GPU) and 52 ms (2 GPUs), then 11.6 vs 9.8 Hz and 9.0 vs 9.6 Hz. NEST GPU's own
-  script gives 52 Hz at 2 GPUs and 26 Hz at 4. Job 61323427 (`hpc-vm-check-61323427.out`)
-  repeats the runs with hpc_benchmark's random starting potentials and adds the NEST GPU
-  control with weights x (1 + 1e-7), at 1, 2 and 4 GPUs.
-- Job 61323573 (`tick-breakdown-61323573.out`): the remaining two parts, SuperNeuroABM with
-  GPU buffers straight to MPI and NEST GPU's own timers.
+- NEST GPU's own per-tick timers (`--kernel-timers`) must be retaken with the stepped
+  simulation; the ones in `tick-breakdown-61323573.out` had the drive paused.
+- `--perturb 1e-7` is below float32 resolution for these weights and changes nothing; a
+  control run needs 1e-6.
+- Whether hpc_benchmark.py's own rate comes down to ours as the network grows (52 Hz at 2
+  processes, 26 Hz at 4): run it next to the file-driven runs at 8, 16 and 32 GPUs.
 - Then: 2, 4 and 8 nodes in the debug queue (partitions for 8, 16, 32 ranks, 4 GB each),
   and up to 128 nodes in the regular queue. At hundreds of ranks the SuperNeuroABM runner's
   `get_all_spike_times` (every rank receives every spike) needs a cheaper path.
