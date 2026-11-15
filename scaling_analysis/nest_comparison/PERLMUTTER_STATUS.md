@@ -46,7 +46,7 @@ submitted jobs), then up to 128 nodes in the regular queue.
 | `tick_breakdown_32.sbatch` | the same at 32 ranks (8 nodes), and NEST GPU with excitatory weights x (1 + 1e-6) as the rounding control |
 | `nest_own_hpc.sbatch` | NEST GPU's own hpc_benchmark.py, unmodified |
 | `torus_node_check.sbatch` | the benchmark on a 3D torus, one node (`NET=library`, `exact` or `mixed`): parts for `RANKS`, both simulators, spike comparison |
-| `torus_scale.sbatch` | the same on N nodes (`sbatch -N <nodes> --export=ALL,NET=mixed`); `TIMERS=1` adds a run of each simulator with its per-tick timers |
+| `torus_scale.sbatch` | the same on N nodes (`sbatch -N <nodes> --export=ALL,NET=mixed`); `TIMERS=1` adds a run of each simulator with its per-tick timers; `STRONG=92160` runs one fixed network of that many neurons instead (strong scaling) |
 | `sna_mpi_variants.sbatch` | SuperNeuroABM under three MPI / GPU setups |
 | `own_gpu_first.sh` | wrapper: every GPU visible to a rank, its own first |
 
@@ -363,8 +363,8 @@ we optimizing our code"; all pending at 08:20; outputs
 | 61346214 | regular | 64 (256) | library |
 | 61346215 | regular | 128 (512) | library, `SNA_TIMEOUT=1500` |
 
-**To resume:** `sacct -j 61345638,61345639,61345642,61345643,61345644,61346213,61346214,61346215 -X`
-for their state;
+**To resume:** `sacct -X -S 2026-11-15T07:30 --format=JobID,NNodes,State,Elapsed,Start` for
+the state of all of them (these eight and the six strong-scaling jobs below);
 read each output with
 `grep -vE "^\[Rank|^\[TIMING\]|^\s+\[" torus-scale-<job>.out` (a `TIMERS=1` output holds
 one line per rank per tick, 30 MB); fill the pending cells above. The weak-scaling answer
@@ -374,12 +374,52 @@ breakdown (job 61346213) next to the `mixed` one at 64 GPUs. A job that fails or
 row (`sbatch -N <nodes> [-q regular -t 00:30:00] --export=ALL,NET=<net> torus_scale.sbatch`
 from the work directory); the parts already written are reused.
 
+### Strong scaling on the torus (submitted 2026-11-15 08:45, all pending)
+
+Everything above is weak scaling (11,250 neurons on every GPU). The owner asked for strong
+scaling as well. One fixed network on 8 to 256 GPUs:
+
+- 92,160 neurons, in-degree 9,000 + 2,250 (1.04 G synapses), the same neuron, weights, drive
+  and starting potentials, on one 40 x 48 x 48 torus, radius 17, the `mixed` draw.
+- It is drawn once, as 512 tiles of 180 neurons (5 x 6 x 6), and a rank holds a brick of
+  tiles (`make_brunel_partitions.py --drawn-as 512 --neurons 180`; `STRONG=92160` in
+  `torus_scale.sbatch`; parts in `torus_mixed_11250_r17_strong92160/`). Every soma, synapse
+  and weight is the same at every rank count: checked at small size on a login node (1 to 64
+  ranks hold the identical network; post-owned; remote lists right). So the spikes of one
+  simulator should agree across rank counts, up to rounding.
+- 8 GPUs is the smallest size: 11,520 neurons and 129.6 M synapses per GPU fill
+  SuperNeuroABM's host memory (about 52 of 62 GiB per rank). From there the tiles shrink
+  under the radius: 5,760 / 2,880 / 1,440 / 720 / 360 neurons per GPU at 16 / 32 / 64 / 128 /
+  256 GPUs, with more peer ranks each time. 512 GPUs (180 neurons each) was left out: about
+  17 node-hours for the far end of the curve.
+- What to expect: at this in-degree a soma's ball (20,478 neurons) is larger than a GPU's
+  share of the network from 16 GPUs on, so the remote somas per GPU do not shrink with the
+  local ones. No speed-up is expected for SuperNeuroABM, whose tick at 64 GPUs is already
+  70 % exchange; the runs measure how fast the tick grows with the peers, for both simulators.
+
+| job | queue | nodes (GPUs) | neurons per GPU | per-tick timers |
+|---|---|---|---|---|
+| 61346437 | debug | 2 (8) | 11,520 | yes |
+| 61346438 | debug | 4 (16) | 5,760 | yes |
+| 61346439 | debug | 8 (32) | 2,880 | yes |
+| 61346440 | regular | 16 (64) | 1,440 | yes |
+| 61346441 | regular | 32 (128) | 720 | yes |
+| 61346443 | regular | 64 (256) | 360 | no |
+
+When they are done: a table of GPUs, neurons per GPU, peer ranks, remote somas, tick of each
+simulator, speed-up against 8 GPUs and the build; the per-tick breakdowns
+(`nest_timers_np<N>.txt` in the parts directory for NEST GPU); and the spikes of each
+simulator across rank counts:
+`python compare_partitioned_spikes.py <dir>/spikes_sna_np8_vm.npz <dir>/spikes_sna_np16_vm.npz ... --burn-in-ms 50 --window-ms 50`
+(sna-dev environment, login node), the same for `spikes_nestgpu_np*_vm.npz`.
+
 `compare_partitioned_spikes.py` now compares sorted integer keys (4 s for 2 x 12.7 M spikes,
 44 s before with Python sets); same output on six earlier pairs.
 
 ## Open
 
-- The torus comparison: the queued jobs above, then the tables and the weak-scaling answer.
+- The torus comparison: the queued jobs above (weak scaling on `mixed` and `library`, strong
+  scaling on `mixed`), then the tables, the weak-scaling answer and the strong-scaling curve.
 - A torus network that fires near the benchmark's 7.5 Hz was not found by changing the
   structure alone (0.4 to 0.7, 45 to 48 or 560 Hz). Whether to tune the drive or the
   in-degree for it is the owner's call.

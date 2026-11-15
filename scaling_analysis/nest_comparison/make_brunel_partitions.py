@@ -35,6 +35,17 @@ the whole network, or with --topology torus3d from a ball around each soma on a 
             --neurons 11250 --excitatory-in-degree 9000 --inhibitory-in-degree 2250 \\
             --config hpc_alpha_config.yaml --topology torus3d --connection-radius 17 --exact-ei
 
+    Strong scaling on the torus (--drawn-as): the network is drawn once, as --drawn-as ranks
+    of --neurons each, and a rank of --ranks holds a brick of those tiles. Every soma, synapse
+    and weight is then the same at every rank count (the drive and the starting potentials
+    follow the soma id), so the spikes should be too. 92,160 neurons, 1.04 G synapses, on 8
+    to 256 ranks:
+
+        srun -n 8 python make_brunel_partitions.py partitions/strong --ranks 8 \\
+            --neurons 180 --drawn-as 512 --excitatory-in-degree 9000 --inhibitory-in-degree 2250 \\
+            --config hpc_alpha_config.yaml --topology torus3d --connection-radius 17 \\
+            --exact-ei --interleave-ei
+
 The weights are the alpha neuron's, from --config (inhibitory = -g x excitatory), with one
 external input synapse per soma. Both write <root>/np<N>/partition_<r>.npz.
 """
@@ -133,6 +144,9 @@ def main():
     ap.add_argument("--interleave-ei", action="store_true",
                     help="with --exact-ei: a rank's inhibitory neurons spread evenly over its "
                          "tile, not in one slab of it")
+    ap.add_argument("--drawn-as", type=int, default=None, metavar="RANKS",
+                    help="torus3d with --ranks: the network is that of this many ranks of "
+                         "--neurons each, whatever --ranks; a rank holds a brick of their tiles")
     ap.add_argument("--split", type=int, nargs="*", default=[], help="rank counts to split for")
     ap.add_argument("--ranks", type=int, nargs="*", default=[],
                     help="rank counts of a network with --neurons on every rank")
@@ -160,6 +174,30 @@ def main():
             synapse_breed=pc.SYNAPSE_BREED, synapse_config=pc.SYNAPSE_CONFIG,
             seed=args.seed, output_format="columns")
 
+    def brick_part(ranks, rank):
+        """Rank `rank` of `ranks` of the network drawn as --drawn-as ranks: the tiles of the
+        brick it holds, merged into one part. The grid of `ranks` must divide the tiles' grid."""
+        a, b, c = brunel._grid_factorization_3d(args.drawn_as)
+        A, B, C = brunel._grid_factorization_3d(ranks)
+        if a % A or b % B or c % C:
+            raise ValueError(f"{ranks} ranks ({A}x{B}x{C}) do not divide the {a}x{b}x{c} tiles "
+                             f"of --drawn-as {args.drawn_as}")
+        tx, rest = np.divmod(np.arange(args.drawn_as), b * c)
+        ty, tz = np.divmod(rest, c)
+        owner = (tx // (a // A)) * (B * C) + (ty // (b // B)) * C + tz // (c // C)
+        tiles = [part(args.drawn_as, int(t)) for t in np.flatnonzero(owner == rank)]
+        net = dict(tiles[0])
+        for key in ("soma_ids", "synapse_ids", "pre", "post", "syn_hp_vals"):
+            net[key] = np.concatenate([np.asarray(t[key]) for t in tiles])
+        pre = net["pre"]
+        remote = np.unique(pre[(pre >= 0) & (owner[np.maximum(pre, 0) // args.neurons] != rank)])
+        net["remote_ids"] = remote.astype(np.int64)
+        net["remote_rank_of"] = owner[remote // args.neurons].astype(np.int64)
+        return net
+
+    if args.drawn_as and not (args.ranks and args.topology == "torus3d"):
+        ap.error("--drawn-as goes with --ranks and --topology torus3d")
+
     if args.ranks:
         from mpi4py import MPI
         comm = MPI.COMM_WORLD
@@ -170,20 +208,21 @@ def main():
                 continue
             out.parent.mkdir(parents=True, exist_ok=True)
             t0 = time.time()
-            net = part(n, r)
+            net = brick_part(n, r) if args.drawn_as else part(n, r)
             tmp = out.with_suffix(".tmp.npz")
             np.savez(tmp, **net)
             tmp.rename(out)                       # a part is either whole or absent
-            pre, n = np.asarray(net["pre"]), np.asarray(net["soma_ids"]).size
-            own = (pre >= r * args.neurons) & (pre < (r + 1) * args.neurons)
+            ids = np.sort(np.asarray(net["soma_ids"]))
+            pre, n = np.asarray(net["pre"]), ids.size
+            own = ids[np.minimum(np.searchsorted(ids, pre), n - 1)] == pre
             inh = np.asarray(net["syn_hp_vals"])[:, 0] < 0
-            inh = np.bincount(np.asarray(net["post"])[inh] - r * args.neurons, minlength=n)
+            inh = np.bincount(np.searchsorted(ids, np.asarray(net["post"])[inh]), minlength=n)
             print(f"{out}: {n:,} somas, {pre.size:,} synapses ({100 * own.sum() / (pre >= 0).sum():.1f} % "
                   f"from its own rank; inhibitory per soma {inh.min():,} to {inh.max():,}), "
                   f"{np.asarray(net['remote_ids']).size:,} remote somas on "
                   f"{np.unique(np.asarray(net['remote_rank_of'])).size} ranks, "
                   f"{time.time() - t0:.1f} s", flush=True)
-            del pre, own, inh
+            del pre, own, inh, ids
             del net
         return
 

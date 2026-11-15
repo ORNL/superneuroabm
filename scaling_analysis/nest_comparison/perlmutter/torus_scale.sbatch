@@ -11,7 +11,8 @@
 # The hpc_benchmark neurons, weights, drive and size (11,250 neurons and in-degree 11,250 per
 # GPU) on the 3D torus of the weak-scaling runs, on N nodes (4 GPUs each, one rank per GPU):
 #   sbatch -N 2 torus_scale.sbatch        (2, 4, 8 nodes fit the debug queue)
-#   sbatch -N 64 -q regular torus_scale.sbatch
+#   sbatch -N 64 -q regular --export=ALL,NET=mixed torus_scale.sbatch
+#   sbatch -N 16 -q regular --export=ALL,NET=mixed,STRONG=92160 torus_scale.sbatch   (strong scaling)
 # Writes the parts for 4N ranks if missing (make_brunel_partitions.py --topology torus3d,
 # every soma's sources from the ball of radius RADIUS around it), runs SuperNeuroABM and NEST
 # GPU on them (random starting potentials, 50 ms warm-up, 250 ms timed) and compares their
@@ -30,6 +31,11 @@ case "${NET:?NET=library, exact or mixed}" in
   mixed)   P=$W/torus_mixed_11250_r$RADIUS; EI="--exact-ei --interleave-ei";;
   *) echo "NET=$NET?"; exit 2;;
 esac
+# STRONG=<neurons>: strong scaling instead of 11,250 neurons on every GPU. One fixed torus of
+# that many neurons, drawn as 512 tiles (make_brunel_partitions.py --drawn-as 512), every
+# rank holding a brick of them: the identical network at every rank count. STRONG=92160 is
+# 1.04 G synapses, which fills 8 GPUs for SuperNeuroABM (11,520 neurons each): 2 nodes and up.
+if [ -n "$STRONG" ]; then P=${P}_strong$STRONG; SIZE="--neurons $((STRONG / 512)) --drawn-as 512"; else SIZE="--neurons 11250"; fi
 NC=/global/cfs/cdirs/m5460/zhangx8/superneuroabm/scaling_analysis/nest_comparison
 CFG=$NC/hpc_alpha_config.yaml
 NODES=$SLURM_JOB_NUM_NODES
@@ -37,13 +43,13 @@ n=$((4 * NODES))
 RUN="--config $CFG --eta 1.685 --presim-ms 50 --ms 300 --vm-sigma 7.2"
 SRUN="srun -N $NODES -n $n --ntasks-per-node=4 --cpu-bind=none"
 cd $W
-echo "== $NODES node(s), $n ranks, radius $RADIUS, net $NET, first node $(hostname)  ($(date +%H:%M:%S))"
+echo "== $NODES node(s), $n ranks, radius $RADIUS, net $NET${STRONG:+, strong scaling of $STRONG neurons}, first node $(hostname)  ($(date +%H:%M:%S))"
 NFILTER='^Building time|^Simulation time|^Calibrating|^Simulating|Neural activity|^\s*$|NEST GPU --|Copyright|licen|Homepage|^ *-{3,}|Host [0-9]+ :|AS IS|WARRANTY'
 SFILTER='Warning|experimental|cupy._util|warnings.warn'
 source /global/cfs/cdirs/m5460/envs/sna-dev.sh
 echo "===== partitions  ($(date +%H:%M:%S))"
 MPICH_GPU_SUPPORT_ENABLED=0 timeout -k 15 ${GEN_TIMEOUT:-600} $SRUN python -u $NC/make_brunel_partitions.py $P \
-    --ranks $n --neurons 11250 --excitatory-in-degree 9000 --inhibitory-in-degree 2250 --config $CFG \
+    --ranks $n $SIZE --excitatory-in-degree 9000 --inhibitory-in-degree 2250 --config $CFG \
     --topology torus3d --connection-radius $RADIUS $EI 2>&1 \
   | grep --line-buffered -vE "$SFILTER" | sed "s|$P/||" | sort -V | sed -n '1p;$p'
 echo "  -> exit ${PIPESTATUS[0]};  $(ls $P/np$n 2>/dev/null | wc -l) parts, $(du -sh $P/np$n 2>/dev/null | cut -f1)"
