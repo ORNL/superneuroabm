@@ -14,6 +14,7 @@ usage: srun -n N python run_partitioned_sna.py <root> [--ms 1500] [--out spikes.
 import argparse
 import faulthandler
 import resource
+import socket
 import sys
 import time
 from pathlib import Path
@@ -136,7 +137,17 @@ def main():
         stacks = Path(args.root) / f"stacks_np{P}"
         stacks.mkdir(exist_ok=True)
         stack_file = open(stacks / f"rank{rank:04d}.txt", "w")
-        stack_file.write(f"every {args.stack_dump_every} s from {time.strftime('%H:%M:%S')}\n")
+        host_kb = {}                                # this node's memory, to tie a slow rank to it
+        for line in open("/proc/meminfo"):
+            key, value = line.split(":")
+            if key in ("MemTotal", "MemAvailable", "Cached"):
+                host_kb[key] = int(value.split()[0])
+        gpu_free, gpu_total = cp.cuda.Device().mem_info
+        stack_file.write(
+            f"every {args.stack_dump_every} s from {time.strftime('%H:%M:%S')} on {socket.gethostname()}; "
+            f"node memory {host_kb['MemTotal'] / 2**20:.0f} GiB, available {host_kb['MemAvailable'] / 2**20:.0f}, "
+            f"page cache {host_kb['Cached'] / 2**20:.0f}; GPU {gpu_total / 2**30:.0f} GiB, "
+            f"free {gpu_free / 2**30:.0f}\n")
         stack_file.flush()
         faulthandler.dump_traceback_later(args.stack_dump_every, repeat=True, file=stack_file)
     model.simulate(ticks=1)
