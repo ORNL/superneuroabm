@@ -10,6 +10,7 @@
 #SBATCH -o /pscratch/sd/z/zhangx8/partitioned/hpc-scale-%j.out
 # NEST GPU's hpc_benchmark network at scale 1 on N nodes (4 GPUs each, one rank per GPU):
 #   sbatch -N 2 hpc_scale.sbatch        (2, 4, 8 nodes fit the debug queue)
+#   sbatch -N 64 -q regular -t 00:45:00 --export=ALL,SNA_TIMEOUT=1800,NEST_TIMEOUT=900,GEN_TIMEOUT=1200 hpc_scale.sbatch
 # Writes the parts for 4N ranks if missing, runs SuperNeuroABM and NEST GPU on them (random
 # starting potentials, 50 ms warm-up, 250 ms timed), compares their spikes, then runs NEST
 # GPU's own hpc_benchmark.py at the same rank count.
@@ -28,7 +29,7 @@ NFILTER='^Building time|^Simulation time|^Calibrating|^Simulating|Neural activit
 SFILTER='Warning|experimental|cupy._util|warnings.warn'
 source /global/cfs/cdirs/m5460/envs/sna-dev.sh
 echo "===== partitions  ($(date +%H:%M:%S))"
-MPICH_GPU_SUPPORT_ENABLED=0 timeout -k 15 600 $SRUN python -u $NC/make_brunel_partitions.py $P \
+MPICH_GPU_SUPPORT_ENABLED=0 timeout -k 15 ${GEN_TIMEOUT:-600} $SRUN python -u $NC/make_brunel_partitions.py $P \
     --ranks $n --neurons 11250 --excitatory-in-degree 9000 --inhibitory-in-degree 2250 --config $CFG 2>&1 \
   | grep --line-buffered -vE "$SFILTER" | tail -3
 echo "  -> exit ${PIPESTATUS[0]};  $(ls $P/np$n 2>/dev/null | wc -l) parts, $(du -sh $P/np$n 2>/dev/null | cut -f1)"
@@ -39,7 +40,7 @@ echo "  -> exit ${PIPESTATUS[0]} (124 = timed out)  ($(date +%H:%M:%S))"
 conda deactivate
 source /global/cfs/cdirs/m5460/envs/nestgpu.sh
 echo "===== NEST GPU np$n  ($(date +%H:%M:%S))"
-timeout -k 15 420 $SRUN --gpus-per-task 1 \
+timeout -k 15 ${NEST_TIMEOUT:-420} $SRUN --gpus-per-task 1 \
     python -u $NC/run_partitioned_nestgpu.py $P $RUN --out $P/spikes_nestgpu_np${n}_vm.npz 2>&1 | grep --line-buffered -vE "$NFILTER"
 echo "  -> exit ${PIPESTATUS[0]} (124 = timed out)  ($(date +%H:%M:%S))"
 echo "===== compare np$n"
