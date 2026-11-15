@@ -67,6 +67,17 @@ At benchmark size, every soma started at normal(5.7, 7.2) mV as hpc_benchmark.py
 - 2 GPUs: the same 64,194 spikes, spike for spike (9.50 Hz).
 - 4 GPUs: identical for 253.7 ms, then 105,231 against 106,329 spikes (7.95 and 8.05 Hz).
 
+The rounding control, at 32 GPUs (job 61334376):
+
+- NEST GPU is reproducible run to run: two runs give the same 825,535 spikes.
+- NEST GPU with the excitatory weights multiplied by 1 + 1e-6 differs from the plain run
+  from 5.9 ms on (one soma one tick apart, then everything): 814,870 spikes, 7.50 Hz
+  against 7.64 Hz, 1.9 % apart.
+- SuperNeuroABM differs from NEST GPU from 27.8 ms on and by 1.0 % in rate at that size
+  (two SuperNeuroABM runs: 7.56 and 7.52 Hz). So the differences between the two simulators
+  are no larger than what one part in a million in the weights does to NEST GPU alone, and
+  the rate over 250 ms carries 0.5 to 2 % of such spread at this size.
+
 ## Four things learned the hard way
 
 1. **NEST GPU, cross-rank connections from data.** A `RemoteConnect` call must not name a
@@ -170,7 +181,9 @@ Per rank: SuperNeuroABM 51 to 52 GiB host and 20.2 to 21.9 GiB GPU at every size
   512 GPUs. SuperNeuroABM's costs 0.086 to 0.097 ms per peer rank from 16 to 512 GPUs: ten
   times NEST GPU's price per peer. NEST GPU sends each peer one message per step holding the
   ids of the neurons that fired (`mpi_comm.cu`, `MPI_Isend` / `MPI_Irecv` per host, then
-  `MPI_Waitall`); SAGESim sends each peer its ghost somas' state every tick.
+  `MPI_Waitall`); SAGESim sends each peer its ghost somas' state every tick. At 32 GPUs that
+  exchange is half of SuperNeuroABM's tick; the other half is the kernel's own GPU time,
+  which also grows with the ghost somas ("Where a tick goes" below).
 - **NEST GPU's own script is slower than NEST GPU on our files from 64 GPUs on** (1.5 to 2.0
   times; it is faster up to 32). Known difference: hpc_benchmark.py puts all ranks in one
   host group, which makes NEST GPU exchange spikes with `MPI_Allgather` / `MPI_Allgatherv`,
@@ -182,21 +195,50 @@ Per rank: SuperNeuroABM 51 to 52 GiB host and 20.2 to 21.9 GiB GPU at every size
   at 256) and setup 40 s (13 s at 256). What the first tick spends that time on at 512 ranks
   is not measured yet.
 
-SuperNeuroABM's tick at 2 GPUs by SAGESim's timers (job 61323573): 0.63 ms, of which 0.38 ms
-is the ghost exchange (`data_prep`) and 0.23 ms the per-tick kernel launch; 0.60 ms with GPU
-buffers straight to MPI. One GPU runs all ticks in one launch at 0.09 ms per tick.
+### Where a tick goes, 2 and 32 GPUs
+
+SuperNeuroABM, SAGESim's timers, ms per tick, mean over the timed ticks (jobs 61323573 and
+61334376; `--tick-timers`). One GPU runs all ticks in one launch at 0.09 ms per tick.
+
+| | 2 GPUs | 32 GPUs |
+|---|---|---|
+| tick | 0.633 | 2.848 |
+| ghost exchange (`data_prep`) | 0.376 | 1.279 |
+| the kernel on the GPU (`gpu_sync`: the wait for the launched kernel) | 0.117 | 1.411 |
+| the rest: launch, arguments, read-backs | 0.140 | 0.158 |
+
+With GPU buffers straight to MPI the 2-GPU tick is 0.60 ms. At 32 GPUs the exchange is 45 %
+of the tick and the kernel 50 %. The kernel's GPU time is 12 times that at 2 GPUs with the
+same local somas and synapses; what grew is the ghost somas (11,250 to 348,750). Which part
+of the kernel works over the ghosts is not identified yet. Sending spikes as events would
+remove the exchange half only.
+
+NEST GPU, its own timers, ms per step, mean over the hosts (job 61334376; `--kernel-timers`).
+They cannot be read or reset after the warm-up, so they are over all 3,000 steps.
+
+| | 2 GPUs | 32 GPUs |
+|---|---|---|
+| tick, timed part | 0.463 | 0.731 |
+| `organizeExternalSpike` | 0.200 | 0.201 |
+| `copy_ext_spike` (one integer from the GPU; probably where the step's GPU work is waited for) | 0.161 | 0.149 |
+| `SendSpikeToRemote` (of which MPI) | 0.044 (0.008) | 0.178 (0.139) |
+| `RecvSpikeFromRemote` | 0.067 | 0.506 |
+| delivery, neuron update, copies, resets | 0.043 | 0.053 |
+
+The receive timer includes the wait for the slowest rank in the first steps (the warm-up
+takes 0.37 to 1.82 s depending on the rank), so it overstates the timed ticks: there the
+receive is what the other phases leave, about 0.015 ms at 2 GPUs and 0.15 ms at 32. About
+0.35 ms of NEST GPU's step is the same at 2 and 32 GPUs; the MPI send and receive are what
+grow.
 
 ## Open
 
-- Submitted 2026-11-15, debug queue, job 61334376 (`perlmutter/tick_breakdown_32.sbatch`,
-  output `tick-breakdown-32-<job>.out` in the work directory): NEST GPU's own per-phase
-  timers at 32 and 2 ranks, retaken with the stepped simulation (the ones in
-  `tick-breakdown-61323573.out` had the drive paused); SAGESim's tick timers at 32 ranks;
-  and NEST GPU with excitatory weights x (1 + 1e-6) against its plain run, the control for
-  calling the SuperNeuroABM / NEST GPU differences rounding (1e-7 is below float32
-  resolution for these weights and changes nothing).
+- SuperNeuroABM's kernel takes 1.41 ms of GPU time per tick at 32 ranks against 0.12 ms at
+  2: find what in it works over the ghost somas.
 - SuperNeuroABM's first tick at 512 ranks (1,030 s) and its setup there (40 s): find what
   grows.
+- NEST GPU with a host group in our runner, to test whether collective MPI is why its own
+  script is slower from 64 GPUs on.
 - The 128-node run used 31 of its 45 minutes, 24 of them in SuperNeuroABM. Host memory is at
   52 of about 62 GiB per rank.
 - The network files take 3.9 TB of scratch (`hpc_11250/np<N>`, 4 GB per rank; np512 alone is
