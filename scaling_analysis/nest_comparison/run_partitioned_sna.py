@@ -57,6 +57,9 @@ def main():
     ap.add_argument("--tick-timers", action="store_true",
                     help="SAGESim's per-tick timers on for the timed simulate, and their means "
                          "printed (launch, GPU, pack, MPI, unpack, reverse); they slow the tick")
+    ap.add_argument("--first-tick-timers", action="store_true",
+                    help="SAGESim's timers on for the first tick, which builds the device buffers "
+                         "and the exchange maps, and each phase printed (seconds)")
     ap.add_argument("--out", default=None, help="spikes .npz (default <root>/spikes_sna_np<N>.npz)")
     args = ap.parse_args()
     if args.burn_in_ms is None:
@@ -123,9 +126,22 @@ def main():
     # buffer rows: through add_spikes, the host compile of its ~10^8 events alone exceeds a
     # login node's 30 GiB at 12,500 neurons ------------------------------------------------
     t0 = time.time()
+    model.verbose_timing = args.first_tick_timers
     model.simulate(ticks=1)
     progress(rank, "first tick")
     timers["first_tick"] = time.time() - t0
+    first_tick = {}
+    if args.first_tick_timers:                      # the first tick's phases, nested ones dotted
+        model.verbose_timing = False
+
+        def phases(d, prefix=""):
+            for key, value in d.items():
+                if isinstance(value, dict):
+                    yield from phases(value, f"{prefix}{key}.")
+                elif isinstance(value, (int, float, np.integer, np.floating)):
+                    yield f"{prefix}{key}", float(value)
+
+        first_tick = dict(phases(model._tick_timings[0])) if model._tick_timings else {}
     recorded = model.get_all_spike_times()          # collective: every rank's spikes
     t0 = time.time()
     rows = np.asarray(rows_of(model._gpu_buffers.agent_id_to_index, syn_of_soma), dtype=np.int64)
@@ -162,7 +178,7 @@ def main():
     free, total = cp.cuda.Device().mem_info
     memory = (pc.host_peak_gib(), (total - free) / 2**30)
 
-    gathered = comm.gather((timers, soma_ids.size, n_synapses, memory, per_tick), root=0)
+    gathered = comm.gather((timers, soma_ids.size, n_synapses, memory, per_tick, first_tick), root=0)
     if rank == 0:
         # emission ticks -> the ticks the somas fired at
         soma = np.concatenate([np.full(len(v), s, np.int64) for s, v in recorded.items()]
@@ -188,6 +204,11 @@ def main():
                 vals = [g[4].get(key, 0.0) for g in gathered]
                 scale = 1.0 if ("bytes" in key or "peers" in key) else 1e3
                 print(f"    {key:26s} max {max(vals) * scale:12.3f}   mean {np.mean(vals) * scale:12.3f}")
+        if gathered[0][5]:
+            print("  first tick, SAGESim's timers (seconds; counts and bytes as they are):")
+            for key in gathered[0][5]:
+                vals = [g[5].get(key, 0.0) for g in gathered]
+                print(f"    {key:34s} max {max(vals):12.3f}   mean {np.mean(vals):12.3f}")
         burn = int(round(args.burn_in_ms / pc.DT_MS))
         late = tick >= burn
         print(f"  rate after {args.burn_in_ms:.0f} ms: "

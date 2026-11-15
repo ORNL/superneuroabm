@@ -257,9 +257,9 @@ neighbour tiles only:
 | 4 | 1x2x2 | 3 | 33,580 | 55.0 % |
 | 8 | 2x2x2 | 7 | 78,000 | 34.2 % |
 | 16 | 2x2x4 | 11 | 87,380 | 34.2 % |
-| 32 | 2x4x4 | 17 | (job pending) | |
+| 32 | 2x4x4 | 17 | 96,740 | 34.2 % |
 | 64 | 4x4x4 | 26 | 124,100 | 34.2 % |
-| 128 to 512 | 4x4x8 to 8x8x8 | 26 | the same as at 64 expected (jobs pending) | |
+| 128, 256 | 4x4x8, 4x8x8 | 26 | 124,100 to 124,150 | 34.2 % |
 
 Against 11,250 x (ranks - 1) on the all-to-all network: 708,750 at 64 GPUs, 5.75 M at 512.
 NEST GPU gains from it too: it exchanges spikes only between host pairs that share
@@ -304,11 +304,40 @@ the last column is the all-to-all network from "Numbers so far" above.
 | 4 | 3 | 0.713 / 0.449 (0.38 Hz) | | 1.070 / 0.556 (102 / 129 Hz) | 0.726 / 0.490 |
 | 8 | 7 | 0.927 / 0.505 (0.72 Hz) | 1.177 / 0.519 (48.0 / 45.5 Hz) | 2.569 / 0.913 (560 Hz) | 0.933 / 0.527 |
 | 16 | 11 | 0.948 / 0.538 (0.77 Hz) | 1.307 / 0.613 (38.2 / 45.1 Hz) | | 1.455 / 0.594 |
-| 32 | 17 | pending | pending | | 2.937 / 0.732 |
+| 32 | 17 | 1.194 / 0.585 (0.79 / 0.80 Hz) | 1.618 / 0.707 (41.7 / 40.0 Hz) | | 2.937 / 0.732 |
 | 64 | 26 | 1.298 / 0.655 (0.74 / 0.73 Hz) | 1.992 / 0.828 (32.2 / 34.3 Hz) | | 5.718 / 1.025 |
-| 128 | 26 | pending | pending | | 10.932 / 1.513 |
-| 256 | 26 | pending | pending | | 23.315 / 2.552 |
-| 512 | 26 | pending | pending | | 49.579 / 4.852 |
+| 128 | 26 | pending (61346213) | 2.336 / 0.870 (34.2 / 33.3 Hz) | | 10.932 / 1.513 |
+| 256 | 26 | cancelled | timed out in the first tick / 0.898 (33.2 Hz) | | 23.315 / 2.552 |
+| 512 | 26 | cancelled | cancelled | | 49.579 / 4.852 |
+
+Jobs 61345638 / 61345639 (32 GPUs), 61345642 (128), 61345643 (256). On `mixed`, 64 to 128
+GPUs is not flat for SuperNeuroABM: 1.992 to 2.336 ms, 17 % more with the same 26 peers and
+124,100 ghost somas (the rates differ too, 32.2 and 34.2 Hz). NEST GPU: 0.828, 0.870, 0.898 ms
+at 64, 128, 256 GPUs, 5 and 3 % more per doubling. NEST GPU is 2.4 to 2.7 times faster at
+64 and 128 GPUs.
+
+**SuperNeuroABM's first tick grows with the rank count at the same work per rank, and it
+is what stops the weak-scaling runs.** First tick, `mixed`, slowest rank: 73.7 / 78.8 /
+78.2 / 80.4 s at 8 / 16 / 32 / 64 GPUs, then 309.4 s at 128, and at 256 it was still
+running when the 960 s limit of the run killed it, 801 s after it began (job 61345643:
+"drive drawn" at 08:18:15, killed at 08:31:36). Peers and ghost somas are the same from 64
+on, so it is not the halo. It is not the file system either: the 32-GPU job ran its first
+tick in the same minutes, on the same directories, in 78 s. On the all-to-all network the
+first tick was 123 / 148 / 196 / 1,030 s at 64 / 128 / 256 / 512 GPUs, so the torus is slower
+here at 128 and 256 GPUs although it has a fifth to a twenty-third of the ghost somas. The
+whole SuperNeuroABM run at 128 GPUs took 421 s (171 s at 32); NEST GPU's 81 / 90 / 96 s at
+32 / 128 / 256 GPUs. Nothing in `CommunicationManager.build_communication_maps` or the
+ghost discovery loops over the ranks in an obvious way (read 2026-11-15); the phase is
+being measured: `run_partitioned_sna.py --first-tick-timers` turns SAGESim's timers on for
+that tick and prints each phase (`perlmutter/torus_first_tick.sbatch`, jobs 61347856 at 64
+GPUs and 61347857 at 128, both pending). Also growing with the ranks, in the runner and
+not in the library: the starting potentials, one collective `get_agent_property_value`
+per soma (about 20 s at 64 GPUs, about 75 s at 256).
+
+Because of it the 256-GPU `library` job (61346214) and both 512-GPU jobs (61345644 `mixed`,
+61346215 `library`) were cancelled while pending: SuperNeuroABM would have timed out in
+each, about 140 node-hours for three NEST GPU numbers. NEST GPU alone at those sizes is
+about 4 minutes of the nodes (4 node-hours at 256 GPUs, 9 at 512) if it is wanted.
 
 At 64 GPUs NEST GPU is 2.0 (`library`) to 2.4 (`mixed`) times faster, against 5.6 times on
 the all-to-all network; SuperNeuroABM's tick is 1.3 to 2.0 ms instead of 5.7. NEST GPU is
@@ -346,35 +375,29 @@ Where a tick goes at 64 GPUs, `mixed` (job 61345640, `TIMERS=1`):
   the slowest rank during the warm-up), delivery 0.021, neuron update 0.010; timed tick
   0.825 ms.
 
-**In the queue** (submitted 2026-11-15 07:40 and, the three `library` jobs at 128 to 512
-GPUs, 08:20 at the owner's request: "I want those results in, so we have better ideas when
-we optimizing our code"; all pending at 08:20; outputs
-`torus-scale-<job>.out` in the work directory; parts and spikes in
+**In the queue** at 2026-11-15 09:15 (outputs `torus-scale-<job>.out` and
+`torus-first-tick-<job>.out` in the work directory; parts and spikes in
 `torus_mixed_11250_r17/`, `torus_11250_r17/` (library), `torus_ei_11250_r17/` (exact)):
 
-| job | queue | nodes (GPUs) | `NET` |
+| job | queue | nodes (GPUs) | what |
 |---|---|---|---|
-| 61345638 | debug | 8 (32) | mixed |
-| 61345639 | debug | 8 (32) | library |
-| 61345642 | regular | 32 (128) | mixed |
-| 61345643 | regular | 64 (256) | mixed |
-| 61345644 | regular | 128 (512) | mixed, `SNA_TIMEOUT=1500` |
-| 61346213 | regular | 32 (128) | library, `TIMERS=1` (the per-tick breakdown of both simulators on the near-silent network) |
-| 61346214 | regular | 64 (256) | library |
-| 61346215 | regular | 128 (512) | library, `SNA_TIMEOUT=1500` |
+| 61346213 | regular | 32 (128) | weak, `library`, `TIMERS=1` (the per-tick breakdown of both simulators on the near-silent network); about 20 minutes with two SuperNeuroABM builds of 7 minutes |
+| 61347856 | regular | 16 (64) | SuperNeuroABM's first tick by phase, `mixed` |
+| 61347857 | regular | 32 (128) | the same at 128 GPUs |
+| 61346439, 61346441, 61346443 | debug, regular, regular | 8, 32, 64 (32, 128, 256) | strong scaling, below |
 
-**To resume:** `sacct -X -S 2026-11-15T07:30 --format=JobID,NNodes,State,Elapsed,Start` for
-the state of all of them (these eight and the six strong-scaling jobs below);
-read each output with
-`grep -vE "^\[Rank|^\[TIMING\]|^\s+\[" torus-scale-<job>.out` (a `TIMERS=1` output holds
-one line per rank per tick, 30 MB); fill the pending cells above. The weak-scaling answer
-is the tick from 64 to 512 GPUs for each simulator on each network: flat or not. The owner
-wants the `library` numbers as input for optimizing SuperNeuroABM, so report its per-tick
-breakdown (job 61346213) next to the `mixed` one at 64 GPUs. A job that fails or times out is resubmitted with the same line as in its
-row (`sbatch -N <nodes> [-q regular -t 00:30:00] --export=ALL,NET=<net> torus_scale.sbatch`
-from the work directory); the parts already written are reused.
+**To resume:** `sacct -X -S 2026-11-15T07:30 --format=JobID,JobName%18,NNodes,State,Elapsed,Start`
+for the state of all of them; read a `torus-scale` output with
+`grep -vE "^\[Rank|^\[TIMING\]|^\s+\[|Killed" torus-scale-<job>.out` (a `TIMERS=1` output
+from before 08:20 holds one line per rank per tick, 30 MB); fill the pending cells. First
+the two first-tick jobs: which phase grows from 64 to 128 ranks is the lead for the owner,
+who wants these runs as input for optimizing SuperNeuroABM. The strong-scaling 128 and 256
+GPU jobs give the first tick at 720 and 360 neurons per rank, which says whether the growth
+depends on the work per rank. A job that fails is resubmitted from the work directory with
+`sbatch -N <nodes> [-q regular -t 00:30:00] --export=ALL,NET=<net>[,STRONG=92160][,TIMERS=1] torus_scale.sbatch`;
+the parts already written are reused.
 
-### Strong scaling on the torus (submitted 2026-11-15 08:45, all pending)
+### Strong scaling on the torus (submitted 2026-11-15 08:10; 8, 16 and 64 GPUs done)
 
 Everything above is weak scaling (11,250 neurons on every GPU). The owner asked for strong
 scaling as well. One fixed network on 8 to 256 GPUs:
@@ -406,11 +429,39 @@ scaling as well. One fixed network on 8 to 256 GPUs:
 | 61346441 | regular | 32 (128) | 720 | yes |
 | 61346443 | regular | 64 (256) | 360 | no |
 
-When they are done: a table of GPUs, neurons per GPU, peer ranks, remote somas, tick of each
-simulator, speed-up against 8 GPUs and the build; the per-tick breakdowns
-(`nest_timers_np<N>.txt` in the parts directory for NEST GPU); and the spikes of each
-simulator across rank counts:
-`python compare_partitioned_spikes.py <dir>/spikes_sna_np8_vm.npz <dir>/spikes_sna_np16_vm.npz ... --burn-in-ms 50 --window-ms 50`
+Results so far (jobs 61346437, 61346438, 61346440). This network fires at 7.9 Hz in
+SuperNeuroABM and 7.6 Hz in NEST GPU, close to the all-to-all benchmark's 7.5 Hz and unlike
+the weak-scaling `mixed` network (32 to 48 Hz, in bursts) although the draw is the same;
+the difference in the wiring is where the inhibitory neurons sit (every fifth position of a
+5 x 6 x 6 tile is a diagonal lattice, of an 18 x 25 x 25 tile every fifth z layer).
+
+| GPUs | neurons per GPU | peer ranks | remote somas per GPU | tick: SuperNeuroABM / NEST GPU (ms) | against 8 GPUs | whole run (s) | SuperNeuroABM's first tick (s) |
+|---|---|---|---|---|---|---|---|
+| 8 | 11,520 | 7 | 80,141 | 1.055 / 0.537 | 1 / 1 | 177 / 72 | 79.8 |
+| 16 | 5,760 | 15 | 74,291 | 0.930 / 0.466 | 1.13 / 1.15 times faster | 79 / 44 | 37.9 |
+| 32 | 2,880 | | | pending (61346439) | | | |
+| 64 | 1,440 | 53 | 57,170 | 1.141 / 0.631 | 0.92 / 0.85 | 27 / 25 | 11.6 |
+| 128 | 720 | | | pending (61346441) | | | |
+| 256 | 360 | | | pending (61346443) | | | |
+
+Neither simulator's tick gets faster beyond 16 GPUs: the remote somas per GPU stay at
+57,000 to 80,000 while the local ones fall eightfold, and the peers go from 7 to 53.
+SuperNeuroABM's tick with its timers on, ms: ghost exchange 0.873 / 0.674 / 0.968 and the
+kernel on the GPU 0.271 / 0.227 / 0.166 at 8 / 16 / 64 GPUs, of 1.309 / 1.052 / 1.278. The
+exchange is two thirds to three quarters of the tick at every size, and the kernel's GPU
+time falls by 39 % for an eighth of the local synapses. Per rank at 8 / 16 / 64 GPUs:
+SuperNeuroABM 52.0 / 26.3 / 7.1 GiB host and 20.7 / 10.6 / 3.1 GiB GPU; NEST GPU 10.1 / 5.5 /
+1.8 GiB host and 2.5 / 1.6 / 0.9 GiB GPU. What strong scaling does shorten is the build:
+SuperNeuroABM's whole run 177 to 27 s, NEST GPU's 72 to 25 s.
+
+Spikes (the network is the same at every rank count): NEST GPU gives the same 205,580
+spikes at 8, 16 and 64 GPUs, spike for spike. SuperNeuroABM gives the same 214,154 spikes
+at 8 and 16 GPUs and in a second run at 8; at 64 GPUs it is identical for 171.1 ms and then
+apart (214,308 spikes). SuperNeuroABM against NEST GPU: identical for 31.9 ms at each size.
+
+Still to do when the last three are done: their rows, NEST GPU's own timers
+(`nest_timers_np<N>.txt` in the parts directory), and the comparison across rank counts
+again: `python compare_partitioned_spikes.py <dir>/spikes_sna_np8_vm.npz <dir>/spikes_sna_np32_vm.npz ... --burn-in-ms 50 --window-ms 50`
 (sna-dev environment, login node), the same for `spikes_nestgpu_np*_vm.npz`.
 
 `compare_partitioned_spikes.py` now compares sorted integer keys (4 s for 2 x 12.7 M spikes,
@@ -418,8 +469,14 @@ simulator across rank counts:
 
 ## Open
 
-- The torus comparison: the queued jobs above (weak scaling on `mixed` and `library`, strong
-  scaling on `mixed`), then the tables, the weak-scaling answer and the strong-scaling curve.
+- The torus comparison: the queued jobs above, then the pending cells.
+- SuperNeuroABM's first tick against the rank count (80 s at 64 GPUs, 309 s at 128, over
+  800 s at 256 on the torus): find the phase, then the cause. It decides whether weak scaling
+  beyond 128 GPUs can be measured at all.
+- SuperNeuroABM's tick on `mixed` is 17 % longer at 128 GPUs than at 64 with the same peers
+  and ghosts: not explained.
+- Why the strong-scaling network fires at 7.6 to 7.9 Hz and the weak-scaling `mixed` one at
+  32 to 48 Hz with the same draw.
 - A torus network that fires near the benchmark's 7.5 Hz was not found by changing the
   structure alone (0.4 to 0.7, 45 to 48 or 560 Hz). Whether to tune the drive or the
   in-degree for it is the owner's call.
