@@ -60,6 +60,15 @@ def main():
     ap.add_argument("--eta", type=float, default=2.0, help="drive / threshold rate")
     ap.add_argument("--seed", type=int, default=1234, help="drive seed")
     ap.add_argument("--config", default=str(pc.ALPHA_YAML), help="the alpha neuron's YAML")
+    ap.add_argument("--vm-sigma", type=float, default=0.0,
+                    help="start every soma at normal(--vm-mean, this) mV (hpc_benchmark: 7.2)")
+    ap.add_argument("--vm-mean", type=float, default=5.7)
+    ap.add_argument("--perturb", type=float, default=0.0,
+                    help="multiply the excitatory weights by 1 + this: the control for how "
+                         "fast a rounding-size change separates two runs")
+    ap.add_argument("--kernel-timers", action="store_true",
+                    help="NEST GPU prints its own per-phase timers (seconds over each Simulate "
+                         "call, per host): neuron update, spike send / receive, delivery")
     ap.add_argument("--out", default=None, help="spikes .npz (default <root>/spikes_nestgpu_np<N>.npz)")
     args = ap.parse_args()
     if args.burn_in_ms is None:
@@ -85,6 +94,8 @@ def main():
     pre = np.asarray(part["pre"], dtype=np.int64)
     post = np.asarray(part["post"], dtype=np.int64)
     weight = pc.synapse_weights(part, par["J_E"] * 1e-12) * 1e12          # A -> pA
+    if args.perturb:
+        weight = np.where(weight > 0, weight * (1.0 + args.perturb), weight)
     remote_ids = np.asarray(part.get("remote_ids", np.zeros(0)), dtype=np.int64)
     remote_rank_of = np.asarray(part.get("remote_rank_of", np.zeros(0)), dtype=np.int64)
     timers["read"] = time.time() - t0
@@ -129,7 +140,7 @@ def main():
     # array, one per synapse here), which leaves one delay bit, so every delay is the
     # minimum allowed one, and no synapse groups or receptor ports.
     ngpu.SetKernelStatus({
-        "verbosity_level": 1,
+        "verbosity_level": 3 if args.kernel_timers else 1,
         "time_resolution": pc.DT_MS,
         "max_node_n_bits": 31,
         "max_syn_n_bits": 0,
@@ -144,6 +155,9 @@ def main():
         "Theta_rel": par["V_th"] - par["E_L"], "V_reset_rel": par["V_reset"] - par["E_L"],
         "tau_syn_ex": par["tau_syn_ex"], "tau_syn_in": par["tau_syn_in"], "t_ref": par["t_ref"],
     })
+    if args.vm_sigma > 0:                           # the same starting potentials as SuperNeuroABM's
+        vm = pc.initial_vm(soma_ids, args.seed, args.vm_mean, args.vm_sigma)
+        ngpu.SetStatus(neurons, {"V_m_rel": {"array": (vm - par["E_L"]).tolist()}})
     generators = ngpu.Create("spike_generator", n_local)        # one per soma's external input
     timers["create"] = time.time() - t0
 

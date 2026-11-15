@@ -51,6 +51,12 @@ def main():
     ap.add_argument("--eta", type=float, default=2.0, help="drive / threshold rate")
     ap.add_argument("--seed", type=int, default=1234, help="drive seed")
     ap.add_argument("--config", default=str(pc.ALPHA_YAML), help="the alpha neuron's YAML")
+    ap.add_argument("--vm-sigma", type=float, default=0.0,
+                    help="start every soma at normal(--vm-mean, this) mV (hpc_benchmark: 7.2)")
+    ap.add_argument("--vm-mean", type=float, default=5.7)
+    ap.add_argument("--tick-timers", action="store_true",
+                    help="SAGESim's per-tick timers on for the timed simulate, and their means "
+                         "printed (launch, GPU, pack, MPI, unpack, reverse); they slow the tick")
     ap.add_argument("--out", default=None, help="spikes .npz (default <root>/spikes_sna_np<N>.npz)")
     args = ap.parse_args()
     if args.burn_in_ms is None:
@@ -78,6 +84,16 @@ def main():
     progress(rank, "load_network")
     soma_ids, syn_of_soma, n_synapses = pc.read_external_inputs(path)
     timers["load"] = time.time() - t0
+
+    if args.vm_sigma > 0:                           # the same starting potentials as NEST GPU's
+        t0 = time.time()
+        at = pc.soma_state_index(args.config, "V_m")
+        vm = pc.initial_vm(soma_ids, args.seed, args.vm_mean, args.vm_sigma)
+        for soma, v in zip(soma_ids.tolist(), vm.tolist()):
+            state = list(model.get_agent_property_value(id=soma, property_name="internal_states"))
+            state[at] = v * 1e-3                    # mV -> V
+            model.set_agent_property_value(soma, "internal_states", state)
+        timers["initial_vm"] = time.time() - t0
 
     t0 = time.time()
     model.setup()
@@ -129,17 +145,24 @@ def main():
         for soma, ticks in model.get_all_spike_times().items():
             recorded.setdefault(soma, []).extend(ticks)
         done = presim
+    if args.tick_timers:
+        model.verbose_timing = True
     t0 = time.time()
     model.simulate(ticks=steps - done + extra)
     timers["simulate"] = time.time() - t0
     progress(rank, "simulate")
+    per_tick = {}
+    if args.tick_timers:                            # ms per tick, mean over the timed ticks
+        ticks_timed = list(model._tick_timings)[-(steps - done + extra):]
+        for key in sorted({k for t in ticks_timed for k in t}):
+            per_tick[key] = float(np.mean([t.get(key, 0.0) for t in ticks_timed]))
     for soma, ticks in model.get_all_spike_times().items():
         recorded.setdefault(soma, []).extend(ticks)
     timers["total"] = time.time() - t_all
     free, total = cp.cuda.Device().mem_info
     memory = (pc.host_peak_gib(), (total - free) / 2**30)
 
-    gathered = comm.gather((timers, soma_ids.size, n_synapses, memory), root=0)
+    gathered = comm.gather((timers, soma_ids.size, n_synapses, memory, per_tick), root=0)
     if rank == 0:
         # emission ticks -> the ticks the somas fired at
         soma = np.concatenate([np.full(len(v), s, np.int64) for s, v in recorded.items()]
@@ -159,6 +182,12 @@ def main():
               f"{max(g[0]['simulate'] for g in gathered) / (steps - done + extra) * 1e3:.3f} ms per tick")
         print(f"  peak host memory per rank: max {max(g[3][0] for g in gathered):.2f} GiB;  "
               f"GPU memory in use at the end: max {max(g[3][1] for g in gathered):.2f} GiB")
+        if gathered[0][4]:
+            print("  per tick, SAGESim's timers (mean over the timed ticks; time keys in ms):")
+            for key in gathered[0][4]:
+                vals = [g[4].get(key, 0.0) for g in gathered]
+                scale = 1.0 if ("bytes" in key or "peers" in key) else 1e3
+                print(f"    {key:26s} max {max(vals) * scale:12.3f}   mean {np.mean(vals) * scale:12.3f}")
         burn = int(round(args.burn_in_ms / pc.DT_MS))
         late = tick >= burn
         print(f"  rate after {args.burn_in_ms:.0f} ms: "

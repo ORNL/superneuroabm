@@ -26,9 +26,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("files", nargs="+")
     ap.add_argument("--burn-in-ms", type=float, default=500.0)
+    ap.add_argument("--window-ms", type=float, default=150.0)
     args = ap.parse_args()
     runs = {Path(f).stem: load(f) for f in args.files}
     burn = int(round(args.burn_in_ms / DT_MS))
+    width = int(round(args.window_ms / DT_MS))
     for name, r in runs.items():
         n, steps = int(r["n_somas"]), int(r["steps"])
         late = r["tick"] >= burn
@@ -47,11 +49,14 @@ def main():
               f"only in second: {sorted((t, s) for s, t in B - A)[:3]}  (tick, soma)")
         steps = int(a["steps"])
         windows = []
-        for lo in range(0, steps, 1500):
-            a_w = {p for p in A if lo <= p[1] < lo + 1500}
-            b_w = {p for p in B if lo <= p[1] < lo + 1500}
+        for lo in range(0, steps, width):
+            a_w = {p for p in A if lo <= p[1] < lo + width}
+            b_w = {p for p in B if lo <= p[1] < lo + width}
             windows.append(f"{100 * len(a_w & b_w) / max(len(a_w | b_w), 1):.1f}")
-        print(f"  % identical per 150 ms window: {' '.join(windows)}")
+        print(f"  % identical per {args.window_ms:.0f} ms window: {' '.join(windows)}")
+        counts = [f"{np.sum((r['tick'] >= lo) & (r['tick'] < lo + width)):,}"
+                  for lo in range(0, steps, width) for r in (a, b)]
+        print(f"  spikes per window (first, second): {' '.join(counts)}")
 
 
 if __name__ == "__main__":

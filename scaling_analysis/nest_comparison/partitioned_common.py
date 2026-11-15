@@ -139,6 +139,21 @@ def drive(soma_ids, ticks, rate_hz, seed):
     return np.concatenate(index), np.concatenate(tick), np.concatenate(count)
 
 
+def initial_vm(soma_ids, seed, mean_mv, sigma_mv):
+    """A starting membrane potential per soma (mV), normal(mean, sigma) from a stream seeded by
+    (seed, soma id) alone, as hpc_benchmark's randomize_Vm (mean 5.7, sigma 7.2). Rounded to
+    float32, NEST GPU's state type, so both simulators start from the same numbers."""
+    v = [np.random.default_rng(np.random.SeedSequence([seed, soma, 1])).normal(mean_mv, sigma_mv)
+         for soma in np.asarray(soma_ids, dtype=np.int64).tolist()]
+    return np.asarray(v, dtype=np.float32)
+
+
+def soma_state_index(yaml_path, name):
+    """Position of an internal state in the alpha soma's internal_states row (YAML order)."""
+    config = yaml.safe_load(Path(yaml_path).read_text())
+    return list(config["soma"][SOMA_BREED][SOMA_CONFIG]["internal_states"]).index(name)
+
+
 def save_spikes(path, soma, tick, meta):
     """(soma, tick) pairs sorted by tick then soma, plus run metadata."""
     order = np.lexsort((soma, tick))
